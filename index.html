@@ -1,0 +1,2023 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SATCO Arabia — Mobilisation Portal</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --stk-1: 56px;   /* top nav height — measured live */
+    --stk-2: 105px;  /* + tab toolbar — measured live */
+    --stk-3: 150px;  /* + filter bar  — measured live */
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f1f5f9; color: #0f172a; min-height: 100vh; }
+  input, select, textarea, button { font-family: inherit; }
+
+  /* Scrollbars — match HR portal exactly */
+  ::-webkit-scrollbar { height: 14px; width: 14px; }
+  ::-webkit-scrollbar-track { background: #e2e8f0; border-radius: 8px; }
+  ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 8px; border: 3px solid #e2e8f0; }
+  ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+  * { scrollbar-width: auto; scrollbar-color: #94a3b8 #e2e8f0; }
+
+  /* Drag-to-scroll tables */
+  .drag-scroll { overflow: auto; cursor: grab; -webkit-overflow-scrolling: touch; }
+  .drag-scroll.dragging { cursor: grabbing; user-select: none; }
+  .drag-scroll table { cursor: grab; }
+  .drag-scroll.dragging table { cursor: grabbing; }
+  .drag-scroll::before {
+    content: '← Hold and drag to scroll →';
+    display: block; font-size: 11px; font-weight: 700; color: #94a3b8;
+    padding: 4px 12px; background: #f8fafc; border-bottom: 1px solid #e2e8f0;
+    text-align: center; letter-spacing: 0.3px;
+  }
+
+  /* Viewport-height scrollable table boxes */
+  .tbl-box {
+    overflow-x: auto; overflow-y: auto;
+    max-height: calc(100vh - var(--stk-3) - 32px);
+    cursor: grab; -webkit-overflow-scrolling: touch;
+  }
+  .tbl-box.dragging { cursor: grabbing; user-select: none; }
+
+  /* Sticky column headers inside tbl-box */
+  .tbl-box thead th { position: sticky; top: 0; z-index: 12; background: #f8fafc; box-shadow: 0 2px 0 #e2e8f0; }
+
+  /* Frozen first column */
+  .frozen-col { position: sticky; left: 0; z-index: 11; background: #fff; box-shadow: 2px 0 4px rgba(0,0,0,0.06); }
+  thead .frozen-col { z-index: 13; background: #f8fafc; }
+  .hr-row:hover .frozen-col { background: #f8fafc !important; }
+
+  /* Sticky toolbar */
+  .sticky-toolbar { position: sticky; top: var(--stk-1); z-index: 20; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
+  .sticky-filterbar { position: sticky; top: var(--stk-2); z-index: 19; background: #fff; border-bottom: 1px solid #e2e8f0; }
+
+  .hr-row:hover { background: #f8fafc !important; }
+  .hr-row:hover td { background: inherit; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid #b8972a; outline-offset: 1px; }
+
+  @media print { .no-print { display: none !important; } body { background: white; } }
+  @media (max-width: 768px) {
+    .drag-scroll::before { content: '← Swipe to scroll →'; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } = React;
+
+// ── Sticky header measurement ─────────────────────────────────────────────────
+// Measures each sticky layer's real rendered height and publishes it as a CSS
+// variable, so the next layer knows exactly where to stick. Same pattern as HR/Finance portals.
+function readStkVar(n) { const v=parseFloat(getComputedStyle(document.documentElement).getPropertyValue(n)); return isNaN(v)?0:v; }
+function setStkVar(n,px) { document.documentElement.style.setProperty(n,Math.round(px)+'px'); }
+
+// Callback ref for toolbar divs — call as ref={measureToStk2} on the toolbar element
+function measureToStk2(el) {
+  if (!el) return;
+  const compute = () => setStkVar('--stk-2', readStkVar('--stk-1') + el.offsetHeight);
+  compute();
+  if (!el.__stkRO) {
+    el.__stkRO = new ResizeObserver(compute);
+    el.__stkRO.observe(el);
+    window.addEventListener('resize', compute);
+    let ticks=0;
+    const iv=setInterval(()=>{ if(!el.isConnected||++ticks>20){clearInterval(iv);return;} compute(); },250);
+  }
+}
+
+// Callback ref for filter bars — call as ref={measureToStk3}
+function measureToStk3(el) {
+  if (!el) return;
+  const compute = () => setStkVar('--stk-3', readStkVar('--stk-2') + el.offsetHeight);
+  compute();
+  if (!el.__stkRO) {
+    el.__stkRO = new ResizeObserver(compute);
+    el.__stkRO.observe(el);
+    window.addEventListener('resize', compute);
+    let ticks=0;
+    const iv=setInterval(()=>{ if(!el.isConnected||++ticks>20){clearInterval(iv);return;} compute(); },250);
+  }
+}
+
+// Hook for the top nav — publishes --stk-1
+function useStkPublish(varName, baseVarName) {
+  const [node,setNode] = useState(null);
+  const ref = useCallback(n=>setNode(n),[]);
+  useLayoutEffect(()=>{
+    if(!node)return;
+    const compute=()=>setStkVar(varName,(baseVarName?readStkVar(baseVarName):0)+node.offsetHeight);
+    compute();
+    const ro=new ResizeObserver(compute);
+    ro.observe(node);
+    window.addEventListener('resize',compute);
+    let ticks=0;
+    const iv=setInterval(()=>{if(++ticks>20){clearInterval(iv);return;}compute();},250);
+    return()=>{ro.disconnect();window.removeEventListener('resize',compute);clearInterval(iv);};
+  },[node]);
+  return ref;
+}
+
+// ── Drag-to-scroll ────────────────────────────────────────────────────────────
+// Global handler: any element with class "drag-scroll" or "tbl-box" becomes
+// draggable with mouse/pointer. Matches HR/Finance portal behaviour exactly.
+function useDragScroll() {
+  useEffect(()=>{
+    let active=null;
+    const stop=()=>{ if(active?.el) active.el.classList.remove('dragging'); active=null; };
+    const onDown=e=>{
+      if(e.button!==0)return;
+      const el=e.target.closest&&e.target.closest('.drag-scroll,.tbl-box');
+      if(!el)return;
+      if(e.target.closest('button,input,select,textarea,a,label,[contenteditable="true"]'))return;
+      if(el.scrollWidth<=el.clientWidth&&el.scrollHeight<=el.clientHeight)return;
+      active={el,startX:e.clientX,startY:e.clientY,left:el.scrollLeft,top:el.scrollTop,moved:false};
+      el.classList.add('dragging');
+    };
+    const onMove=e=>{
+      if(!active)return;
+      const dx=e.clientX-active.startX, dy=e.clientY-active.startY;
+      if(Math.abs(dx)>3||Math.abs(dy)>3) active.moved=true;
+      active.el.scrollLeft=active.left-dx;
+      active.el.scrollTop=active.top-dy;
+      e.preventDefault();
+    };
+    const onClick=e=>{ if(active?.moved){e.preventDefault();e.stopPropagation();} };
+    document.addEventListener('mousedown',onDown);
+    document.addEventListener('mousemove',onMove,{passive:false});
+    document.addEventListener('mouseup',stop);
+    document.addEventListener('mouseleave',stop);
+    document.addEventListener('click',onClick,true);
+    return()=>{
+      document.removeEventListener('mousedown',onDown);
+      document.removeEventListener('mousemove',onMove);
+      document.removeEventListener('mouseup',stop);
+      document.removeEventListener('mouseleave',stop);
+      document.removeEventListener('click',onClick,true);
+    };
+  },[]);
+}
+
+const SUPA_URL = 'https://oaerqjrkdpuhiproppaz.supabase.co';
+const SUPA_KEY = 'YOUR_SUPABASE_ANON_KEY';
+const db = supabase.createClient(SUPA_URL, SUPA_KEY);
+
+const CLAUDE_PROXY = 'https://satco-hr.vercel.app/api/claude';
+const DOC_BUCKET   = 'mob-documents';
+
+const COMPANY_NAME  = 'SATCO Arabia General Contracting LLC — SPC';
+const COMPANY_SHORT = 'SATCO Arabia';
+const UAE_EMIRATES  = ['Abu Dhabi','Dubai','Sharjah','Ajman','Ras Al Khaimah','Fujairah','Umm Al Quwain'];
+const DEMOB_REASONS = ['Project Completed','Client Request','Candidate Request','Medical Unfit','Disciplinary','Visa Expiry','Contract Ended','Other'];
+
+const SETUP_SQL = `-- SATCO Mobilisation Portal — Run ONCE in HR Supabase SQL Editor
+-- Project: oaerqjrkdpuhiproppaz
+
+-- ALSO: Create storage bucket manually in Supabase Dashboard:
+--   Storage → New bucket → name: mob-documents → Public: OFF → Save
+--   Then add policy: authenticated users can upload/read their own files
+
+-- Document attachments table
+CREATE TABLE IF NOT EXISTS mob_documents (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  entity_type   text NOT NULL,   -- 'candidate' | 'mobilisation'
+  entity_id     uuid NOT NULL,
+  doc_type      text,            -- 'passport' | 'eid' | 'visa' | 'medical' | 'cicpa' | 'work_permit' | 'other'
+  doc_label     text,
+  file_path     text NOT NULL,   -- path in Supabase Storage: mob-documents/<path>
+  file_name     text,
+  file_size     int,
+  mime_type     text,
+  ai_scanned    boolean DEFAULT false,
+  ai_data       jsonb,           -- extracted data from AI scan
+  uploaded_at   timestamptz DEFAULT now(),
+  uploaded_by   text
+);
+CREATE INDEX IF NOT EXISTS idx_mob_docs_entity ON mob_documents(entity_type, entity_id);
+ALTER TABLE mob_documents ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='mob_documents' AND policyname='mob_auth') THEN
+    CREATE POLICY mob_auth ON mob_documents FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+`
+
+CREATE TABLE IF NOT EXISTS mob_suppliers (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL UNIQUE, contact_name text, contact_phone text, contact_email text, remarks text, active boolean DEFAULT true, created_at timestamptz DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS mob_candidates (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  full_name text NOT NULL, designation text, source text DEFAULT 'supplier',
+  supplier_id uuid, supplier_name text, supplier_emp_no text,
+  nationality text, date_of_birth date, passport_no text, passport_expiry date,
+  emirates_id text, eid_expiry date, visa_no text, visa_type text,
+  visa_location text, visa_expiry date, phone text, remarks text,
+  active boolean DEFAULT true, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS mob_requirements (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  customer_name text NOT NULL, po_reference text, location text NOT NULL,
+  requirement_date date DEFAULT CURRENT_DATE, positions jsonb DEFAULT '[]',
+  total_headcount int DEFAULT 0, notes text, created_at timestamptz DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS mob_loa (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  customer_name text NOT NULL, location text NOT NULL, loa_reference text,
+  loa_date date, total_count int NOT NULL DEFAULT 0, alert_threshold int DEFAULT 10,
+  requirement_id uuid, notes text, created_at timestamptz DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS mob_register (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  candidate_id uuid, loa_id uuid, requirement_id uuid,
+  full_name text NOT NULL, designation text,
+  source text DEFAULT 'supplier', supplier_name text, supplier_emp_no text,
+  nationality text, date_of_birth date, passport_no text, emirates_id text,
+  visa_no text, visa_location text,
+  customer_name text NOT NULL, location text NOT NULL,
+  wp_applied_date date, wp_approved_date date, wp_no text,
+  medical_done boolean DEFAULT false, medical_date date, medical_result text,
+  hse_passport_done boolean DEFAULT false, hse_passport_date date,
+  h2s_done boolean DEFAULT false, h2s_date date,
+  extra_trainings jsonb DEFAULT '[]',
+  cicpa_applied_date date, cicpa_approved_date date, cicpa_pass_no text, cicpa_expiry_date date,
+  cicpa_returned boolean DEFAULT false,
+  client_submitted_date date, camp_notified_date date,
+  status text DEFAULT 'pending',
+  mobilisation_date date,
+  demobilisation_date date,
+  demob_reason text,
+  demob_remarks text,
+  wp_action_on_demob text,
+  notes text,
+  created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS mob_location_config (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  location text NOT NULL UNIQUE, trainings jsonb DEFAULT '[]', updated_at timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_mob_cand_name   ON mob_candidates(full_name);
+CREATE INDEX IF NOT EXISTS idx_mob_cand_eid    ON mob_candidates(emirates_id);
+CREATE INDEX IF NOT EXISTS idx_mob_cand_pass   ON mob_candidates(passport_no);
+CREATE INDEX IF NOT EXISTS idx_mob_reg_cust    ON mob_register(customer_name, location);
+CREATE INDEX IF NOT EXISTS idx_mob_reg_status  ON mob_register(status);
+CREATE INDEX IF NOT EXISTS idx_mob_reg_name    ON mob_register(full_name);
+CREATE INDEX IF NOT EXISTS idx_mob_reg_eid     ON mob_register(emirates_id);
+CREATE INDEX IF NOT EXISTS idx_mob_reg_pass    ON mob_register(passport_no);
+ALTER TABLE mob_suppliers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mob_candidates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mob_requirements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mob_loa ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mob_register ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mob_location_config ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='mob_suppliers' AND policyname='mob_auth') THEN CREATE POLICY mob_auth ON mob_suppliers FOR ALL TO authenticated USING (true) WITH CHECK (true); END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='mob_candidates' AND policyname='mob_auth') THEN CREATE POLICY mob_auth ON mob_candidates FOR ALL TO authenticated USING (true) WITH CHECK (true); END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='mob_requirements' AND policyname='mob_auth') THEN CREATE POLICY mob_auth ON mob_requirements FOR ALL TO authenticated USING (true) WITH CHECK (true); END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='mob_loa' AND policyname='mob_auth') THEN CREATE POLICY mob_auth ON mob_loa FOR ALL TO authenticated USING (true) WITH CHECK (true); END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='mob_register' AND policyname='mob_auth') THEN CREATE POLICY mob_auth ON mob_register FOR ALL TO authenticated USING (true) WITH CHECK (true); END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='mob_location_config' AND policyname='mob_auth') THEN CREATE POLICY mob_auth ON mob_location_config FOR ALL TO authenticated USING (true) WITH CHECK (true); END IF;
+END $$;
+-- Migration for existing installs (safe to run again)
+ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS demob_reason text;
+ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS demob_remarks text;
+ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS wp_action_on_demob text;
+ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS cicpa_returned boolean DEFAULT false;
+`;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const fmtDate  = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '—';
+const fmtDOB   = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
+const todayStr = () => new Date().toISOString().slice(0,10);
+const isExpired = d => d && new Date(d) < new Date();
+const daysUntil = d => d ? Math.ceil((new Date(d) - new Date()) / 86400000) : null;
+
+const SEARCH_FIELDS = ['full_name','designation','supplier_name','supplier_emp_no','nationality','passport_no','emirates_id','visa_no','visa_location','customer_name','location','cicpa_pass_no','wp_no','phone','remarks','notes'];
+const matchSearch = (obj, q) => {
+  if (!q) return true;
+  const lq = q.toLowerCase();
+  return SEARCH_FIELDS.some(f => (obj[f]||'').toLowerCase().includes(lq));
+};
+
+function exportCSV(rows, filename, cols) {
+  const hdr = cols.map(c => c.label);
+  const data = rows.map(r => cols.map(c => {
+    const v = c.key.split('.').reduce((o,k) => o?.[k], r);
+    if (c.bool) return v ? 'Yes' : 'No';
+    if (c.date) return v ? fmtDOB(v) : '';
+    return v ?? '';
+  }));
+  const csv = [hdr,...data].map(row => row.map(cell => `"${String(cell).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  Object.assign(document.createElement('a'), {href:url, download:`${filename}_${todayStr()}.csv`}).click();
+  URL.revokeObjectURL(url);
+}
+
+// ── Document / Storage helpers ────────────────────────────────────────────────
+const fileToBase64 = file => new Promise((res,rej)=>{
+  const r = new FileReader();
+  r.onload = () => res(r.result.split(',')[1]);
+  r.onerror = () => rej(new Error('File read failed'));
+  r.readAsDataURL(file);
+});
+
+// Upload a file to Supabase Storage and record in mob_documents
+async function uploadDocument(file, entityType, entityId, docType, docLabel) {
+  const ext   = file.name.split('.').pop().toLowerCase();
+  const path  = `${entityType}/${entityId}/${docType}_${Date.now()}.${ext}`;
+  const { error: upErr } = await db.storage.from(DOC_BUCKET).upload(path, file, { upsert: false });
+  if (upErr) throw new Error('Upload failed: ' + upErr.message);
+  const { error: dbErr } = await db.from('mob_documents').insert({
+    entity_type: entityType, entity_id: entityId,
+    doc_type: docType, doc_label: docLabel || file.name,
+    file_path: path, file_name: file.name,
+    file_size: file.size, mime_type: file.type,
+  });
+  if (dbErr) throw new Error('Record failed: ' + dbErr.message);
+  return path;
+}
+
+// Get a signed URL for viewing (60-minute expiry)
+async function getSignedUrl(filePath) {
+  const { data, error } = await db.storage.from(DOC_BUCKET).createSignedUrl(filePath, 3600);
+  if (error) throw new Error(error.message);
+  return data.signedUrl;
+}
+
+// AI scan a document image/PDF for passport/EID/visa data
+async function aiScanDocument(file, docType) {
+  const b64      = await fileToBase64(file);
+  const mimeType = file.type || 'application/pdf';
+  const prompts  = {
+    passport:     'Extract from this passport: full_name, passport_no, nationality, date_of_birth (YYYY-MM-DD), expiry_date (YYYY-MM-DD), country_of_issue. Return ONLY valid JSON, no markdown.',
+    eid:          'Extract from this UAE Emirates ID: full_name, emirates_id (15 digits), nationality, date_of_birth (YYYY-MM-DD), expiry_date (YYYY-MM-DD), id_number. Return ONLY valid JSON.',
+    visa:         'Extract from this UAE visa/entry permit: full_name, visa_no, visa_type, nationality, issue_date (YYYY-MM-DD), expiry_date (YYYY-MM-DD), sponsor_name, place_of_issue. Return ONLY valid JSON.',
+    medical:      'Extract from this medical report: full_name, result (Fit/Unfit), exam_date (YYYY-MM-DD), expiry_date if shown (YYYY-MM-DD), issuing_authority. Return ONLY valid JSON.',
+    work_permit:  'Extract from this UAE work permit: full_name, wp_no, occupation, issue_date (YYYY-MM-DD), expiry_date (YYYY-MM-DD), sponsor. Return ONLY valid JSON.',
+    cicpa:        'Extract from this CICPA gate pass: full_name, pass_no, designation, issue_date (YYYY-MM-DD), expiry_date (YYYY-MM-DD), location. Return ONLY valid JSON.',
+    other:        'Extract all key information from this document. Return ONLY valid JSON with relevant fields.',
+  };
+  const prompt = prompts[docType] || prompts.other;
+  const contentType = mimeType.startsWith('image/') ? 'image' : 'document';
+  const res = await fetch(CLAUDE_PROXY, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      model:'claude-sonnet-4-6', max_tokens:800,
+      messages:[{ role:'user', content:[
+        { type: contentType, source:{ type:'base64', media_type:mimeType, data:b64 } },
+        { type:'text', text: prompt },
+      ]}]
+    })
+  });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  const data = await res.json();
+  const text = (data.content||[]).map(c=>c.text||'').join('').trim();
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('AI did not return JSON: ' + text.slice(0,200));
+  return JSON.parse(match[0]);
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+const S = {
+  page:   { minHeight:'100vh', background:'#f1f5f9' },
+  wrap:   { maxWidth:'1600px', margin:'0 auto', padding:'0 16px 40px' },
+  card:   { background:'#fff', borderRadius:'10px', border:'1px solid #e2e8f0', marginBottom:'16px', overflow:'hidden' },
+  th:     { padding:'8px 10px', textAlign:'left', fontSize:'11px', fontWeight:700, color:'#64748b', textTransform:'uppercase', letterSpacing:'0.5px', borderBottom:'2px solid #e2e8f0', whiteSpace:'nowrap', background:'#f8fafc' },
+  td:     { padding:'8px 10px', fontSize:'12.5px', color:'#0f172a', verticalAlign:'top', borderBottom:'1px solid #f1f5f9' },
+  input:  { padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'13px', width:'100%', background:'#fff' },
+  label:  { display:'block', fontSize:'11px', fontWeight:700, color:'#64748b', marginBottom:'3px', textTransform:'uppercase', letterSpacing:'0.4px' },
+  btnPri: { padding:'8px 18px', background:'#0f172a', color:'#fff', border:'none', borderRadius:'6px', fontWeight:700, fontSize:'13px', cursor:'pointer', whiteSpace:'nowrap' },
+  btnGold:{ padding:'8px 18px', background:'#b8972a', color:'#fff', border:'none', borderRadius:'6px', fontWeight:700, fontSize:'13px', cursor:'pointer', whiteSpace:'nowrap' },
+  btnSec: { padding:'8px 18px', background:'#fff', color:'#475569', border:'1px solid #cbd5e1', borderRadius:'6px', fontWeight:600, fontSize:'13px', cursor:'pointer', whiteSpace:'nowrap' },
+  btnGrn: { padding:'8px 18px', background:'#166534', color:'#fff', border:'none', borderRadius:'6px', fontWeight:700, fontSize:'13px', cursor:'pointer', whiteSpace:'nowrap' },
+  btnRed: { padding:'8px 18px', background:'#991b1b', color:'#fff', border:'none', borderRadius:'6px', fontWeight:700, fontSize:'13px', cursor:'pointer', whiteSpace:'nowrap' },
+  btnSm:  { padding:'4px 10px', fontSize:'11px', fontWeight:700, cursor:'pointer', borderRadius:'5px', border:'1px solid #e2e8f0', background:'#fff', color:'#475569' },
+};
+
+const Field = ({label,children,span}) => (
+  <div style={span?{gridColumn:`span ${span}`}:{}}>
+    <label style={S.label}>{label}</label>
+    {children}
+  </div>
+);
+const Grid = ({cols=3, gap=12, children}) => (
+  <div style={{display:'grid', gridTemplateColumns:`repeat(${cols},1fr)`, gap, marginBottom:12}}>{children}</div>
+);
+
+function StatusBadge({status}) {
+  const m = {pending:{bg:'#fef9c3',c:'#854d0e'},mobilised:{bg:'#dcfce7',c:'#166534'},demobilised:{bg:'#f1f5f9',c:'#475569'},rejected:{bg:'#fee2e2',c:'#991b1b'}};
+  const s = m[status] || m.pending;
+  return <span style={{background:s.bg,color:s.c,fontWeight:700,fontSize:'11px',padding:'2px 8px',borderRadius:10,textTransform:'capitalize'}}>{status}</span>;
+}
+function Tick({done,label,date}) {
+  return done
+    ? <span style={{color:'#166534',fontWeight:700,fontSize:'11px'}}>✓ {label}{date?' '+fmtDate(date):''}</span>
+    : <span style={{color:'#9ca3af',fontSize:'11px'}}>— {label}</span>;
+}
+// ── Global Search Bar ─────────────────────────────────────────────────────────
+function GlobalSearch({value, onChange, results, onSelect, onClear}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+  return (
+    <div ref={ref} style={{position:'relative', width:'340px'}}>
+      <div style={{display:'flex', gap:'6px', alignItems:'center'}}>
+        <span style={{position:'absolute', left:'10px', color:'#94a3b8', fontSize:'15px', pointerEvents:'none'}}>🔍</span>
+        <input
+          value={value}
+          onChange={e => { onChange(e.target.value); setOpen(true); }}
+          onFocus={() => value && setOpen(true)}
+          placeholder="Search name, EID, passport, designation…"
+          style={{...S.input, paddingLeft:'32px', background:'rgba(255,255,255,0.12)', border:'1px solid rgba(255,255,255,0.2)', color:'#fff', fontSize:'13px'}}
+        />
+        {value && <button onClick={()=>{ onChange(''); setOpen(false); onClear?.(); }} style={{position:'absolute',right:'8px',background:'none',border:'none',color:'#94a3b8',cursor:'pointer',fontSize:'16px',lineHeight:1}}>×</button>}
+      </div>
+      {open && results.length > 0 && (
+        <div style={{position:'absolute',top:'calc(100% + 6px)',left:0,right:0,background:'#fff',border:'1px solid #e2e8f0',borderRadius:'8px',boxShadow:'0 8px 24px rgba(0,0,0,0.15)',zIndex:200,maxHeight:'360px',overflowY:'auto'}}>
+          {results.map((r,i) => (
+            <div key={i} onClick={() => { onSelect(r); setOpen(false); onChange(''); }}
+              style={{padding:'10px 14px',cursor:'pointer',borderBottom:'1px solid #f1f5f9',display:'flex',gap:'10px',alignItems:'center'}}
+              onMouseEnter={e=>e.currentTarget.style.background='#f8fafc'}
+              onMouseLeave={e=>e.currentTarget.style.background='#fff'}>
+              <span style={{fontSize:'18px'}}>{r._type==='candidate'?'👤':'🏗️'}</span>
+              <div>
+                <div style={{fontWeight:700,fontSize:'13px',color:'#0f172a'}}>{r.full_name}</div>
+                <div style={{fontSize:'11px',color:'#64748b'}}>
+                  {r.designation||'—'} · {r._type==='candidate'?(r.supplier_name||'SATCO Own'):`${r.customer_name} / ${r.location}`}
+                  {r.emirates_id && <span style={{fontFamily:'monospace',marginLeft:'8px'}}>{r.emirates_id}</span>}
+                  {r.passport_no && <span style={{fontFamily:'monospace',marginLeft:'6px'}}>{r.passport_no}</span>}
+                </div>
+              </div>
+              <span style={{marginLeft:'auto',fontSize:'10px',fontWeight:700,color:'#94a3b8'}}>{r._type==='candidate'?'CANDIDATE':'MOB RECORD'}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {open && value && results.length === 0 && (
+        <div style={{position:'absolute',top:'calc(100% + 6px)',left:0,right:0,background:'#fff',border:'1px solid #e2e8f0',borderRadius:'8px',padding:'14px',color:'#94a3b8',fontSize:'13px',textAlign:'center',zIndex:200}}>
+          No results for "{value}"
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Top Nav ───────────────────────────────────────────────────────────────────
+function TopNav({tab, setTab, onSignOut, globalSearch, setGlobalSearch, searchResults, onSearchSelect}) {
+  const navRef = useStkPublish('--stk-1');
+  const tabs = [
+    {k:'dashboard',   l:'📊 Dashboard'},
+    {k:'candidates',  l:'👥 Candidates'},
+    {k:'requirements',l:'📋 Requirements'},
+    {k:'loa',         l:'📄 LOA'},
+    {k:'mobilisation',l:'🏗️ Mobilisation'},
+    {k:'letters',     l:'✉️ Letters'},
+    {k:'config',      l:'⚙️ Config'},
+  ];
+  return (
+    <div ref={navRef} style={{background:'#0f172a',color:'#fff',position:'sticky',top:0,zIndex:100,boxShadow:'0 2px 8px rgba(0,0,0,0.3)'}}>
+      <div style={{maxWidth:'1600px',margin:'0 auto',padding:'0 16px',display:'flex',alignItems:'center',gap:'12px',height:'56px'}}>
+        <div style={{flexShrink:0}}>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#b8972a',letterSpacing:'2px',lineHeight:1}}>SATCO ARABIA</div>
+          <div style={{fontSize:'13px',fontWeight:700,color:'#fff',lineHeight:1.4}}>Mobilisation</div>
+        </div>
+        <div style={{display:'flex',gap:'2px',flex:1,overflowX:'auto'}}>
+          {tabs.map(t=>(
+            <button key={t.k} onClick={()=>setTab(t.k)}
+              style={{padding:'6px 13px',background:tab===t.k?'#b8972a':'transparent',color:tab===t.k?'#fff':'#94a3b8',border:'none',borderRadius:'6px',fontWeight:700,fontSize:'12px',cursor:'pointer',whiteSpace:'nowrap'}}>
+              {t.l}
+            </button>
+          ))}
+        </div>
+        <GlobalSearch value={globalSearch} onChange={setGlobalSearch} results={searchResults} onSelect={onSearchSelect} onClear={()=>setGlobalSearch('')} />
+        <button onClick={onSignOut} style={{...S.btnSec,fontSize:'12px',padding:'5px 12px',flexShrink:0}}>Sign Out</button>
+      </div>
+    </div>
+  );
+}
+
+// ── LOA Alert Banner ──────────────────────────────────────────────────────────
+function LoaBanner({loaList, usedMap, onManage}) {
+  const alerts = loaList.filter(l => (l.total_count-(usedMap[l.id]||0)) < (l.alert_threshold||10));
+  if (!alerts.length) return null;
+  return (
+    <div style={{background:'#fef3c7',border:'1px solid #fde68a',borderRadius:'8px',padding:'10px 16px',marginBottom:'16px',display:'flex',gap:'12px',alignItems:'flex-start'}}>
+      <span style={{fontSize:'22px',flexShrink:0}}>⚠️</span>
+      <div style={{flex:1}}>
+        <div style={{fontWeight:800,fontSize:'13px',color:'#92400e',marginBottom:'4px'}}>LOA Running Low — Request New LOA from Customer</div>
+        {alerts.map(l => {
+          const rem = l.total_count-(usedMap[l.id]||0);
+          return (
+            <div key={l.id} style={{fontSize:'12.5px',color:'#78350f',marginBottom:'2px'}}>
+              <strong>{l.customer_name}</strong> · {l.location}: <strong style={{color:rem<=5?'#dc2626':'#b45309'}}>{rem} remaining</strong> of {l.total_count} (ref: {l.loa_reference||'—'})
+              <span style={{marginLeft:'10px',color:'#0369a1',cursor:'pointer',textDecoration:'underline'}} onClick={onManage}>Manage LOA →</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Document Panel ────────────────────────────────────────────────────────────
+// Slide-out right panel: shows candidate/mob record details, documents, AI scan
+function DocumentPanel({entity, entityType, onClose, onApplyAiData}) {
+  const [docs,       setDocs]       = useState([]);
+  const [loading,    setLoading]    = useState(true);
+  const [uploading,  setUploading]  = useState(false);
+  const [scanning,   setScanning]   = useState(null); // doc id being scanned
+  const [scanResult, setScanResult] = useState(null);
+  const [err,        setErr]        = useState('');
+  const [docType,    setDocType]    = useState('passport');
+  const fileRef = useRef(null);
+
+  const DOC_TYPES = [
+    {v:'passport',    l:'Passport'},
+    {v:'eid',         l:'Emirates ID'},
+    {v:'visa',        l:'UAE Visa'},
+    {v:'medical',     l:'Medical Certificate'},
+    {v:'work_permit', l:'Work Permit'},
+    {v:'cicpa',       l:'CICPA Gate Pass'},
+    {v:'other',       l:'Other'},
+  ];
+
+  const loadDocs = useCallback(async () => {
+    setLoading(true);
+    const { data } = await db.from('mob_documents')
+      .select('*')
+      .eq('entity_type', entityType)
+      .eq('entity_id', entity.id)
+      .order('uploaded_at', {ascending:false});
+    setDocs(data || []);
+    setLoading(false);
+  }, [entity.id, entityType]);
+
+  useEffect(() => { loadDocs(); }, [loadDocs]);
+
+  const handleUpload = async e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setErr(''); setUploading(true);
+    try {
+      await uploadDocument(file, entityType, entity.id, docType, DOC_TYPES.find(d=>d.v===docType)?.l || docType);
+      await loadDocs();
+    } catch(ex) { setErr(ex.message); }
+    setUploading(false);
+    e.target.value = '';
+  };
+
+  const viewDoc = async doc => {
+    try {
+      const url = await getSignedUrl(doc.file_path);
+      window.open(url, '_blank');
+    } catch(ex) { setErr(ex.message); }
+  };
+
+  const deleteDoc = async doc => {
+    if (!window.confirm(`Delete "${doc.doc_label}"?`)) return;
+    await db.storage.from(DOC_BUCKET).remove([doc.file_path]);
+    await db.from('mob_documents').delete().eq('id', doc.id);
+    await loadDocs();
+  };
+
+  const scanDoc = async doc => {
+    setErr(''); setScanning(doc.id); setScanResult(null);
+    try {
+      // Download file content for scanning
+      const { data: blob } = await db.storage.from(DOC_BUCKET).download(doc.file_path);
+      const file = new File([blob], doc.file_name || 'doc', { type: doc.mime_type || 'image/jpeg' });
+      const result = await aiScanDocument(file, doc.doc_type || 'other');
+      setScanResult({ docId: doc.id, data: result, docType: doc.doc_type });
+      // Mark as scanned in DB
+      await db.from('mob_documents').update({ ai_scanned: true, ai_data: result }).eq('id', doc.id);
+      await loadDocs();
+    } catch(ex) { setErr('AI scan failed: ' + ex.message); }
+    setScanning(null);
+  };
+
+  const applyToRecord = data => {
+    if (onApplyAiData) onApplyAiData(data, scanResult?.docType);
+    setScanResult(null);
+  };
+
+  // Field mapping from AI scan result to record fields
+  const getSuggestedFields = (aiData, docType) => {
+    const map = {
+      passport:    [['full_name','Full Name'],['passport_no','Passport No'],['nationality','Nationality'],['date_of_birth','Date of Birth'],['expiry_date','Passport Expiry']],
+      eid:         [['full_name','Full Name'],['emirates_id','Emirates ID'],['expiry_date','EID Expiry']],
+      visa:        [['full_name','Full Name'],['visa_no','Visa No'],['visa_type','Visa Type'],['expiry_date','Visa Expiry']],
+      medical:     [['result','Result'],['exam_date','Medical Date'],['expiry_date','Medical Expiry']],
+      work_permit: [['full_name','Full Name'],['wp_no','WP Number'],['expiry_date','WP Expiry']],
+      cicpa:       [['full_name','Full Name'],['pass_no','CICPA Pass No'],['expiry_date','CICPA Expiry']],
+    };
+    return (map[docType] || []).filter(([k]) => aiData[k]);
+  };
+
+  const typeColor = { passport:'#2563eb',eid:'#7c3aed',visa:'#0369a1',medical:'#166534',work_permit:'#b45309',cicpa:'#991b1b',other:'#475569' };
+
+  return (
+    <div style={{position:'fixed',inset:0,zIndex:400,display:'flex'}}>
+      {/* Backdrop */}
+      <div style={{flex:1,background:'rgba(0,0,0,0.4)'}} onClick={onClose}/>
+      {/* Panel */}
+      <div style={{width:'480px',background:'#fff',height:'100%',overflowY:'auto',boxShadow:'-8px 0 32px rgba(0,0,0,0.2)',display:'flex',flexDirection:'column'}}>
+        {/* Header */}
+        <div style={{padding:'16px 20px',background:'#0f172a',color:'#fff',flexShrink:0}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+            <div>
+              <div style={{fontSize:'11px',fontWeight:700,color:'#b8972a',textTransform:'uppercase',letterSpacing:'1px',marginBottom:'2px'}}>
+                {entityType === 'candidate' ? 'Candidate' : 'Mobilisation Record'}
+              </div>
+              <div style={{fontWeight:800,fontSize:'16px'}}>{entity.full_name}</div>
+              <div style={{fontSize:'12px',color:'#94a3b8',marginTop:'2px'}}>
+                {entity.designation||'—'}
+                {entityType==='mobilisation' && ` · ${entity.customer_name} / ${entity.location}`}
+              </div>
+            </div>
+            <button onClick={onClose} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'#fff',width:32,height:32,borderRadius:'50%',cursor:'pointer',fontSize:'18px',display:'flex',alignItems:'center',justifyContent:'center'}}>×</button>
+          </div>
+        </div>
+
+        {/* Key details strip */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'1px',background:'#e2e8f0',borderBottom:'1px solid #e2e8f0',flexShrink:0}}>
+          {[
+            ['Passport No', entity.passport_no],
+            ['Emirates ID', entity.emirates_id],
+            ['Nationality', entity.nationality],
+            ['DOB', entity.date_of_birth ? fmtDOB(entity.date_of_birth) : null],
+            ['Visa Location', entity.visa_location],
+            ['Supplier / EmpNo', entity.supplier_name ? `${entity.supplier_name}${entity.supplier_emp_no?' #'+entity.supplier_emp_no:''}` : null],
+          ].map(([l,v])=> v ? (
+            <div key={l} style={{padding:'8px 14px',background:'#fff'}}>
+              <div style={{fontSize:'10px',fontWeight:700,color:'#94a3b8',textTransform:'uppercase'}}>{l}</div>
+              <div style={{fontSize:'12.5px',fontWeight:600,fontFamily:l.includes('No')||l.includes('ID')?'monospace':undefined}}>{v}</div>
+            </div>
+          ) : null)}
+        </div>
+
+        {/* Upload section */}
+        <div style={{padding:'14px 20px',borderBottom:'1px solid #e2e8f0',background:'#f8fafc',flexShrink:0}}>
+          <div style={{fontWeight:700,fontSize:'12px',color:'#0f172a',marginBottom:'8px'}}>📎 Upload Document</div>
+          <div style={{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}}>
+            <select value={docType} onChange={e=>setDocType(e.target.value)} style={{...S.input,width:'150px',fontSize:'12px',padding:'6px 8px'}}>
+              {DOC_TYPES.map(d=><option key={d.v} value={d.v}>{d.l}</option>)}
+            </select>
+            <button onClick={()=>fileRef.current?.click()} disabled={uploading}
+              style={{...S.btnGold,padding:'6px 14px',fontSize:'12px'}}>
+              {uploading ? 'Uploading…' : '⬆ Choose File'}
+            </button>
+            <input ref={fileRef} type="file" accept="image/*,application/pdf" style={{display:'none'}} onChange={handleUpload}/>
+          </div>
+          <div style={{fontSize:'11px',color:'#94a3b8',marginTop:'4px'}}>Accepts PDF, JPG, PNG · After upload, click Scan with AI to extract data</div>
+        </div>
+
+        {/* AI scan result */}
+        {scanResult && (
+          <div style={{padding:'14px 20px',background:'#f0fdf4',borderBottom:'1px solid #bbf7d0',flexShrink:0}}>
+            <div style={{fontWeight:700,fontSize:'12px',color:'#166534',marginBottom:'8px'}}>✨ AI Scan Result</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px',marginBottom:'10px'}}>
+              {Object.entries(scanResult.data).map(([k,v])=> v ? (
+                <div key={k} style={{background:'#fff',borderRadius:6,padding:'6px 10px',border:'1px solid #bbf7d0'}}>
+                  <div style={{fontSize:'10px',fontWeight:700,color:'#94a3b8',textTransform:'uppercase'}}>{k.replace(/_/g,' ')}</div>
+                  <div style={{fontSize:'12px',fontWeight:600}}>{String(v)}</div>
+                </div>
+              ) : null)}
+            </div>
+            <div style={{display:'flex',gap:'8px'}}>
+              <button style={{...S.btnGrn,padding:'6px 14px',fontSize:'12px'}} onClick={()=>applyToRecord(scanResult.data)}>
+                Apply to Record
+              </button>
+              <button style={{...S.btnSec,padding:'6px 14px',fontSize:'12px'}} onClick={()=>setScanResult(null)}>Dismiss</button>
+            </div>
+            {getSuggestedFields(scanResult.data, scanResult.docType).length > 0 && (
+              <div style={{fontSize:'11px',color:'#166534',marginTop:'6px'}}>
+                Will update: {getSuggestedFields(scanResult.data, scanResult.docType).map(([,l])=>l).join(', ')}
+              </div>
+            )}
+          </div>
+        )}
+
+        {err && <div style={{margin:'10px 20px',padding:'8px 12px',background:'#fee2e2',color:'#991b1b',borderRadius:6,fontSize:'12px'}}>{err}<button onClick={()=>setErr('')} style={{marginLeft:'8px',background:'none',border:'none',cursor:'pointer',color:'#991b1b'}}>×</button></div>}
+
+        {/* Documents list */}
+        <div style={{flex:1,padding:'14px 20px',overflowY:'auto'}}>
+          <div style={{fontWeight:700,fontSize:'12px',color:'#0f172a',marginBottom:'10px'}}>📄 Documents ({docs.length})</div>
+          {loading && <div style={{color:'#94a3b8',fontSize:'13px'}}>Loading…</div>}
+          {!loading && docs.length===0 && (
+            <div style={{textAlign:'center',padding:'30px 20px',color:'#94a3b8',border:'2px dashed #e2e8f0',borderRadius:8}}>
+              <div style={{fontSize:'28px',marginBottom:'8px'}}>📁</div>
+              <div style={{fontSize:'13px'}}>No documents uploaded yet</div>
+              <div style={{fontSize:'11px',marginTop:'4px'}}>Upload passport, EID, visa, medical or CICPA above</div>
+            </div>
+          )}
+          {docs.map(doc => (
+            <div key={doc.id} style={{border:'1px solid #e2e8f0',borderRadius:8,padding:'10px 12px',marginBottom:'8px',background:'#fff'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:'flex',gap:'6px',alignItems:'center',marginBottom:'3px'}}>
+                    <span style={{background:typeColor[doc.doc_type]||'#475569',color:'#fff',fontSize:'10px',fontWeight:700,padding:'2px 7px',borderRadius:10,flexShrink:0}}>
+                      {DOC_TYPES.find(d=>d.v===doc.doc_type)?.l||doc.doc_type}
+                    </span>
+                    {doc.ai_scanned && <span style={{fontSize:'10px',color:'#166534',fontWeight:700}}>✨ AI scanned</span>}
+                  </div>
+                  <div style={{fontSize:'12.5px',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{doc.doc_label||doc.file_name}</div>
+                  <div style={{fontSize:'11px',color:'#94a3b8',marginTop:'2px'}}>
+                    {doc.file_size ? Math.round(doc.file_size/1024)+'KB' : ''} · {fmtDate(doc.uploaded_at)}
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:'4px',flexShrink:0,marginLeft:'8px'}}>
+                  <button style={{...S.btnSm,padding:'4px 8px'}} onClick={()=>viewDoc(doc)} title="Open">👁</button>
+                  <button style={{...S.btnSm,padding:'4px 8px',background:scanning===doc.id?'#f0fdf4':'#fff'}} onClick={()=>scanDoc(doc)} disabled={scanning===doc.id} title="Scan with AI">
+                    {scanning===doc.id ? '⏳' : '✨'}
+                  </button>
+                  <button style={{...S.btnSm,padding:'4px 8px',color:'#dc2626'}} onClick={()=>deleteDoc(doc)} title="Delete">🗑</button>
+                </div>
+              </div>
+              {doc.ai_data && (
+                <div style={{marginTop:'6px',padding:'6px 8px',background:'#f8fafc',borderRadius:5,fontSize:'11px',color:'#475569'}}>
+                  {Object.entries(doc.ai_data).filter(([,v])=>v).slice(0,3).map(([k,v])=>`${k.replace(/_/g,' ')}: ${v}`).join(' · ')}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Person History Modal ──────────────────────────────────────────────────────
+function PersonHistoryModal({candidate, mobHistory, onClose, onNewMob}) {
+  const active   = mobHistory.filter(m => m.status === 'mobilised');
+  const past     = mobHistory.filter(m => m.status !== 'mobilised');
+  const isAvail  = active.length === 0;
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}} onClick={onClose}>
+      <div style={{background:'#fff',borderRadius:'12px',width:'100%',maxWidth:'760px',maxHeight:'90vh',overflowY:'auto'}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:'16px 20px',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',alignItems:'flex-start',background:'#f8fafc',borderRadius:'12px 12px 0 0'}}>
+          <div>
+            <div style={{fontWeight:800,fontSize:'16px',color:'#0f172a'}}>{candidate.full_name}</div>
+            <div style={{fontSize:'12px',color:'#64748b',marginTop:'3px'}}>
+              {candidate.designation||'—'} · {candidate.supplier_name||'SATCO Own'}
+              {candidate.supplier_emp_no&&<span style={{fontFamily:'monospace',marginLeft:'6px'}}>#{candidate.supplier_emp_no}</span>}
+            </div>
+            <div style={{fontSize:'12px',color:'#64748b',marginTop:'2px'}}>
+              {candidate.passport_no&&<span style={{fontFamily:'monospace',marginRight:'12px'}}>Passport: {candidate.passport_no}</span>}
+              {candidate.emirates_id&&<span style={{fontFamily:'monospace'}}>EID: {candidate.emirates_id}</span>}
+            </div>
+          </div>
+          <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
+            <span style={{background:isAvail?'#dcfce7':'#eff6ff',color:isAvail?'#166534':'#1e40af',fontWeight:700,fontSize:'12px',padding:'4px 12px',borderRadius:20}}>
+              {isAvail ? '✓ Available' : `🏗️ On Site (${active.length})`}
+            </span>
+            <button style={S.btnGrn} onClick={onNewMob}>+ New Mobilisation</button>
+            <button style={S.btnSec} onClick={onClose}>Close</button>
+          </div>
+        </div>
+
+        <div style={{padding:'16px 20px'}}>
+          {/* Personal details strip */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'10px',background:'#f8fafc',borderRadius:'8px',padding:'12px',marginBottom:'16px'}}>
+            {[['Nationality',candidate.nationality],['DOB',fmtDOB(candidate.date_of_birth)],['Visa Location',candidate.visa_location],['Visa Expiry',fmtDate(candidate.visa_expiry)]].map(([l,v])=>(
+              <div key={l}>
+                <div style={{fontSize:'10px',fontWeight:700,color:'#94a3b8',textTransform:'uppercase'}}>{l}</div>
+                <div style={{fontSize:'13px',fontWeight:600,color: l==='Visa Expiry'&&isExpired(candidate.visa_expiry)?'#dc2626':'#0f172a'}}>{v||'—'}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Deployment history */}
+          <div style={{fontWeight:800,fontSize:'13px',marginBottom:'10px',color:'#0f172a'}}>📋 Deployment History ({mobHistory.length} record{mobHistory.length!==1?'s':''})</div>
+          {mobHistory.length === 0 && <div style={{color:'#94a3b8',fontSize:'13px',padding:'16px',textAlign:'center',border:'1px dashed #e2e8f0',borderRadius:'8px'}}>No mobilisation records yet.</div>}
+          {mobHistory.map((m,i) => (
+            <div key={m.id} style={{border:'1px solid #e2e8f0',borderRadius:'8px',padding:'12px 14px',marginBottom:'10px',borderLeft:`4px solid ${m.status==='mobilised'?'#166534':m.status==='demobilised'?'#94a3b8':'#b45309'}`}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'8px'}}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:'14px'}}>{m.customer_name} — {m.location}</div>
+                  <div style={{fontSize:'12px',color:'#64748b'}}>{m.designation||'—'}</div>
+                </div>
+                <StatusBadge status={m.status}/>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'8px',fontSize:'12px'}}>
+                <div><span style={{color:'#94a3b8'}}>Mob Date: </span><strong>{fmtDate(m.mobilisation_date)}</strong></div>
+                <div><span style={{color:'#94a3b8'}}>Demob Date: </span><strong>{fmtDate(m.demobilisation_date)||'—'}</strong></div>
+                <div><span style={{color:'#94a3b8'}}>CICPA: </span><strong>{m.cicpa_pass_no||'—'}</strong></div>
+                <div><span style={{color:'#94a3b8'}}>Work Permit: </span><strong>{m.wp_no||'—'}</strong></div>
+                <div><span style={{color:'#94a3b8'}}>WP Approved: </span><strong>{fmtDate(m.wp_approved_date)}</strong></div>
+                <div><span style={{color:'#94a3b8'}}>LOA Ref: </span><strong>{m.loa_reference||'—'}</strong></div>
+              </div>
+              {m.status==='demobilised'&&(
+                <div style={{marginTop:'8px',padding:'8px',background:'#f8fafc',borderRadius:'6px',fontSize:'12px'}}>
+                  <span style={{fontWeight:700,color:'#475569'}}>Demob Reason: </span>{m.demob_reason||'—'}
+                  {m.demob_remarks&&<span style={{marginLeft:'10px',color:'#64748b'}}>{m.demob_remarks}</span>}
+                  {m.wp_action_on_demob&&<span style={{marginLeft:'10px',color:'#0369a1'}}>WP: {m.wp_action_on_demob}</span>}
+                  {m.cicpa_returned&&<span style={{marginLeft:'10px',color:'#7c3aed'}}>CICPA returned ✓</span>}
+                </div>
+              )}
+              {m.notes&&<div style={{marginTop:'6px',fontSize:'11px',color:'#64748b',fontStyle:'italic'}}>{m.notes}</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Demobilise Modal ──────────────────────────────────────────────────────────
+function DemobModal({record, onSave, onClose}) {
+  const [form, setForm] = useState({
+    demobilisation_date: todayStr(),
+    demob_reason: '',
+    demob_remarks: '',
+    wp_action_on_demob: '',
+    cicpa_returned: false,
+    status: 'demobilised',
+  });
+  const save = async () => {
+    if (!form.demob_reason) return alert('Please select a demob reason');
+    if (!form.demobilisation_date) return alert('Demobilisation date is required');
+    onSave(record.id, form);
+  };
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}} onClick={onClose}>
+      <div style={{background:'#fff',borderRadius:'12px',width:'100%',maxWidth:'520px',padding:'24px'}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontWeight:800,fontSize:'16px',color:'#991b1b',marginBottom:'4px'}}>Demobilise Personnel</div>
+        <div style={{fontSize:'13px',color:'#64748b',marginBottom:'16px'}}>
+          <strong>{record.full_name}</strong> — {record.customer_name} / {record.location}
+        </div>
+        <Grid cols={2}>
+          <Field label="Demobilisation Date *">
+            <input type="date" value={form.demobilisation_date} onChange={e=>setForm(f=>({...f,demobilisation_date:e.target.value}))} style={S.input}/>
+          </Field>
+          <Field label="Reason *">
+            <select value={form.demob_reason} onChange={e=>setForm(f=>({...f,demob_reason:e.target.value}))} style={S.input}>
+              <option value="">Select reason…</option>
+              {DEMOB_REASONS.map(r=><option key={r} value={r}>{r}</option>)}
+            </select>
+          </Field>
+          <Field label="Work Permit Action" span={2}>
+            <select value={form.wp_action_on_demob} onChange={e=>setForm(f=>({...f,wp_action_on_demob:e.target.value}))} style={S.input}>
+              <option value="">Select…</option>
+              <option value="Transferred to new project">Transferred to new project</option>
+              <option value="Cancelled">Cancelled</option>
+              <option value="Retained under SATCO">Retained under SATCO</option>
+              <option value="Transferred back to supplier">Transferred back to supplier</option>
+            </select>
+          </Field>
+        </Grid>
+        <Field label="Remarks">
+          <input value={form.demob_remarks} onChange={e=>setForm(f=>({...f,demob_remarks:e.target.value}))} placeholder="Any additional notes on demobilisation" style={{...S.input,marginBottom:'12px'}}/>
+        </Field>
+        <label style={{display:'flex',gap:'8px',alignItems:'center',cursor:'pointer',marginBottom:'16px',fontSize:'13px',fontWeight:600}}>
+          <input type="checkbox" checked={form.cicpa_returned} onChange={e=>setForm(f=>({...f,cicpa_returned:e.target.checked}))} style={{width:16,height:16}}/>
+          CICPA Gate Pass returned / cancelled
+        </label>
+        <div style={{display:'flex',gap:'8px'}}>
+          <button style={S.btnRed} onClick={save}>Confirm Demobilisation</button>
+          <button style={S.btnSec} onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+function Dashboard({data, loaUsed, setTab, setFilterStatus}) {
+  const {candidates, loaList, mobList} = data;
+  const active     = mobList.filter(m=>m.status==='mobilised').length;
+  const pending    = mobList.filter(m=>m.status==='pending').length;
+  const demobbed   = mobList.filter(m=>m.status==='demobilised').length;
+  const noWP       = mobList.filter(m=>!m.wp_approved_date&&!['rejected','demobilised'].includes(m.status)).length;
+  const noCICPA    = mobList.filter(m=>!m.cicpa_pass_no&&!['rejected','demobilised'].includes(m.status)).length;
+  const medPending = mobList.filter(m=>!m.medical_done&&!['rejected','demobilised'].includes(m.status)).length;
+  const expCICPA   = mobList.filter(m=>m.cicpa_expiry_date&&daysUntil(m.cicpa_expiry_date)<=30&&daysUntil(m.cicpa_expiry_date)>=0&&m.status==='mobilised');
+  const expVisa    = candidates.filter(c=>c.visa_expiry&&isExpired(c.visa_expiry)&&c.active);
+
+  // Available candidates (no active mobilisation)
+  const activeCandIds = new Set(mobList.filter(m=>m.status==='mobilised').map(m=>m.candidate_id).filter(Boolean));
+  const availCands = candidates.filter(c=>!activeCandIds.has(c.id)&&c.active);
+
+  const Stat=({label,value,color,sub,onClick})=>(
+    <div onClick={onClick} style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'18px 20px',cursor:onClick?'pointer':'default',transition:'border-color 0.15s'}}
+      onMouseEnter={e=>onClick&&(e.currentTarget.style.borderColor='#b8972a')}
+      onMouseLeave={e=>e.currentTarget.style.borderColor='#e2e8f0'}>
+      <div style={{fontSize:'11px',fontWeight:700,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>{label}</div>
+      <div style={{fontSize:'32px',fontWeight:800,color,lineHeight:1}}>{value}</div>
+      {sub&&<div style={{fontSize:'11px',color:'#94a3b8',marginTop:'4px'}}>{sub}</div>}
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(155px,1fr))',gap:'12px',marginBottom:'20px'}}>
+        <Stat label="Candidates Pool"    value={candidates.length}  color="#2563eb"  onClick={()=>setTab('candidates')} />
+        <Stat label="Available"          value={availCands.length}  color="#0369a1"  sub="not currently mobilised" onClick={()=>setTab('candidates')} />
+        <Stat label="Active On Site"     value={active}             color="#166534"  onClick={()=>{setFilterStatus('mobilised');setTab('mobilisation');}} />
+        <Stat label="Pending"            value={pending}            color="#b45309"  onClick={()=>{setFilterStatus('pending');setTab('mobilisation');}} />
+        <Stat label="Demobilised"        value={demobbed}           color="#475569"  onClick={()=>{setFilterStatus('demobilised');setTab('mobilisation');}} />
+        <Stat label="No Work Permit"     value={noWP}               color="#dc2626"  sub="approved" />
+        <Stat label="No CICPA Pass"      value={noCICPA}            color="#7c3aed" />
+        <Stat label="CICPA Expiring"     value={expCICPA.length}    color="#b45309"  sub="within 30 days" />
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'16px'}}>
+        {/* LOA Status */}
+        <div style={S.card}>
+          <div style={{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#f8fafc'}}>
+            <div style={{fontWeight:800,fontSize:'13px'}}>📄 LOA Status</div>
+            <button style={S.btnSm} onClick={()=>setTab('loa')}>Manage →</button>
+          </div>
+          <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <thead><tr>{['Customer','Location','Remaining','Used','Total'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>
+              {loaList.length===0&&<tr><td colSpan={5} style={{padding:'16px',textAlign:'center',color:'#94a3b8',fontSize:'13px'}}>No LOA registered</td></tr>}
+              {loaList.map(l=>{
+                const used=loaUsed[l.id]||0, rem=l.total_count-used, low=rem<(l.alert_threshold||10);
+                return <tr key={l.id} style={{background:low?'#fffbeb':'#fff'}}>
+                  <td style={{...S.td,fontWeight:700}}>{l.customer_name}</td>
+                  <td style={S.td}>{l.location}</td>
+                  <td style={{...S.td,fontWeight:800,color:rem<=5?'#dc2626':low?'#b45309':'#166534'}}>{rem}</td>
+                  <td style={{...S.td,color:'#0369a1'}}>{used}</td>
+                  <td style={{...S.td,color:'#64748b'}}>{l.total_count}</td>
+                </tr>;
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* CICPA Expiry */}
+        <div style={S.card}>
+          <div style={{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',background:'#f8fafc'}}>
+            <div style={{fontWeight:800,fontSize:'13px'}}>⏰ CICPA Expiring (30 days)</div>
+          </div>
+          <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <thead><tr>{['Name','Customer / Location','Pass No','Days Left'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>
+              {expCICPA.length===0&&<tr><td colSpan={4} style={{padding:'16px',textAlign:'center',color:'#94a3b8',fontSize:'13px'}}>No expiries in next 30 days</td></tr>}
+              {expCICPA.map(r=>{
+                const d=daysUntil(r.cicpa_expiry_date);
+                return <tr key={r.id} style={{background:d<=7?'#fee2e2':'#fffbeb'}}>
+                  <td style={{...S.td,fontWeight:600}}>{r.full_name}</td>
+                  <td style={S.td}>{r.customer_name} / {r.location}</td>
+                  <td style={{...S.td,fontFamily:'monospace',fontSize:'11px'}}>{r.cicpa_pass_no}</td>
+                  <td style={{...S.td,fontWeight:800,color:d<=7?'#dc2626':'#b45309'}}>{d}d</td>
+                </tr>;
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Expired Visas */}
+        {expVisa.length>0&&(
+          <div style={S.card}>
+            <div style={{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',background:'#fef2f2'}}>
+              <div style={{fontWeight:800,fontSize:'13px',color:'#991b1b'}}>🚨 Expired Visas in Candidates Pool</div>
+            </div>
+            <table style={{width:'100%',borderCollapse:'collapse'}}>
+              <thead><tr>{['Name','Designation','Supplier','Visa Location','Expired'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <tbody>
+                {expVisa.slice(0,10).map(c=><tr key={c.id}>
+                  <td style={{...S.td,fontWeight:600}}>{c.full_name}</td>
+                  <td style={S.td}>{c.designation||'—'}</td>
+                  <td style={S.td}>{c.supplier_name||'SATCO Own'}</td>
+                  <td style={S.td}>{c.visa_location||'—'}</td>
+                  <td style={{...S.td,color:'#dc2626',fontWeight:700}}>{fmtDate(c.visa_expiry)}</td>
+                </tr>)}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Recent mob */}
+        <div style={S.card}>
+          <div style={{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',background:'#f8fafc'}}>
+            <div style={{fontWeight:800,fontSize:'13px'}}>🏗️ Recent Activity</div>
+            <button style={S.btnSm} onClick={()=>setTab('mobilisation')}>View All →</button>
+          </div>
+          <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <thead><tr>{['Name','Designation','Customer / Location','Status'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>
+              {mobList.slice(0,8).map(r=><tr key={r.id} className="hr-row">
+                <td style={{...S.td,fontWeight:600}}>{r.full_name}</td>
+                <td style={S.td}>{r.designation||'—'}</td>
+                <td style={S.td}>{r.customer_name} / {r.location}</td>
+                <td style={S.td}><StatusBadge status={r.status}/></td>
+              </tr>)}
+              {mobList.length===0&&<tr><td colSpan={4} style={{padding:'16px',textAlign:'center',color:'#94a3b8'}}>No records yet</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+// ── Candidates Tab ────────────────────────────────────────────────────────────
+function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch}) {
+  const [draft,setDraft]   = useState(null);
+  const [search,setSearch] = useState(tabSearch||'');
+  const [suppF,setSuppF]   = useState('');
+  const [histPerson, setHistPerson] = useState(null);
+  const [docPanel,  setDocPanel]   = useState(null); // {entity, entityType}
+  const clickTimer  = useRef(null);
+
+  useEffect(()=>{ if(tabSearch) setSearch(tabSearch); },[tabSearch]);
+
+  const activeCandIds = useMemo(()=>new Set(mobList.filter(m=>m.status==='mobilised').map(m=>m.candidate_id).filter(Boolean)),[mobList]);
+  const supplierList  = useMemo(()=>[...new Set(candidates.map(c=>c.supplier_name).filter(Boolean))].sort(),[candidates]);
+
+  const filtered = useMemo(()=> candidates.filter(c=>{
+    if (suppF && c.supplier_name !== suppF) return false;
+    return matchSearch(c, search);
+  }), [candidates, search, suppF]);
+
+  const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',passport_expiry:'',emirates_id:'',eid_expiry:'',visa_no:'',visa_type:'',visa_location:'',visa_expiry:'',phone:'',remarks:'',active:true}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
+
+  const personHistory = (cand) => {
+    const hist = mobList.filter(m => m.candidate_id === cand.id || m.full_name === cand.full_name);
+    setHistPerson({candidate:cand, history:hist});
+  };
+
+  // Single click = highlight + open doc panel; double click = open edit form
+  const handleRowClick = (cand, e) => {
+    if (e.target.closest('button')) return;
+    clearTimeout(clickTimer.current);
+    clickTimer.current = setTimeout(() => {
+      setDocPanel({entity: cand, entityType: 'candidate'});
+    }, 220);
+  };
+  const handleRowDblClick = (cand, e) => {
+    if (e.target.closest('button')) return;
+    clearTimeout(clickTimer.current);
+    setDraft({...cand});
+    setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);
+  };
+
+  // Apply AI-scanned data back to a candidate record
+  const applyAiData = async (aiData, docType) => {
+    if (!docPanel) return;
+    const fieldMap = {
+      full_name: 'full_name', passport_no: 'passport_no', nationality: 'nationality',
+      date_of_birth: 'date_of_birth', expiry_date: docType==='passport'?'passport_expiry':docType==='eid'?'eid_expiry':docType==='visa'?'visa_expiry':null,
+      emirates_id: 'emirates_id', visa_no: 'visa_no', visa_type: 'visa_type',
+    };
+    const updates = {};
+    Object.entries(aiData).forEach(([k,v]) => { if (fieldMap[k] && v) updates[fieldMap[k]] = v; });
+    if (!Object.keys(updates).length) return;
+    const { error } = await db.from('mob_candidates').update({...updates, updated_at: new Date().toISOString()}).eq('id', docPanel.entity.id);
+    if (error) { alert(error.message); return; }
+    await onSave('candidates', {...docPanel.entity, ...updates}, ()=>{});
+    setDocPanel(d => d ? {...d, entity:{...d.entity,...updates}} : d);
+    alert('Record updated from AI scan ✓');
+  };
+
+  const exportCols = [
+    {key:'full_name',label:'Name'},{key:'designation',label:'Designation'},{key:'source',label:'Source'},
+    {key:'supplier_name',label:'Supplier'},{key:'supplier_emp_no',label:'Supplier Emp No'},
+    {key:'nationality',label:'Nationality'},{key:'date_of_birth',label:'DOB',date:true},
+    {key:'passport_no',label:'Passport No'},{key:'passport_expiry',label:'Passport Expiry',date:true},
+    {key:'emirates_id',label:'Emirates ID'},{key:'eid_expiry',label:'EID Expiry',date:true},
+    {key:'visa_no',label:'Visa No'},{key:'visa_type',label:'Visa Type'},
+    {key:'visa_location',label:'Visa Location'},{key:'visa_expiry',label:'Visa Expiry',date:true},
+    {key:'phone',label:'Phone'},{key:'remarks',label:'Remarks'},
+  ];
+
+  return (
+    <div>
+      {histPerson && (
+        <PersonHistoryModal
+          candidate={histPerson.candidate}
+          mobHistory={histPerson.history}
+          onClose={()=>setHistPerson(null)}
+          onNewMob={()=>{ setHistPerson(null); onMobilise(histPerson.candidate); }}
+        />
+      )}
+      {docPanel && (
+        <DocumentPanel
+          entity={docPanel.entity}
+          entityType={docPanel.entityType}
+          onClose={()=>setDocPanel(null)}
+          onApplyAiData={applyAiData}
+        />
+      )}
+
+      <div ref={measureToStk2} className="sticky-toolbar" style={{padding:'8px 14px',display:'flex',gap:'8px',justifyContent:'space-between',flexWrap:'wrap',alignItems:'center'}}>
+        <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}}>
+          <input placeholder="Search name, EID, passport, designation, supplier…" value={search} onChange={e=>setSearch(e.target.value)} style={{...S.input,width:'320px'}}/>
+          <select value={suppF} onChange={e=>setSuppF(e.target.value)} style={{...S.input,width:'180px'}}>
+            <option value="">All suppliers</option>
+            {supplierList.map(s=><option key={s} value={s}>{s}</option>)}
+          </select>
+          <span style={{fontSize:'12px',color:'#64748b'}}>{filtered.length} people</span>
+        </div>
+        <div style={{display:'flex',gap:'8px'}}>
+          <button style={S.btnGold} onClick={()=>exportCSV(filtered,'SATCO_Candidates',exportCols)}>⬇ Export</button>
+          <button style={S.btnPri} onClick={blank}>+ Add Person</button>
+        </div>
+      </div>
+
+      {draft&&(
+        <div style={{...S.card,padding:'16px',marginBottom:'14px',background:'#fffbeb',border:'1px solid #fde68a'}}>
+          <div style={{fontWeight:800,fontSize:'14px',color:'#92400e',marginBottom:'14px'}}>{draft.id?'Edit Person':'Add Person to Candidates Pool'}</div>
+          <Grid cols={3}>
+            <Field label="Full Name *"><input value={draft.full_name||''} onChange={e=>setDraft(d=>({...d,full_name:e.target.value}))} style={S.input}/></Field>
+            <Field label="Designation"><input value={draft.designation||''} onChange={e=>setDraft(d=>({...d,designation:e.target.value}))} placeholder="Pipe Fitter / Fabricator / Engineer…" style={S.input}/></Field>
+            <Field label="Source">
+              <select value={draft.source||'supplier'} onChange={e=>setDraft(d=>({...d,source:e.target.value}))} style={S.input}>
+                <option value="supplier">Labour Supplier</option>
+                <option value="satco_own">SATCO Own Employee</option>
+              </select>
+            </Field>
+            {draft.source==='supplier'&&<>
+              <Field label="Supplier Company"><input value={draft.supplier_name||''} onChange={e=>setDraft(d=>({...d,supplier_name:e.target.value}))} style={S.input}/></Field>
+              <Field label="Supplier Emp No"><input value={draft.supplier_emp_no||''} onChange={e=>setDraft(d=>({...d,supplier_emp_no:e.target.value}))} placeholder="e.g. 734" style={S.input}/></Field>
+            </>}
+            <Field label="Nationality"><input value={draft.nationality||''} onChange={e=>setDraft(d=>({...d,nationality:e.target.value}))} style={S.input}/></Field>
+            <Field label="Date of Birth"><input type="date" value={draft.date_of_birth||''} onChange={e=>setDraft(d=>({...d,date_of_birth:e.target.value}))} style={S.input}/></Field>
+            <Field label="Phone"><input value={draft.phone||''} onChange={e=>setDraft(d=>({...d,phone:e.target.value}))} style={S.input}/></Field>
+          </Grid>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>Documents</div>
+          <Grid cols={4}>
+            <Field label="Passport No"><input value={draft.passport_no||''} onChange={e=>setDraft(d=>({...d,passport_no:e.target.value}))} style={S.input}/></Field>
+            <Field label="Passport Expiry"><input type="date" value={draft.passport_expiry||''} onChange={e=>setDraft(d=>({...d,passport_expiry:e.target.value}))} style={S.input}/></Field>
+            <Field label="Emirates ID"><input value={draft.emirates_id||''} onChange={e=>setDraft(d=>({...d,emirates_id:e.target.value}))} style={S.input}/></Field>
+            <Field label="EID Expiry"><input type="date" value={draft.eid_expiry||''} onChange={e=>setDraft(d=>({...d,eid_expiry:e.target.value}))} style={S.input}/></Field>
+            <Field label="Visa No"><input value={draft.visa_no||''} onChange={e=>setDraft(d=>({...d,visa_no:e.target.value}))} style={S.input}/></Field>
+            <Field label="Visa Type"><input value={draft.visa_type||''} onChange={e=>setDraft(d=>({...d,visa_type:e.target.value}))} placeholder="Employment / Visit / Mission" style={S.input}/></Field>
+            <Field label="Visa Issued Emirate">
+              <select value={draft.visa_location||''} onChange={e=>setDraft(d=>({...d,visa_location:e.target.value}))} style={S.input}>
+                <option value="">Select…</option>
+                {UAE_EMIRATES.map(e=><option key={e} value={e}>{e}</option>)}
+              </select>
+            </Field>
+            <Field label="Visa Expiry"><input type="date" value={draft.visa_expiry||''} onChange={e=>setDraft(d=>({...d,visa_expiry:e.target.value}))} style={S.input}/></Field>
+          </Grid>
+          <Field label="Remarks"><input value={draft.remarks||''} onChange={e=>setDraft(d=>({...d,remarks:e.target.value}))} style={{...S.input,marginBottom:'14px'}}/></Field>
+          <div style={{display:'flex',gap:'8px'}}>
+            <button style={S.btnPri} onClick={()=>onSave('candidates',draft,()=>setDraft(null))}>Save</button>
+            <button style={S.btnSec} onClick={()=>setDraft(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{...S.card,overflow:'hidden'}}>
+        <div className="tbl-box drag-scroll" style={{maxHeight:'calc(100vh - var(--stk-2) - 32px)'}}>
+        <table style={{width:'100%',borderCollapse:'collapse',minWidth:'1100px'}}>
+          <thead><tr>
+            <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,minWidth:'160px'}}>Name / Status</th>
+            {['Designation','Supplier / Emp No','Nationality','DOB','Passport','Emirates ID','Visa / Emirate','Expiry','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {filtered.length===0&&<tr><td colSpan={10} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
+            {filtered.map(c=>{
+              const isOnSite = activeCandIds.has(c.id);
+              const vExp = c.visa_expiry&&isExpired(c.visa_expiry);
+              const pExp = c.passport_expiry&&isExpired(c.passport_expiry);
+              return <tr key={c.id} className="hr-row"
+                style={{cursor:'pointer', background: docPanel?.entity?.id===c.id ? '#eff6ff' : undefined}}
+                onClick={e=>handleRowClick(c,e)}
+                onDoubleClick={e=>handleRowDblClick(c,e)}
+                title="Click to view documents · Double-click to edit">
+                <td className="frozen-col" style={{...S.td,fontWeight:700,minWidth:'160px',borderLeft: docPanel?.entity?.id===c.id ? '3px solid #2563eb' : '3px solid transparent'}}>
+                  <div style={{cursor:'pointer',color:'#2563eb'}} onClick={()=>personHistory(c)}>{c.full_name}</div>
+                  <div style={{marginTop:'2px'}}>
+                    {isOnSite
+                      ? <span style={{background:'#dcfce7',color:'#166534',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:8}}>🏗️ On Site</span>
+                      : <span style={{background:'#eff6ff',color:'#2563eb',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:8}}>✓ Available</span>}
+                    {c.source==='satco_own'&&<span style={{background:'#ede9fe',color:'#5b21b6',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:8,marginLeft:'4px'}}>SATCO Own</span>}
+                  </div>
+                </td>
+                <td style={S.td}>{c.designation||'—'}</td>
+                <td style={S.td}>
+                  <div style={{fontWeight:600,fontSize:'12px'}}>{c.supplier_name||'—'}</div>
+                  {c.supplier_emp_no&&<div style={{fontSize:'11px',color:'#64748b',fontFamily:'monospace'}}>#{c.supplier_emp_no}</div>}
+                </td>
+                <td style={S.td}>{c.nationality||'—'}</td>
+                <td style={{...S.td,fontSize:'12px'}}>{c.date_of_birth?fmtDOB(c.date_of_birth):'—'}</td>
+                <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',color:pExp?'#dc2626':undefined}}>
+                  {c.passport_no||'—'}
+                  {pExp&&<div style={{fontSize:'10px',fontWeight:700,color:'#dc2626'}}>EXPIRED</div>}
+                </td>
+                <td style={{...S.td,fontFamily:'monospace',fontSize:'11px'}}>{c.emirates_id||'—'}</td>
+                <td style={S.td}>{c.visa_type||'—'}<div style={{fontSize:'11px',color:'#64748b'}}>{c.visa_location||''}</div></td>
+                <td style={{...S.td,color:vExp?'#dc2626':undefined,fontWeight:vExp?700:400}}>
+                  {fmtDate(c.visa_expiry)}
+                  {vExp&&<div style={{fontSize:'10px',fontWeight:700,color:'#dc2626'}}>EXPIRED</div>}
+                </td>
+                <td style={S.td}>
+                  <div style={{display:'flex',gap:'4px',flexWrap:'wrap'}}>
+                    <button style={S.btnSm} onClick={()=>personHistory(c)}>History</button>
+                    <button style={S.btnSm} onClick={()=>setDraft({...c})}>Edit</button>
+                    <button style={{...S.btnSm,background:'#7c3aed',color:'#fff',border:'none'}} onClick={()=>onMobilise(c)}>+ Mob</button>
+                  </div>
+                </td>
+              </tr>;
+            })}
+          </tbody>
+        </table>
+        </div>{/* tbl-box */}
+      </div>
+    </div>
+  );
+}
+// ── Requirements Tab ──────────────────────────────────────────────────────────
+function RequirementsTab({requirements, onSave}) {
+  const [draft,setDraft]=useState(null);
+  const blank=()=>setDraft({customer_name:'',po_reference:'',location:'',requirement_date:todayStr(),_lines:'',notes:''});
+  const save=()=>{
+    if(!draft.customer_name||!draft.location)return alert('Customer and location required');
+    const positions=(draft._lines||'').split('\n').map(l=>{const[p,q]=l.split(':').map(s=>s.trim());return p?{designation:p,qty:parseInt(q)||0}:null;}).filter(Boolean);
+    onSave('requirements',{...draft,positions,total_headcount:positions.reduce((s,p)=>s+p.qty,0)},()=>setDraft(null));
+  };
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'flex-end',marginBottom:'12px'}}>
+        <button style={S.btnPri} onClick={blank}>+ Add Requirement</button>
+      </div>
+      {draft&&(
+        <div style={{...S.card,padding:'16px',marginBottom:'14px',background:'#eff6ff',border:'1px solid #bfdbfe'}}>
+          <div style={{fontWeight:800,fontSize:'14px',color:'#1e40af',marginBottom:'14px'}}>{draft.id?'Edit Requirement':'New Customer Requirement'}</div>
+          <Grid cols={3}>
+            <Field label="Customer *"><input value={draft.customer_name||''} onChange={e=>setDraft(d=>({...d,customer_name:e.target.value}))} placeholder="ADNOC / TAQA / Linde…" style={S.input}/></Field>
+            <Field label="Location *"><input value={draft.location||''} onChange={e=>setDraft(d=>({...d,location:e.target.value}))} placeholder="Ruwais / KEZAD / Das Island…" style={S.input}/></Field>
+            <Field label="PO Reference"><input value={draft.po_reference||''} onChange={e=>setDraft(d=>({...d,po_reference:e.target.value}))} style={S.input}/></Field>
+            <Field label="Date"><input type="date" value={draft.requirement_date||''} onChange={e=>setDraft(d=>({...d,requirement_date:e.target.value}))} style={S.input}/></Field>
+          </Grid>
+          <Field label="Positions & Quantities — one per line as: Designation: Qty">
+            <textarea value={draft._lines||''} onChange={e=>setDraft(d=>({...d,_lines:e.target.value}))} placeholder={"Pipe Fabricator: 50\nScaffolder: 50\nPipe Fitter: 20\nMech Helper: 30"} style={{...S.input,height:'100px',resize:'vertical',fontFamily:'monospace',marginTop:'2px'}}/>
+          </Field>
+          <Field label="Notes"><input value={draft.notes||''} onChange={e=>setDraft(d=>({...d,notes:e.target.value}))} style={{...S.input,marginTop:'8px'}}/></Field>
+          <div style={{display:'flex',gap:'8px',marginTop:'12px'}}>
+            <button style={S.btnPri} onClick={save}>Save</button>
+            <button style={S.btnSec} onClick={()=>setDraft(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+      <div style={{...S.card,overflow:'hidden'}}>
+        <div className="drag-scroll" style={{overflowX:'auto'}}>
+        <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <thead><tr>{['Customer','Location','PO Ref','Date','Breakdown','Total','Notes',''].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <tbody>
+            {requirements.length===0&&<tr><td colSpan={8} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No requirements yet.</td></tr>}
+            {requirements.map(r=><tr key={r.id} className="hr-row">
+              <td style={{...S.td,fontWeight:700}}>{r.customer_name}</td>
+              <td style={S.td}>{r.location}</td>
+              <td style={{...S.td,fontFamily:'monospace',fontSize:'11px'}}>{r.po_reference||'—'}</td>
+              <td style={S.td}>{fmtDate(r.requirement_date)}</td>
+              <td style={S.td}>{(r.positions||[]).map((p,i)=><div key={i} style={{fontSize:'12px'}}><strong>{p.qty}</strong> × {p.designation}</div>)}</td>
+              <td style={{...S.td,fontWeight:800,fontSize:'18px',textAlign:'center'}}>{r.total_headcount}</td>
+              <td style={S.td}>{r.notes||'—'}</td>
+              <td style={S.td}><button style={S.btnSm} onClick={()=>setDraft({...r,_lines:(r.positions||[]).map(p=>`${p.designation}: ${p.qty}`).join('\n')})}>Edit</button></td>
+            </tr>)}
+          </tbody>
+        </table>
+        </div>{/* drag-scroll */}
+      </div>
+    </div>
+  );
+}
+
+// ── LOA Tab ───────────────────────────────────────────────────────────────────
+function LoaTab({loaList, usedMap, onSave}) {
+  const [draft,setDraft]=useState(null);
+  const blank=()=>setDraft({customer_name:'',location:'',loa_reference:'',loa_date:todayStr(),total_count:'',alert_threshold:10,notes:''});
+  const save=()=>{
+    if(!draft.customer_name||!draft.location)return alert('Customer and location required');
+    if(!draft.total_count||draft.total_count<1)return alert('LOA count required');
+    onSave('loa',{...draft,total_count:parseInt(draft.total_count),alert_threshold:parseInt(draft.alert_threshold)||10},()=>setDraft(null));
+  };
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'flex-end',marginBottom:'12px'}}>
+        <button style={S.btnGold} onClick={blank}>+ Register LOA</button>
+      </div>
+      {draft&&(
+        <div style={{...S.card,padding:'16px',marginBottom:'14px',background:'#fffbeb',border:'1px solid #fde68a'}}>
+          <div style={{fontWeight:800,fontSize:'14px',color:'#92400e',marginBottom:'14px'}}>{draft.id?'Edit LOA':'Register New LOA'}</div>
+          <Grid cols={3}>
+            <Field label="Customer *"><input value={draft.customer_name||''} onChange={e=>setDraft(d=>({...d,customer_name:e.target.value}))} style={S.input}/></Field>
+            <Field label="Location *"><input value={draft.location||''} onChange={e=>setDraft(d=>({...d,location:e.target.value}))} style={S.input}/></Field>
+            <Field label="LOA Reference"><input value={draft.loa_reference||''} onChange={e=>setDraft(d=>({...d,loa_reference:e.target.value}))} style={S.input}/></Field>
+            <Field label="LOA Date"><input type="date" value={draft.loa_date||''} onChange={e=>setDraft(d=>({...d,loa_date:e.target.value}))} style={S.input}/></Field>
+            <Field label="Total LOA Count *">
+              <input type="number" min="1" value={draft.total_count||''} onChange={e=>setDraft(d=>({...d,total_count:e.target.value}))} placeholder="e.g. 100" style={S.input}/>
+            </Field>
+            <Field label="Alert When Remaining Below">
+              <input type="number" min="1" value={draft.alert_threshold||10} onChange={e=>setDraft(d=>({...d,alert_threshold:e.target.value}))} style={S.input}/>
+              <div style={{fontSize:'11px',color:'#94a3b8',marginTop:'3px'}}>Shows warning banner when fewer than this many LOAs remain</div>
+            </Field>
+          </Grid>
+          <Field label="Notes"><input value={draft.notes||''} onChange={e=>setDraft(d=>({...d,notes:e.target.value}))} style={{...S.input,marginBottom:'14px'}}/></Field>
+          <div style={{display:'flex',gap:'8px'}}><button style={S.btnGold} onClick={save}>Save LOA</button><button style={S.btnSec} onClick={()=>setDraft(null)}>Cancel</button></div>
+        </div>
+      )}
+      <div style={{...S.card,overflow:'hidden'}}>
+        <div className="drag-scroll" style={{overflowX:'auto'}}>
+        <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <thead><tr>{['Customer','Location','LOA Ref','Date','Total','Used','Remaining','Alert At','Notes',''].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <tbody>
+            {loaList.length===0&&<tr><td colSpan={10} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No LOA registered. Click <strong>+ Register LOA</strong>.</td></tr>}
+            {loaList.map(l=>{
+              const used=usedMap[l.id]||0, rem=l.total_count-used, low=rem<(l.alert_threshold||10);
+              return <tr key={l.id} style={{background:low?'#fffbeb':'#fff'}} className="hr-row">
+                <td style={{...S.td,fontWeight:700}}>{l.customer_name}</td>
+                <td style={S.td}>{l.location}</td>
+                <td style={{...S.td,fontFamily:'monospace',fontSize:'11px'}}>{l.loa_reference||'—'}</td>
+                <td style={S.td}>{fmtDate(l.loa_date)}</td>
+                <td style={{...S.td,fontWeight:700,textAlign:'right'}}>{l.total_count}</td>
+                <td style={{...S.td,textAlign:'right',color:'#0369a1',fontWeight:600}}>{used}</td>
+                <td style={{...S.td,textAlign:'right',fontWeight:800,color:rem<=5?'#dc2626':low?'#b45309':'#166534'}}>{rem}</td>
+                <td style={{...S.td,textAlign:'right',color:'#94a3b8'}}>{l.alert_threshold||10}</td>
+                <td style={S.td}>{l.notes||'—'}</td>
+                <td style={S.td}><button style={S.btnSm} onClick={()=>setDraft({...l})}>Edit</button></td>
+              </tr>;
+            })}
+          </tbody>
+        </table>
+        </div>{/* drag-scroll */}
+      </div>
+    </div>
+  );
+}
+// ── Mobilisation Tab ──────────────────────────────────────────────────────────
+function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onSave, onDemob, initialStatus, tabSearch}) {
+  const [draft,setDraft]     = useState(null);
+  const [demobRec,setDemobRec] = useState(null);
+  const [docPanel, setDocPanel] = useState(null);
+  const clickTimer = useRef(null);
+  const [search,setSearch]   = useState(tabSearch||'');
+  const [fCust,setFCust]     = useState('');
+  const [fLoc,setFLoc]       = useState('');
+  const [fStatus,setFStatus] = useState(initialStatus||'');
+
+  useEffect(()=>{ if(initialStatus) setFStatus(initialStatus); },[initialStatus]);
+  useEffect(()=>{ if(tabSearch) setSearch(tabSearch); },[tabSearch]);
+
+  const customers = useMemo(()=>[...new Set(mobList.map(m=>m.customer_name).filter(Boolean))].sort(),[mobList]);
+  const locations = useMemo(()=>[...new Set(mobList.map(m=>m.location).filter(Boolean))].sort(),[mobList]);
+
+  const filtered = useMemo(()=> mobList.filter(m=>{
+    if (fCust && m.customer_name!==fCust) return false;
+    if (fLoc  && m.location!==fLoc)      return false;
+    if (fStatus && m.status!==fStatus)   return false;
+    return matchSearch(m, search);
+  }), [mobList, search, fCust, fLoc, fStatus]);
+
+  const fillFromCandidate = candId => {
+    const c = candidates.find(x=>x.id===candId);
+    if (!c) return;
+    setDraft(d=>({...d, candidate_id:c.id, full_name:c.full_name, designation:c.designation||d.designation,
+      source:c.source||'supplier', supplier_name:c.supplier_name, supplier_emp_no:c.supplier_emp_no,
+      nationality:c.nationality, date_of_birth:c.date_of_birth, passport_no:c.passport_no,
+      emirates_id:c.emirates_id, visa_no:c.visa_no, visa_location:c.visa_location}));
+  };
+
+  const applyLocTrainings = loc => {
+    const cfg = locConfigs.find(l=>l.location===loc);
+    if (!cfg||!cfg.trainings?.length) return;
+    setDraft(d=>({...d, extra_trainings:cfg.trainings.map(t=>({name:t.name,mandatory:t.mandatory,done:false,date:null}))}));
+  };
+
+  const availLoas = draft ? loaList.filter(l=>(!draft.customer_name||l.customer_name===draft.customer_name)&&(!draft.location||l.location===draft.location)) : [];
+
+  const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',emirates_id:'',visa_no:'',visa_location:'',customer_name:'',location:'',loa_id:'',medical_done:false,medical_result:'',hse_passport_done:false,h2s_done:false,extra_trainings:[],status:'pending',notes:''}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
+
+  const handleRowClick = (r, e) => {
+    if (e.target.closest('button')) return;
+    clearTimeout(clickTimer.current);
+    clickTimer.current = setTimeout(() => {
+      setDocPanel({entity: r, entityType: 'mobilisation'});
+    }, 220);
+  };
+  const handleRowDblClick = (r, e) => {
+    if (e.target.closest('button')) return;
+    clearTimeout(clickTimer.current);
+    setDraft({...r});
+    setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);
+  };
+
+  const applyAiData = async (aiData, docType) => {
+    if (!docPanel) return;
+    const fieldMap = {
+      full_name:'full_name', passport_no:'passport_no', nationality:'nationality',
+      date_of_birth:'date_of_birth', emirates_id:'emirates_id',
+      visa_no:'visa_no', visa_type:'visa_type',
+      wp_no:'wp_no',
+      pass_no:'cicpa_pass_no',
+      expiry_date: docType==='work_permit'?null:docType==='cicpa'?'cicpa_expiry_date':null,
+      exam_date: docType==='medical'?'medical_date':null,
+      result: docType==='medical'?'medical_result':null,
+    };
+    const updates = {};
+    Object.entries(aiData).forEach(([k,v])=>{ if(fieldMap[k]&&v) updates[fieldMap[k]]=v; });
+    if(docType==='medical'&&aiData.result) updates.medical_done=true;
+    if(docType==='work_permit'&&aiData.wp_no) updates.wp_approved_date=aiData.issue_date||undefined;
+    if(docType==='cicpa'&&aiData.pass_no){ updates.cicpa_pass_no=aiData.pass_no; updates.cicpa_approved_date=aiData.issue_date||undefined; }
+    if(!Object.keys(updates).length)return;
+    const{error}=await db.from('mob_register').update({...updates,updated_at:new Date().toISOString()}).eq('id',docPanel.entity.id);
+    if(error){alert(error.message);return;}
+    setDocPanel(d=>d?{...d,entity:{...d.entity,...updates}}:d);
+    alert('Mobilisation record updated from AI scan ✓');
+  };
+
+  // Read prefill from candidates tab
+  useEffect(()=>{
+    const pf = sessionStorage.getItem('satco_mob_prefill');
+    if (pf) { try { setDraft(JSON.parse(pf)); } catch(e){} sessionStorage.removeItem('satco_mob_prefill'); }
+  },[]);
+
+  const exportCols = [
+    {key:'full_name',label:'Name'},{key:'designation',label:'Designation'},{key:'source',label:'Source'},
+    {key:'supplier_name',label:'Supplier'},{key:'supplier_emp_no',label:'Supplier Emp No'},
+    {key:'nationality',label:'Nationality'},{key:'date_of_birth',label:'DOB',date:true},
+    {key:'passport_no',label:'Passport No'},{key:'emirates_id',label:'Emirates ID'},{key:'visa_location',label:'Visa Location'},
+    {key:'customer_name',label:'Customer'},{key:'location',label:'Location'},
+    {key:'wp_no',label:'WP No'},{key:'wp_approved_date',label:'WP Approved',date:true},
+    {key:'medical_done',label:'Medical Done',bool:true},{key:'medical_date',label:'Medical Date',date:true},{key:'medical_result',label:'Medical Result'},
+    {key:'hse_passport_done',label:'HSE Passport',bool:true},{key:'hse_passport_date',label:'HSE Date',date:true},
+    {key:'h2s_done',label:'H2S Done',bool:true},{key:'h2s_date',label:'H2S Date',date:true},
+    {key:'cicpa_pass_no',label:'CICPA Pass No'},{key:'cicpa_approved_date',label:'CICPA Approved',date:true},{key:'cicpa_expiry_date',label:'CICPA Expiry',date:true},
+    {key:'status',label:'Status'},{key:'mobilisation_date',label:'Mob Date',date:true},
+    {key:'demobilisation_date',label:'Demob Date',date:true},{key:'demob_reason',label:'Demob Reason'},{key:'demob_remarks',label:'Demob Remarks'},
+    {key:'wp_action_on_demob',label:'WP Action on Demob'},{key:'notes',label:'Notes'},
+  ];
+
+  return (
+    <div>
+      {demobRec && <DemobModal record={demobRec} onClose={()=>setDemobRec(null)} onSave={(id,form)=>{onDemob(id,form);setDemobRec(null);}}/>}
+      {docPanel && (
+        <DocumentPanel
+          entity={docPanel.entity}
+          entityType={docPanel.entityType}
+          onClose={()=>setDocPanel(null)}
+          onApplyAiData={applyAiData}
+        />
+      )}
+
+      <div ref={measureToStk2} className="sticky-toolbar" style={{padding:'8px 14px',display:'flex',gap:'8px',justifyContent:'space-between',flexWrap:'wrap',alignItems:'center'}}>
+        <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}}>
+          <input placeholder="Search name, EID, passport, CICPA…" value={search} onChange={e=>setSearch(e.target.value)} style={{...S.input,width:'260px'}}/>
+          <select value={fCust} onChange={e=>setFCust(e.target.value)} style={{...S.input,width:'140px'}}>
+            <option value="">All customers</option>
+            {customers.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+          <select value={fLoc} onChange={e=>setFLoc(e.target.value)} style={{...S.input,width:'130px'}}>
+            <option value="">All locations</option>
+            {locations.map(l=><option key={l} value={l}>{l}</option>)}
+          </select>
+          <select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={{...S.input,width:'120px'}}>
+            <option value="">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="mobilised">Mobilised</option>
+            <option value="demobilised">Demobilised</option>
+            <option value="rejected">Rejected</option>
+          </select>
+          <span style={{fontSize:'12px',color:'#64748b',whiteSpace:'nowrap'}}>{filtered.length} records</span>
+        </div>
+        <div style={{display:'flex',gap:'8px'}}>
+          <button style={S.btnGold} onClick={()=>exportCSV(filtered,`SATCO_Mob_${fCust||'All'}_${fLoc||'AllLoc'}`,exportCols)}>⬇ Export Excel</button>
+          <button style={S.btnPri} onClick={blank}>+ Add Person</button>
+        </div>
+      </div>
+
+      {draft&&(
+        <div style={{...S.card,padding:'16px',marginBottom:'14px',background:'#f0fdf4',border:'1px solid #bbf7d0'}}>
+          <div style={{fontWeight:800,fontSize:'14px',color:'#166534',marginBottom:'14px'}}>{draft.id?`Edit — ${draft.full_name}`:'Add Person to Mobilisation'}</div>
+          <div style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'8px',padding:'10px 14px',marginBottom:'14px'}}>
+            <label style={S.label}>Quick Fill — Select from Candidates Pool</label>
+            <select onChange={e=>fillFromCandidate(e.target.value)} style={{...S.input,width:'420px'}}>
+              <option value="">Choose a person to auto-fill their details…</option>
+              {candidates.map(c=><option key={c.id} value={c.id}>{c.full_name} — {c.designation||'—'} ({c.supplier_name||'SATCO Own'}) {c.emirates_id?'EID:'+c.emirates_id:''}</option>)}
+            </select>
+          </div>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>Personal Details</div>
+          <Grid cols={3}>
+            <Field label="Full Name *"><input value={draft.full_name||''} onChange={e=>setDraft(d=>({...d,full_name:e.target.value}))} style={S.input}/></Field>
+            <Field label="Designation"><input value={draft.designation||''} onChange={e=>setDraft(d=>({...d,designation:e.target.value}))} style={S.input}/></Field>
+            <Field label="Source">
+              <select value={draft.source||'supplier'} onChange={e=>setDraft(d=>({...d,source:e.target.value}))} style={S.input}>
+                <option value="supplier">Labour Supplier</option>
+                <option value="satco_own">SATCO Own</option>
+              </select>
+            </Field>
+            {draft.source==='supplier'&&<>
+              <Field label="Supplier Name"><input value={draft.supplier_name||''} onChange={e=>setDraft(d=>({...d,supplier_name:e.target.value}))} style={S.input}/></Field>
+              <Field label="Supplier Emp No"><input value={draft.supplier_emp_no||''} onChange={e=>setDraft(d=>({...d,supplier_emp_no:e.target.value}))} style={S.input}/></Field>
+            </>}
+            <Field label="Nationality"><input value={draft.nationality||''} onChange={e=>setDraft(d=>({...d,nationality:e.target.value}))} style={S.input}/></Field>
+            <Field label="Date of Birth"><input type="date" value={draft.date_of_birth||''} onChange={e=>setDraft(d=>({...d,date_of_birth:e.target.value}))} style={S.input}/></Field>
+            <Field label="Passport No"><input value={draft.passport_no||''} onChange={e=>setDraft(d=>({...d,passport_no:e.target.value}))} style={S.input}/></Field>
+            <Field label="Emirates ID"><input value={draft.emirates_id||''} onChange={e=>setDraft(d=>({...d,emirates_id:e.target.value}))} style={S.input}/></Field>
+            <Field label="Visa No"><input value={draft.visa_no||''} onChange={e=>setDraft(d=>({...d,visa_no:e.target.value}))} style={S.input}/></Field>
+            <Field label="Visa Location"><input value={draft.visa_location||''} onChange={e=>setDraft(d=>({...d,visa_location:e.target.value}))} style={S.input}/></Field>
+          </Grid>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Deployment</div>
+          <Grid cols={3}>
+            <Field label="Customer *"><input value={draft.customer_name||''} onChange={e=>setDraft(d=>({...d,customer_name:e.target.value}))} style={S.input}/></Field>
+            <Field label="Location *"><input value={draft.location||''} onChange={e=>{setDraft(d=>({...d,location:e.target.value}));applyLocTrainings(e.target.value);}} style={S.input}/></Field>
+            <Field label="LOA Reference">
+              <select value={draft.loa_id||''} onChange={e=>setDraft(d=>({...d,loa_id:e.target.value||null}))} style={S.input}>
+                <option value="">Select LOA…</option>
+                {availLoas.map(l=>{const rem=l.total_count-(usedMap[l.id]||0);return<option key={l.id} value={l.id}>{l.loa_reference||'LOA'} — {rem} remaining</option>;})}
+              </select>
+            </Field>
+          </Grid>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Work Permit (under SATCO)</div>
+          <Grid cols={3}>
+            <Field label="WP Applied Date"><input type="date" value={draft.wp_applied_date||''} onChange={e=>setDraft(d=>({...d,wp_applied_date:e.target.value}))} style={S.input}/></Field>
+            <Field label="WP Approved Date"><input type="date" value={draft.wp_approved_date||''} onChange={e=>setDraft(d=>({...d,wp_approved_date:e.target.value}))} style={S.input}/></Field>
+            <Field label="WP Number"><input value={draft.wp_no||''} onChange={e=>setDraft(d=>({...d,wp_no:e.target.value}))} style={S.input}/></Field>
+          </Grid>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Medical</div>
+          <div style={{display:'flex',gap:'20px',flexWrap:'wrap',marginBottom:'12px',alignItems:'center'}}>
+            <label style={{display:'flex',gap:'6px',alignItems:'center',cursor:'pointer',fontWeight:600,fontSize:'13px'}}>
+              <input type="checkbox" checked={!!draft.medical_done} onChange={e=>setDraft(d=>({...d,medical_done:e.target.checked}))} style={{width:16,height:16}}/> Medical Done
+            </label>
+            {draft.medical_done&&<>
+              <div style={{width:'150px'}}><Field label="Date"><input type="date" value={draft.medical_date||''} onChange={e=>setDraft(d=>({...d,medical_date:e.target.value}))} style={S.input}/></Field></div>
+              <div style={{width:'140px'}}><Field label="Result"><select value={draft.medical_result||''} onChange={e=>setDraft(d=>({...d,medical_result:e.target.value}))} style={S.input}><option value="">Select…</option><option>Fit</option><option>Unfit</option><option>Pending</option></select></Field></div>
+            </>}
+          </div>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Standard O&G Trainings</div>
+          <div style={{display:'flex',gap:'28px',flexWrap:'wrap',marginBottom:'12px'}}>
+            {[['hse_passport_done','hse_passport_date','HSE Passport'],['h2s_done','h2s_date','H2S Training']].map(([dk,dtk,lbl])=>(
+              <div key={dk} style={{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}}>
+                <label style={{display:'flex',gap:'6px',alignItems:'center',cursor:'pointer',fontWeight:600,fontSize:'13px'}}>
+                  <input type="checkbox" checked={!!draft[dk]} onChange={e=>setDraft(d=>({...d,[dk]:e.target.checked}))} style={{width:16,height:16}}/>{lbl}
+                </label>
+                {draft[dk]&&<div style={{width:'150px'}}><Field label="Date"><input type="date" value={draft[dtk]||''} onChange={e=>setDraft(d=>({...d,[dtk]:e.target.value}))} style={S.input}/></Field></div>}
+              </div>
+            ))}
+          </div>
+          {(draft.extra_trainings||[]).length>0&&<>
+            <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Location Trainings — {draft.location}</div>
+            {(draft.extra_trainings||[]).map((tr,i)=>(
+              <div key={i} style={{display:'flex',gap:'16px',alignItems:'center',marginBottom:'6px',flexWrap:'wrap'}}>
+                <label style={{display:'flex',gap:'6px',alignItems:'center',cursor:'pointer',fontWeight:600,fontSize:'13px',minWidth:'220px'}}>
+                  <input type="checkbox" checked={!!tr.done} onChange={e=>{const u=[...(draft.extra_trainings||[])];u[i]={...u[i],done:e.target.checked};setDraft(d=>({...d,extra_trainings:u}));}} style={{width:16,height:16}}/>
+                  {tr.name}{tr.mandatory&&<span style={{fontSize:'10px',color:'#dc2626',fontWeight:700,marginLeft:'4px'}}>*required</span>}
+                </label>
+                {tr.done&&<div style={{width:'150px'}}><Field label="Date"><input type="date" value={tr.date||''} onChange={e=>{const u=[...(draft.extra_trainings||[])];u[i]={...u[i],date:e.target.value};setDraft(d=>({...d,extra_trainings:u}));}} style={S.input}/></Field></div>}
+              </div>
+            ))}
+          </>}
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>CICPA Gate Pass</div>
+          <Grid cols={4}>
+            <Field label="Applied Date"><input type="date" value={draft.cicpa_applied_date||''} onChange={e=>setDraft(d=>({...d,cicpa_applied_date:e.target.value}))} style={S.input}/></Field>
+            <Field label="Approved Date"><input type="date" value={draft.cicpa_approved_date||''} onChange={e=>setDraft(d=>({...d,cicpa_approved_date:e.target.value}))} style={S.input}/></Field>
+            <Field label="Pass No"><input value={draft.cicpa_pass_no||''} onChange={e=>setDraft(d=>({...d,cicpa_pass_no:e.target.value}))} style={S.input}/></Field>
+            <Field label="CICPA Expiry"><input type="date" value={draft.cicpa_expiry_date||''} onChange={e=>setDraft(d=>({...d,cicpa_expiry_date:e.target.value}))} style={S.input}/></Field>
+          </Grid>
+          <Grid cols={3}>
+            <Field label="Status">
+              <select value={draft.status||'pending'} onChange={e=>setDraft(d=>({...d,status:e.target.value}))} style={S.input}>
+                <option value="pending">Pending</option>
+                <option value="mobilised">Mobilised</option>
+                <option value="demobilised">Demobilised</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </Field>
+            <Field label="Mobilisation Date"><input type="date" value={draft.mobilisation_date||''} onChange={e=>setDraft(d=>({...d,mobilisation_date:e.target.value}))} style={S.input}/></Field>
+            <Field label="Demobilisation Date"><input type="date" value={draft.demobilisation_date||''} onChange={e=>setDraft(d=>({...d,demobilisation_date:e.target.value}))} style={S.input}/></Field>
+          </Grid>
+          <Field label="Notes"><input value={draft.notes||''} onChange={e=>setDraft(d=>({...d,notes:e.target.value}))} style={{...S.input,marginBottom:'14px'}}/></Field>
+          <div style={{display:'flex',gap:'8px'}}>
+            <button style={S.btnGrn} onClick={()=>onSave('mob',draft,()=>setDraft(null))}>Save</button>
+            <button style={S.btnSec} onClick={()=>setDraft(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{...S.card,overflow:'hidden'}}>
+        <div className="tbl-box drag-scroll" style={{maxHeight:'calc(100vh - var(--stk-2) - 32px)'}}>
+        <table style={{width:'100%',borderCollapse:'collapse',minWidth:'1400px'}}>
+          <thead><tr>
+            <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,minWidth:'150px'}}>Name</th>
+            {['Designation','Supplier / EmpNo','Customer','Location','Work Permit','Medical','HSE','H2S','Extra','CICPA','Mob Date','Demob Date','Status','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {filtered.length===0&&<tr><td colSpan={15} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No records. Use filters or click <strong>+ Add Person</strong>.</td></tr>}
+            {filtered.map(r=>{
+              const ex=(r.extra_trainings||[]), exDone=ex.filter(t=>t.done).length;
+              const cicpaExpiring = r.cicpa_expiry_date&&daysUntil(r.cicpa_expiry_date)<=30&&daysUntil(r.cicpa_expiry_date)>=0;
+              return <tr key={r.id} className="hr-row"
+                style={{cursor:'pointer', background: docPanel?.entity?.id===r.id ? '#eff6ff' : undefined}}
+                onClick={e=>handleRowClick(r,e)}
+                onDoubleClick={e=>handleRowDblClick(r,e)}
+                title="Click to view documents · Double-click to edit">
+                <td className="frozen-col" style={{...S.td,fontWeight:700,minWidth:'150px',borderLeft: docPanel?.entity?.id===r.id ? '3px solid #2563eb' : '3px solid transparent'}}>
+                  {r.full_name}
+                  <div style={{fontSize:'10px',color:'#64748b'}}>{r.source==='satco_own'?'SATCO Own':'Supplier'}</div>
+                  {r.passport_no&&<div style={{fontSize:'10px',fontFamily:'monospace',color:'#94a3b8'}}>{r.passport_no}</div>}
+                  {r.emirates_id&&<div style={{fontSize:'10px',fontFamily:'monospace',color:'#94a3b8'}}>{r.emirates_id}</div>}
+                </td>
+                <td style={S.td}>{r.designation||'—'}</td>
+                <td style={S.td}>
+                  <div style={{fontSize:'12px'}}>{r.supplier_name||'—'}</div>
+                  {r.supplier_emp_no&&<div style={{fontSize:'11px',color:'#64748b',fontFamily:'monospace'}}>#{r.supplier_emp_no}</div>}
+                </td>
+                <td style={{...S.td,fontWeight:600}}>{r.customer_name}</td>
+                <td style={S.td}>{r.location}</td>
+                <td style={S.td}>{r.wp_approved_date?<span style={{color:'#166534',fontWeight:700,fontSize:'11px'}}>✓ {r.wp_no||'Approved'}</span>:r.wp_applied_date?<span style={{color:'#b45309',fontSize:'11px'}}>Applied</span>:<span style={{color:'#dc2626',fontSize:'11px'}}>—</span>}</td>
+                <td style={S.td}><Tick done={r.medical_done} label={r.medical_result||'Medical'} date={r.medical_date}/></td>
+                <td style={S.td}><Tick done={r.hse_passport_done} label="HSE" date={r.hse_passport_date}/></td>
+                <td style={S.td}><Tick done={r.h2s_done} label="H2S" date={r.h2s_date}/></td>
+                <td style={S.td}>{ex.length>0?<span style={{fontSize:'11px',fontWeight:700,color:exDone===ex.length?'#166534':'#b45309'}}>{exDone}/{ex.length}</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}</td>
+                <td style={S.td}>{r.cicpa_pass_no?<span style={{color:cicpaExpiring?'#b45309':'#166534',fontWeight:700,fontSize:'11px'}}>✓ {r.cicpa_pass_no}{cicpaExpiring&&` (${daysUntil(r.cicpa_expiry_date)}d)`}</span>:r.cicpa_applied_date?<span style={{color:'#b45309',fontSize:'11px'}}>Applied</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}</td>
+                <td style={{...S.td,fontSize:'11px'}}>{fmtDate(r.mobilisation_date)}</td>
+                <td style={S.td}>
+                  {r.demobilisation_date
+                    ? <div><div style={{fontSize:'11px'}}>{fmtDate(r.demobilisation_date)}</div><div style={{fontSize:'10px',color:'#64748b'}}>{r.demob_reason||''}</div></div>
+                    : <span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
+                </td>
+                <td style={S.td}><StatusBadge status={r.status}/></td>
+                <td style={S.td}>
+                  <div style={{display:'flex',gap:'4px',flexWrap:'wrap'}}>
+                    <button style={S.btnSm} onClick={()=>{setDraft({...r});setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);}}>Edit</button>
+                    {r.status==='mobilised'&&<button style={{...S.btnSm,background:'#991b1b',color:'#fff',border:'none'}} onClick={()=>setDemobRec(r)}>Demob</button>}
+                  </div>
+                </td>
+              </tr>;
+            })}
+          </tbody>
+        </table>
+        </div>{/* tbl-box */}
+      </div>
+    </div>
+  );
+}
+// ── Letters Tab ───────────────────────────────────────────────────────────────
+function LettersTab({mobList}) {
+  const [letterType,setLetterType] = useState('client');
+  const [fCust,setFCust]   = useState('');
+  const [fLoc,setFLoc]     = useState('');
+  const [search,setSearch] = useState('');
+  const [selected,setSelected] = useState(new Set());
+  const [subject,setSubject]   = useState('');
+  const [arrival,setArrival]   = useState('');
+  const [date,setDate]         = useState(todayStr());
+
+  const customers=[...new Set(mobList.map(m=>m.customer_name).filter(Boolean))].sort();
+  const locations=[...new Set(mobList.map(m=>m.location).filter(Boolean))].sort();
+
+  const pool = useMemo(()=>{
+    const base = letterType==='client'
+      ? mobList.filter(m=>m.wp_approved_date&&m.status!=='rejected'&&m.status!=='demobilised')
+      : mobList.filter(m=>['mobilised','pending'].includes(m.status));
+    return base.filter(m=>{
+      if(fCust&&m.customer_name!==fCust)return false;
+      if(fLoc&&m.location!==fLoc)return false;
+      return matchSearch(m,search);
+    });
+  },[mobList,letterType,fCust,fLoc,search]);
+
+  const toggle=id=>{const s=new Set(selected);s.has(id)?s.delete(id):s.add(id);setSelected(s);};
+  const toggleAll=()=>selected.size===pool.length?setSelected(new Set()):setSelected(new Set(pool.map(r=>r.id)));
+  const selRows=pool.filter(r=>selected.has(r.id));
+
+  const generateLetter=()=>{
+    if(!selRows.length)return alert('Select at least one person');
+    const dateStr=new Date(date).toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'});
+    const clientRows=selRows.map((r,i)=>`<tr><td style="text-align:center">${i+1}</td><td>${COMPANY_SHORT}</td><td style="text-align:center">${r.supplier_emp_no||'—'}</td><td>${r.full_name}</td><td>${r.designation||'—'}</td><td style="text-align:center">${r.date_of_birth?fmtDOB(r.date_of_birth):'—'}</td><td>${r.nationality||'—'}</td><td style="text-align:center;font-family:monospace">${r.emirates_id||'—'}</td></tr>`).join('');
+    const campRows=selRows.map((r,i)=>`<tr><td style="text-align:center">${i+1}</td><td style="text-align:center;font-family:monospace">${r.supplier_emp_no||'—'}</td><td>${r.full_name}</td><td>${r.designation||'—'}</td><td>${r.nationality||'—'}</td><td>${COMPANY_SHORT}</td><td>${r.notes||''}</td></tr>`).join('');
+
+    const clientTable=`<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:13px;"><thead style="background:#f0f0f0"><tr><th>S.L.</th><th>Company Name</th><th>Employee Number</th><th>Employee Name</th><th>Designation</th><th>DOB</th><th>Nationality</th><th>Emirates ID Number</th></tr></thead><tbody>${clientRows}</tbody></table>`;
+    const campTable=`<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:13px;"><thead style="background:#f0f0f0"><tr><th>S.L.</th><th>Emp. No.</th><th>Name</th><th>Designation</th><th>Nationality</th><th>Company</th><th>Remarks</th></tr></thead><tbody>${campRows}</tbody></table>`;
+
+    const body=letterType==='client'
+      ?`<p>Dear Sir,</p><br/><p>Please find the attached complete documents along with CICPA copies of the below-listed personnel.</p><br/>${clientTable}<br/><p>They are ready to mobilize, kindly review &amp; confirm us accordingly.</p>`
+      :`<p>Dear Team,</p><br/><p>Please be informed that the below-listed personnel will be arriving at your accommodation ${arrival||'tomorrow'}. Kindly make the necessary arrangements to facilitate their stay.</p><br/>${campTable}<br/><p>Kindly acknowledge receipt of this notification.</p>`;
+
+    const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>body{font-family:'Times New Roman',serif;margin:60px;color:#00008B;font-size:14px;line-height:1.7;}table{color:#000;}th,td{padding:8px 10px;}@media print{body{margin:30px;}}</style></head><body>
+      <p style="text-align:right">${dateStr}</p><br/>
+      <p><strong>To:</strong> ${subject||'The Concerned Authority'}</p>
+      <p><strong>Ref:</strong> ${fCust||''} ${fLoc?'— '+fLoc:''}</p><br/>
+      ${body}
+      <div style="margin-top:60px"><p>Yours faithfully,</p><br/><br/><p><strong>Shaik Zaheerudeen, PMP</strong></p><p>CEO &amp; Founder</p><p>${COMPANY_NAME}</p></div>
+    </body></html>`;
+
+    const win=window.open('','_blank');
+    win.document.write(html); win.document.close();
+    setTimeout(()=>win.print(),500);
+  };
+
+  return (
+    <div>
+      <div style={{...S.card,padding:'16px',marginBottom:'16px'}}>
+        <div style={{fontWeight:800,fontSize:'14px',color:'#0f172a',marginBottom:'14px'}}>✉️ Generate Letter</div>
+        <div style={{display:'flex',gap:'12px',marginBottom:'14px',flexWrap:'wrap'}}>
+          {[['client','📋 Client Submission Letter','CICPA/mobilisation — Company: SATCO Arabia, includes DOB & EID'],['camp','🏕️ Camp Arrival Notification','Accommodation team — arrival notification']].map(([k,lbl,sub])=>(
+            <div key={k} onClick={()=>{setLetterType(k);setSelected(new Set());}} style={{padding:'12px 18px',borderRadius:'8px',border:`2px solid ${letterType===k?'#0f172a':'#e2e8f0'}`,background:letterType===k?'#0f172a':'#fff',cursor:'pointer',minWidth:'260px'}}>
+              <div style={{fontWeight:700,fontSize:'13px',color:letterType===k?'#fff':'#475569'}}>{lbl}</div>
+              <div style={{fontSize:'11px',color:letterType===k?'#94a3b8':'#94a3b8',marginTop:'3px'}}>{sub}</div>
+            </div>
+          ))}
+        </div>
+        <Grid cols={4}>
+          <Field label="Letter Date"><input type="date" value={date} onChange={e=>setDate(e.target.value)} style={S.input}/></Field>
+          <Field label="To (addressee / department)"><input value={subject} onChange={e=>setSubject(e.target.value)} placeholder="e.g. ADNOC HSE Department" style={S.input}/></Field>
+          {letterType==='camp'&&<Field label="Arrival Wording"><input value={arrival} onChange={e=>setArrival(e.target.value)} placeholder="tomorrow / on 25 Aug 2025" style={S.input}/></Field>}
+          <Field label="Filter Customer"><select value={fCust} onChange={e=>setFCust(e.target.value)} style={S.input}><option value="">All</option>{customers.map(c=><option key={c} value={c}>{c}</option>)}</select></Field>
+          <Field label="Filter Location"><select value={fLoc} onChange={e=>setFLoc(e.target.value)} style={S.input}><option value="">All</option>{locations.map(l=><option key={l} value={l}>{l}</option>)}</select></Field>
+        </Grid>
+        <div style={{marginBottom:'8px'}}>
+          <input placeholder="Search within list…" value={search} onChange={e=>setSearch(e.target.value)} style={{...S.input,width:'260px',marginBottom:'10px'}}/>
+        </div>
+        <div style={{...S.card,marginBottom:'12px'}}>
+          <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <thead><tr style={{background:'#f8fafc'}}>
+              <th style={{...S.th,width:36}}><input type="checkbox" checked={selected.size===pool.length&&pool.length>0} onChange={toggleAll}/></th>
+              {['Name','Designation','Supplier Emp No','Customer / Location','WP','CICPA','EID'].map(h=><th key={h} style={S.th}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {pool.length===0&&<tr><td colSpan={8} style={{padding:'16px',textAlign:'center',color:'#94a3b8',fontSize:'13px'}}>No personnel match the filters.</td></tr>}
+              {pool.map(r=><tr key={r.id} className="hr-row" onClick={()=>toggle(r.id)} style={{cursor:'pointer',background:selected.has(r.id)?'#eff6ff':'#fff'}}>
+                <td style={{...S.td,textAlign:'center'}}><input type="checkbox" checked={selected.has(r.id)} onChange={()=>toggle(r.id)} onClick={e=>e.stopPropagation()}/></td>
+                <td style={{...S.td,fontWeight:700}}>{r.full_name}</td>
+                <td style={S.td}>{r.designation||'—'}</td>
+                <td style={{...S.td,fontFamily:'monospace',fontSize:'11px'}}>{r.supplier_emp_no||'—'}</td>
+                <td style={S.td}>{r.customer_name} / {r.location}</td>
+                <td style={S.td}>{r.wp_approved_date?<span style={{color:'#166534',fontWeight:700,fontSize:'11px'}}>✓</span>:'—'}</td>
+                <td style={S.td}>{r.cicpa_pass_no?<span style={{color:'#166534',fontSize:'11px',fontWeight:700}}>✓ {r.cicpa_pass_no}</span>:'—'}</td>
+                <td style={{...S.td,fontFamily:'monospace',fontSize:'11px'}}>{r.emirates_id||'—'}</td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+        <div style={{display:'flex',gap:'10px',alignItems:'center'}}>
+          <button style={S.btnPri} onClick={generateLetter}>🖨️ Generate & Print ({selRows.length} selected)</button>
+          <span style={{fontSize:'12px',color:'#64748b'}}>Opens print dialog → Save as PDF. Company shown: <strong>SATCO Arabia</strong></span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Config Tab ────────────────────────────────────────────────────────────────
+function ConfigTab({locConfigs, suppliers, onSave}) {
+  const [locDraft,setLocDraft]=useState(null);
+  const [suppDraft,setSuppDraft]=useState(null);
+  return (
+    <div>
+      <div style={S.card}>
+        <div style={{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#f8fafc'}}>
+          <div style={{fontWeight:800,fontSize:'13px'}}>🏭 Labour Suppliers / Subcontractors</div>
+          <button style={S.btnPri} onClick={()=>setSuppDraft({name:'',contact_name:'',contact_phone:'',contact_email:'',remarks:''})}>+ Add Supplier</button>
+        </div>
+        {suppDraft&&(
+          <div style={{padding:'14px',background:'#fffbeb',borderBottom:'1px solid #e2e8f0'}}>
+            <Grid cols={3}>
+              <Field label="Supplier Name *"><input value={suppDraft.name||''} onChange={e=>setSuppDraft(d=>({...d,name:e.target.value}))} style={S.input}/></Field>
+              <Field label="Contact Person"><input value={suppDraft.contact_name||''} onChange={e=>setSuppDraft(d=>({...d,contact_name:e.target.value}))} style={S.input}/></Field>
+              <Field label="Phone"><input value={suppDraft.contact_phone||''} onChange={e=>setSuppDraft(d=>({...d,contact_phone:e.target.value}))} style={S.input}/></Field>
+              <Field label="Email"><input value={suppDraft.contact_email||''} onChange={e=>setSuppDraft(d=>({...d,contact_email:e.target.value}))} style={S.input}/></Field>
+              <Field label="Remarks"><input value={suppDraft.remarks||''} onChange={e=>setSuppDraft(d=>({...d,remarks:e.target.value}))} style={S.input}/></Field>
+            </Grid>
+            <div style={{display:'flex',gap:'8px',marginTop:'8px'}}>
+              <button style={S.btnPri} onClick={()=>{if(!suppDraft.name)return alert('Name required');onSave('suppliers',suppDraft,()=>setSuppDraft(null));}}>Save</button>
+              <button style={S.btnSec} onClick={()=>setSuppDraft(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
+        <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <thead><tr>{['Name','Contact','Phone','Email','Remarks',''].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <tbody>
+            {suppliers.length===0&&<tr><td colSpan={6} style={{padding:'16px',textAlign:'center',color:'#94a3b8'}}>No suppliers yet.</td></tr>}
+            {suppliers.map(s=><tr key={s.id} className="hr-row">
+              <td style={{...S.td,fontWeight:700}}>{s.name}</td>
+              <td style={S.td}>{s.contact_name||'—'}</td>
+              <td style={S.td}>{s.contact_phone||'—'}</td>
+              <td style={S.td}>{s.contact_email||'—'}</td>
+              <td style={S.td}>{s.remarks||'—'}</td>
+              <td style={S.td}><button style={S.btnSm} onClick={()=>setSuppDraft({...s})}>Edit</button></td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+      <div style={S.card}>
+        <div style={{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#f8fafc'}}>
+          <div>
+            <div style={{fontWeight:800,fontSize:'13px'}}>📍 Location Training Requirements</div>
+            <div style={{fontSize:'12px',color:'#64748b',marginTop:'2px'}}>Required certs per deployment site — auto-populates when adding a mobilisation record for that location</div>
+          </div>
+          <button style={S.btnPri} onClick={()=>setLocDraft({location:'',_lines:''})}>+ Add Location</button>
+        </div>
+        {locDraft&&(
+          <div style={{padding:'14px',background:'#eff6ff',borderBottom:'1px solid #e2e8f0'}}>
+            <Grid cols={2}>
+              <Field label="Location Name *"><input value={locDraft.location||''} onChange={e=>setLocDraft(d=>({...d,location:e.target.value}))} placeholder="Ruwais / Das Island / KEZAD…" style={S.input}/></Field>
+            </Grid>
+            <Field label="Required Trainings — one per line">
+              <textarea value={locDraft._lines||''} onChange={e=>setLocDraft(d=>({...d,_lines:e.target.value}))} placeholder={"BOSIET\nCHUSET\nH2S Awareness\nFire Warden\nBasic First Aid"} style={{...S.input,height:'110px',resize:'vertical',fontFamily:'monospace',marginTop:'2px'}}/>
+            </Field>
+            <div style={{display:'flex',gap:'8px',marginTop:'10px'}}>
+              <button style={S.btnPri} onClick={()=>{if(!locDraft.location)return alert('Location required');const trainings=(locDraft._lines||'').split('\n').map(l=>l.trim()).filter(Boolean).map(name=>({name,mandatory:true}));onSave('locconfig',{...locDraft,trainings},()=>setLocDraft(null));}}>Save</button>
+              <button style={S.btnSec} onClick={()=>setLocDraft(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
+        <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <thead><tr>{['Location','Required Trainings','Updated',''].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <tbody>
+            {locConfigs.length===0&&<tr><td colSpan={4} style={{padding:'16px',textAlign:'center',color:'#94a3b8'}}>No location configs yet.</td></tr>}
+            {locConfigs.map(l=><tr key={l.id} className="hr-row">
+              <td style={{...S.td,fontWeight:700}}>{l.location}</td>
+              <td style={S.td}>{(l.trainings||[]).map((t,i)=><span key={i} style={{display:'inline-block',background:'#eff6ff',color:'#1e40af',fontSize:'11px',fontWeight:700,padding:'2px 8px',borderRadius:10,marginRight:'4px',marginBottom:'3px'}}>{t.name}</span>)}</td>
+              <td style={{...S.td,fontSize:'11px',color:'#94a3b8'}}>{fmtDate(l.updated_at)}</td>
+              <td style={S.td}><button style={S.btnSm} onClick={()=>setLocDraft({...l,_lines:(l.trainings||[]).map(t=>t.name).join('\n')})}>Edit</button></td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+// ── Setup SQL Screen ──────────────────────────────────────────────────────────
+function SetupScreen({onRetry}) {
+  const [copied,setCopied]=useState(false);
+  return (
+    <div style={{padding:'32px',maxWidth:'900px',margin:'0 auto'}}>
+      <div style={{fontWeight:800,fontSize:'18px',color:'#0f172a',marginBottom:'6px'}}>🏗️ One-time Setup Required</div>
+      <div style={{fontSize:'13px',color:'#64748b',marginBottom:'16px'}}>Run this SQL once in <strong>Supabase → SQL Editor</strong> (project: oaerqjrkdpuhiproppaz), then click Check Again.</div>
+      <div style={{display:'flex',gap:'10px',marginBottom:'12px'}}>
+        <button onClick={()=>{navigator.clipboard.writeText(SETUP_SQL);setCopied(true);setTimeout(()=>setCopied(false),2000);}} style={S.btnGold}>{copied?'✓ Copied!':'Copy SQL'}</button>
+        <button onClick={onRetry} style={S.btnPri}>Check Again</button>
+      </div>
+      <pre style={{background:'#1e293b',color:'#f8fafc',padding:'16px',borderRadius:'8px',fontSize:'11px',overflowX:'auto',whiteSpace:'pre',maxHeight:'500px',overflowY:'auto'}}>{SETUP_SQL}</pre>
+    </div>
+  );
+}
+
+// ── Login Screen ──────────────────────────────────────────────────────────────
+function LoginScreen({onLogin}) {
+  const [email,setEmail]=useState('');
+  const [pass,setPass]=useState('');
+  const [err,setErr]=useState('');
+  const [loading,setLoading]=useState(false);
+  const submit=async()=>{
+    setErr('');setLoading(true);
+    const{error}=await db.auth.signInWithPassword({email,password:pass});
+    if(error)setErr(error.message);else onLogin();
+    setLoading(false);
+  };
+  return (
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%)'}}>
+      <div style={{background:'#fff',borderRadius:'12px',padding:'40px',width:'360px',boxShadow:'0 20px 60px rgba(0,0,0,0.3)'}}>
+        <div style={{textAlign:'center',marginBottom:'28px'}}>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#b8972a',letterSpacing:'3px',textTransform:'uppercase',marginBottom:'4px'}}>SATCO Arabia</div>
+          <div style={{fontSize:'22px',fontWeight:800,color:'#0f172a'}}>Mobilisation Portal</div>
+          <div style={{fontSize:'12px',color:'#64748b',marginTop:'4px'}}>CICPA · Work Permit · Personnel Deployment</div>
+        </div>
+        <div style={{marginBottom:'14px'}}><label style={S.label}>Email</label><input value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()} type="email" style={S.input} autoFocus/></div>
+        <div style={{marginBottom:'20px'}}><label style={S.label}>Password</label><input value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()} type="password" style={S.input}/></div>
+        {err&&<div style={{background:'#fee2e2',color:'#991b1b',padding:'8px 10px',borderRadius:'6px',fontSize:'12px',marginBottom:'14px'}}>{err}</div>}
+        <button onClick={submit} disabled={loading} style={{...S.btnPri,width:'100%',padding:'10px'}}>{loading?'Signing in…':'Sign In'}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Root App ──────────────────────────────────────────────────────────────────
+function App() {
+  useDragScroll(); // global drag-to-scroll for all .drag-scroll and .tbl-box elements
+  const [session,      setSession]      = useState(null);
+  const [authReady,    setAuthReady]    = useState(false);
+  const [tab,          setTab]          = useState('dashboard');
+  const [tableReady,   setTableReady]   = useState(null);
+  const [loading,      setLoading]      = useState(true);
+  const [filterStatus, setFilterStatus] = useState('');
+  const [globalSearch, setGlobalSearch] = useState('');
+  const [tabSearch,    setTabSearch]    = useState('');
+
+  const [data, setData] = useState({candidates:[],suppliers:[],requirements:[],loaList:[],mobList:[],locConfigs:[]});
+
+  useEffect(()=>{
+    db.auth.getSession().then(({data})=>{setSession(data.session);setAuthReady(true);});
+    const{data:l}=db.auth.onAuthStateChange((_,s)=>setSession(s));
+    return()=>l.subscription.unsubscribe();
+  },[]);
+
+  const loadAll = useCallback(async()=>{
+    setLoading(true);
+    try {
+      const[supp,cand,req,loa,mob,loc]=await Promise.all([
+        db.from('mob_suppliers').select('*').order('name'),
+        db.from('mob_candidates').select('*').order('full_name'),
+        db.from('mob_requirements').select('*').order('created_at',{ascending:false}),
+        db.from('mob_loa').select('*').order('loa_date',{ascending:false}),
+        db.from('mob_register').select('*').order('created_at',{ascending:false}),
+        db.from('mob_location_config').select('*').order('location'),
+      ]);
+      if(cand.error?.code==='42P01'){setTableReady(false);setLoading(false);return;}
+      setTableReady(true);
+      setData({suppliers:supp.data||[],candidates:cand.data||[],requirements:req.data||[],loaList:loa.data||[],mobList:mob.data||[],locConfigs:loc.data||[]});
+    } catch(e){console.error(e);}
+    setLoading(false);
+  },[]);
+
+  useEffect(()=>{if(session)loadAll();},[session,loadAll]);
+
+  const loaUsed = useMemo(()=>{
+    const m={};
+    data.mobList.forEach(r=>{if(r.loa_id)m[r.loa_id]=(m[r.loa_id]||0)+1;});
+    return m;
+  },[data.mobList]);
+
+  // Global search results — search both candidates and mob records
+  const searchResults = useMemo(()=>{
+    if(!globalSearch.trim())return[];
+    const q=globalSearch.trim().toLowerCase();
+    const cands=data.candidates.filter(c=>matchSearch(c,q)).slice(0,8).map(c=>({...c,_type:'candidate'}));
+    const mobs=data.mobList.filter(m=>matchSearch(m,q)).slice(0,8).map(m=>({...m,_type:'mob'}));
+    return [...cands,...mobs].slice(0,12);
+  },[globalSearch,data.candidates,data.mobList]);
+
+  const onSearchSelect = result => {
+    setGlobalSearch('');
+    if(result._type==='candidate'){setTabSearch(result.full_name);setTab('candidates');}
+    else{setTabSearch(result.full_name);setTab('mobilisation');}
+  };
+
+  const onSave = async(type,draft,onDone)=>{
+    const tableMap={candidates:'mob_candidates',suppliers:'mob_suppliers',requirements:'mob_requirements',loa:'mob_loa',mob:'mob_register',locconfig:'mob_location_config'};
+    const table=tableMap[type];
+    const clean={...draft,updated_at:new Date().toISOString()};
+    delete clean._lines; delete clean._candidate;
+    const{error}=draft.id
+      ?await db.from(table).update(clean).eq('id',draft.id)
+      :await db.from(table).insert(clean);
+    if(error){alert(error.message);return;}
+    await loadAll();
+    onDone?.();
+  };
+
+  // Demob handler — updates status + demob fields
+  const onDemob = async(id, form) => {
+    const{error}=await db.from('mob_register').update({
+      status:'demobilised',
+      demobilisation_date: form.demobilisation_date,
+      demob_reason: form.demob_reason,
+      demob_remarks: form.demob_remarks,
+      wp_action_on_demob: form.wp_action_on_demob,
+      cicpa_returned: form.cicpa_returned,
+      updated_at: new Date().toISOString(),
+    }).eq('id',id);
+    if(error){alert(error.message);return;}
+    await loadAll();
+  };
+
+  const handleMobilise = candidate => {
+    sessionStorage.setItem('satco_mob_prefill', JSON.stringify({
+      candidate_id:candidate.id, full_name:candidate.full_name,
+      designation:candidate.designation, source:candidate.source||'supplier',
+      supplier_name:candidate.supplier_name, supplier_emp_no:candidate.supplier_emp_no,
+      nationality:candidate.nationality, date_of_birth:candidate.date_of_birth,
+      passport_no:candidate.passport_no, emirates_id:candidate.emirates_id,
+      visa_no:candidate.visa_no, visa_location:candidate.visa_location,
+      customer_name:'',location:'',loa_id:'',
+      medical_done:false,hse_passport_done:false,h2s_done:false,extra_trainings:[],status:'pending',notes:'',
+    }));
+    setTab('mobilisation');
+    setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),150);
+  };
+
+  if(!authReady)return<div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',color:'#64748b'}}>Loading…</div>;
+  if(!session)return<LoginScreen onLogin={()=>db.auth.getSession().then(({data})=>setSession(data.session))}/>;
+  if(tableReady===false)return<><TopNav tab={tab} setTab={setTab} onSignOut={()=>db.auth.signOut()} globalSearch={globalSearch} setGlobalSearch={setGlobalSearch} searchResults={[]} onSearchSelect={()=>{}}/><SetupScreen onRetry={loadAll}/></>;
+
+  return (
+    <div style={S.page}>
+      <TopNav tab={tab} setTab={t=>{setTab(t);setTabSearch('');}} onSignOut={()=>db.auth.signOut()} globalSearch={globalSearch} setGlobalSearch={setGlobalSearch} searchResults={searchResults} onSearchSelect={onSearchSelect}/>
+      <div style={S.wrap}>
+        <div style={{paddingTop:'20px'}}>
+          <LoaBanner loaList={data.loaList} usedMap={loaUsed} onManage={()=>setTab('loa')}/>
+          {loading&&tableReady===null&&<div style={{padding:'40px',textAlign:'center',color:'#94a3b8'}}>Loading…</div>}
+          {!loading&&tableReady&&<>
+            {tab==='dashboard'    &&<Dashboard data={data} loaUsed={loaUsed} setTab={t=>{setTab(t);}} setFilterStatus={setFilterStatus}/>}
+            {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onMobilise={handleMobilise} tabSearch={tabSearch}/>}
+            {tab==='requirements' &&<RequirementsTab requirements={data.requirements} onSave={onSave}/>}
+            {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
+            {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} initialStatus={filterStatus} tabSearch={tabSearch}/>}
+            {tab==='letters'      &&<LettersTab mobList={data.mobList}/>}
+            {tab==='config'       &&<ConfigTab locConfigs={data.locConfigs} suppliers={data.suppliers} onSave={onSave}/>}
+          </>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
