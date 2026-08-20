@@ -483,13 +483,13 @@ function GlobalSearch({value, onChange, results, onSelect, onClear}) {
 function TopNav({tab, setTab, onSignOut, globalSearch, setGlobalSearch, searchResults, onSearchSelect}) {
   const navRef = useStkPublish('--stk-1');
   const tabs = [
-    {k:'dashboard',   l:'📊 Dashboard'},
-    {k:'candidates',  l:'👥 Candidates'},
+    {k:'config',      l:'⚙️ Setup'},
     {k:'requirements',l:'📋 Requirements'},
     {k:'loa',         l:'📄 LOA'},
+    {k:'candidates',  l:'👥 Candidates'},
     {k:'mobilisation',l:'🏗️ Mobilisation'},
     {k:'letters',     l:'✉️ Letters'},
-    {k:'config',      l:'⚙️ Config'},
+    {k:'dashboard',   l:'📊 Dashboard'},
   ];
   return (
     <div ref={navRef} style={{background:'#0f172a',color:'#fff',position:'sticky',top:0,zIndex:100,boxShadow:'0 2px 8px rgba(0,0,0,0.3)'}}>
@@ -1774,7 +1774,19 @@ function ConfigTab({locConfigs, suppliers, onSave}) {
   const [suppDraft,setSuppDraft]=useState(null);
   return (
     <div>
-      <div style={S.card}>
+      <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'12px 16px',marginBottom:'16px',display:'flex',gap:'12px',alignItems:'flex-start'}}>
+        <span style={{fontSize:'20px',flexShrink:0}}>📋</span>
+        <div>
+          <div style={{fontWeight:800,fontSize:'13px',color:'#1e40af',marginBottom:'4px'}}>Start here — recommended setup sequence</div>
+          <div style={{fontSize:'12.5px',color:'#1e40af'}}>
+            <strong>1.</strong> Add your <strong>Labour Suppliers</strong> below &nbsp;→&nbsp;
+            <strong>2.</strong> Go to <strong>Requirements</strong> tab — enter customer PO headcount &nbsp;→&nbsp;
+            <strong>3.</strong> Go to <strong>LOA</strong> tab — register LOA from customer &nbsp;→&nbsp;
+            <strong>4.</strong> Go to <strong>Candidates</strong> — add personnel &nbsp;→&nbsp;
+            <strong>5.</strong> Go to <strong>Mobilisation</strong> — deploy them
+          </div>
+        </div>
+      </div>
         <div style={{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#f8fafc'}}>
           <div style={{fontWeight:800,fontSize:'13px'}}>🏭 Labour Suppliers / Subcontractors</div>
           <button style={S.btnPri} onClick={()=>setSuppDraft({name:'',contact_name:'',contact_phone:'',contact_email:'',remarks:''})}>+ Add Supplier</button>
@@ -1897,7 +1909,7 @@ function App() {
   useDragScroll(); // global drag-to-scroll for all .drag-scroll and .tbl-box elements
   const [session,      setSession]      = useState(null);
   const [authReady,    setAuthReady]    = useState(false);
-  const [tab,          setTab]          = useState('dashboard');
+  const [tab,          setTab]          = useState('config');
   const [tableReady,   setTableReady]   = useState(null);
   const [loading,      setLoading]      = useState(true);
   const [filterStatus, setFilterStatus] = useState('');
