@@ -987,9 +987,10 @@ function Dashboard({data, loaUsed, setTab, setFilterStatus}) {
   const noCICPA    = mobList.filter(m=>!m.cicpa_pass_no&&!['rejected','demobilised'].includes(m.status)).length;
   const medPending = mobList.filter(m=>!m.medical_done&&!['rejected','demobilised'].includes(m.status)).length;
 
-  // Available candidates
-  const activeCandIds = new Set(mobList.filter(m=>m.status==='mobilised').map(m=>m.candidate_id).filter(Boolean));
-  const availCands = candidates.filter(c=>!activeCandIds.has(c.id)&&c.active);
+  // Available candidates — match by candidate_id OR by name fallback
+  const activeCandIds  = new Set(mobList.filter(m=>m.status==='mobilised').map(m=>m.candidate_id).filter(Boolean));
+  const activeNames    = new Set(mobList.filter(m=>m.status==='mobilised'&&!m.candidate_id).map(m=>(m.full_name||'').toLowerCase().trim()));
+  const availCands = candidates.filter(c=>c.active && !activeCandIds.has(c.id) && !activeNames.has((c.full_name||'').toLowerCase().trim()));
 
   // ── Comprehensive expiry collection ────────────────────────────────────────
   // Collect ALL expiry dates across all document types for all active people
@@ -1176,11 +1177,52 @@ function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch}) {
   const [suppF,setSuppF]   = useState('');
   const [histPerson, setHistPerson] = useState(null);
   const [docPanel,  setDocPanel]   = useState(null);
+  const [satcoEmps, setSatcoEmps]  = useState([]); // from wps_employee_master
   const clickTimer  = useRef(null);
 
   useEffect(()=>{ if(tabSearch) setSearch(tabSearch); },[tabSearch]);
 
-  const activeCandIds = useMemo(()=>new Set(mobList.filter(m=>m.status==='mobilised').map(m=>m.candidate_id).filter(Boolean)),[mobList]);
+  // Load SATCO employees from HR Supabase for auto-fill
+  useEffect(()=>{
+    db.from('wps_employee_master').select('employee_id,full_name').eq('active',true).order('employee_id')
+      .then(({data})=>setSatcoEmps(data||[]));
+  },[]);
+
+  // Auto-generate next supplier emp number based on supplier name prefix
+  const getNextEmpNo = useCallback((supplierName) => {
+    if (!supplierName) return '';
+    const name = supplierName.trim().toUpperCase();
+    // Derive prefix from supplier name (first 3-4 consonant-heavy chars)
+    let prefix = '';
+    // Check known suppliers first
+    const prefixMap = {};
+    // Build from existing candidates
+    candidates.filter(c=>c.supplier_name&&c.supplier_emp_no).forEach(c=>{
+      const p = (c.supplier_emp_no||'').replace(/\d+$/,'');
+      if (p && !prefixMap[c.supplier_name]) prefixMap[c.supplier_name] = p;
+    });
+    prefix = prefixMap[supplierName];
+    if (!prefix) {
+      // Auto-derive: take up to 4 uppercase letters from the name
+      const words = name.split(/\s+/);
+      if (words.length > 1) {
+        prefix = words.map(w=>w[0]).join('').slice(0,4);
+      } else {
+        prefix = name.replace(/[^A-Z]/g,'').slice(0,4);
+      }
+    }
+    // Find highest existing number for this supplier
+    const existing = candidates
+      .filter(c=>c.supplier_name===supplierName && c.supplier_emp_no)
+      .map(c=>{ const m=(c.supplier_emp_no||'').match(/(\d+)$/); return m?parseInt(m[1]):0; })
+      .filter(n=>!isNaN(n));
+    const next = existing.length > 0 ? Math.max(...existing)+1 : 1001;
+    return `${prefix}${next}`;
+  }, [candidates]);
+
+  const activeCandIds   = useMemo(()=>new Set(mobList.filter(m=>m.status==='mobilised').map(m=>m.candidate_id).filter(Boolean)),[mobList]);
+  const activeNames     = useMemo(()=>new Set(mobList.filter(m=>m.status==='mobilised'&&!m.candidate_id).map(m=>(m.full_name||'').toLowerCase().trim())),[mobList]);
+  const isOnSiteFn = useCallback(c => activeCandIds.has(c.id) || activeNames.has((c.full_name||'').toLowerCase().trim()), [activeCandIds, activeNames]);
   const supplierList  = useMemo(()=>[...new Set(candidates.map(c=>c.supplier_name).filter(Boolean))].sort(),[candidates]);
 
   const filtered = useMemo(()=> candidates.filter(c=>{
@@ -1359,9 +1401,35 @@ function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch}) {
               </select>
             </Field>
             {draft.source==='supplier'&&<>
-              <Field label="Supplier Company"><input value={draft.supplier_name||''} onChange={e=>setDraft(d=>({...d,supplier_name:e.target.value}))} style={S.input}/></Field>
-              <Field label="Supplier Emp No"><input value={draft.supplier_emp_no||''} onChange={e=>setDraft(d=>({...d,supplier_emp_no:e.target.value}))} placeholder="e.g. 734" style={S.input}/></Field>
+              <Field label="Supplier Company">
+                <input value={draft.supplier_name||''} list="supp-list"
+                  onChange={e=>{
+                    const name=e.target.value;
+                    const nextNo=getNextEmpNo(name);
+                    setDraft(d=>({...d,supplier_name:name,supplier_emp_no:d.supplier_emp_no||nextNo}));
+                  }}
+                  style={S.input}/>
+                <datalist id="supp-list">{supplierList.map(s=><option key={s} value={s}/>)}</datalist>
+                <div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Emp No auto-assigned when you select supplier</div>
+              </Field>
+              <Field label="Supplier Emp No">
+                <input value={draft.supplier_emp_no||''} onChange={e=>setDraft(d=>({...d,supplier_emp_no:e.target.value}))}
+                  placeholder="Auto-assigned e.g. REL1001" style={S.input}/>
+                <div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Auto-generated · edit if needed</div>
+              </Field>
             </>}
+            {draft.source==='satco_own'&&(
+              <Field label="SATCO Employee ID">
+                <select value={draft.supplier_emp_no||''} onChange={e=>{
+                  const emp=satcoEmps.find(x=>x.employee_id===e.target.value);
+                  setDraft(d=>({...d,supplier_emp_no:e.target.value,full_name:emp?.full_name||d.full_name}));
+                }} style={S.input}>
+                  <option value="">Select SATCO employee…</option>
+                  {satcoEmps.map(e=><option key={e.employee_id} value={e.employee_id}>{e.employee_id} — {e.full_name}</option>)}
+                </select>
+                <div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Pulls from HR portal employee master</div>
+              </Field>
+            )}
             <Field label="Nationality"><input value={draft.nationality||''} onChange={e=>setDraft(d=>({...d,nationality:e.target.value}))} style={S.input}/></Field>
             <Field label="Date of Birth"><input type="date" value={draft.date_of_birth||''} onChange={e=>setDraft(d=>({...d,date_of_birth:e.target.value}))} style={S.input}/></Field>
             <Field label="Phone"><input value={draft.phone||''} onChange={e=>setDraft(d=>({...d,phone:e.target.value}))} style={S.input}/></Field>
@@ -1395,12 +1463,12 @@ function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch}) {
         <table style={{width:'100%',borderCollapse:'collapse',minWidth:'1100px'}}>
           <thead><tr>
             <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,minWidth:'160px'}}>Name / Status</th>
-            {['Designation','Supplier / Emp No','Nationality','DOB','Passport','Emirates ID','Visa / Emirate','Expiry','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
+            {['Designation','Supplier','Emp No','Nationality','DOB','Passport','Emirates ID','Visa / Emirate','Expiry','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
           </tr></thead>
           <tbody>
             {filtered.length===0&&<tr><td colSpan={10} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
             {filtered.map(c=>{
-              const isOnSite = activeCandIds.has(c.id);
+              const isOnSite = isOnSiteFn(c);
               const vExp = c.visa_expiry&&isExpired(c.visa_expiry);
               const pExp = c.passport_expiry&&isExpired(c.passport_expiry);
               return <tr key={c.id} className="hr-row"
@@ -1420,7 +1488,10 @@ function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch}) {
                 <td style={S.td}>{c.designation||'—'}</td>
                 <td style={S.td}>
                   <div style={{fontWeight:600,fontSize:'12px'}}>{c.supplier_name||'—'}</div>
-                  {c.supplier_emp_no&&<div style={{fontSize:'11px',color:'#64748b',fontFamily:'monospace'}}>#{c.supplier_emp_no}</div>}
+                  {c.source==='satco_own'&&<div style={{fontSize:'10px',fontWeight:700,color:'#2563eb'}}>SATCO Own</div>}
+                </td>
+                <td style={{...S.td,fontFamily:'monospace',fontSize:'12px',fontWeight:700,color:'#0369a1'}}>
+                  {c.supplier_emp_no||'—'}
                 </td>
                 <td style={S.td}>{c.nationality||'—'}</td>
                 <td style={{...S.td,fontSize:'12px'}}>{c.date_of_birth?fmtDOB(c.date_of_birth):'—'}</td>
@@ -2118,6 +2189,13 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
                   <div style={{display:'flex',gap:'4px',flexWrap:'wrap'}}>
                     <button style={S.btnSm} onClick={e=>{e.stopPropagation();setDraft({...r});setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);}}>Edit</button>
                     {r.status==='mobilised'&&<button style={{...S.btnSm,background:'#991b1b',color:'#fff',border:'none'}} onClick={e=>{e.stopPropagation();setDemobRec(r);}}>Demob</button>}
+                    {!r.candidate_id&&(()=>{
+                      const match=candidates.find(c=>(c.full_name||'').toLowerCase().trim()===(r.full_name||'').toLowerCase().trim());
+                      if(!match)return null;
+                      return <button style={{...S.btnSm,background:'#2563eb',color:'#fff',border:'none',fontSize:'10px'}}
+                        onClick={async e=>{e.stopPropagation();await db.from('mob_register').update({candidate_id:match.id}).eq('id',r.id);alert('Linked ✓');}}
+                        title={`Link to candidate: ${match.full_name}`}>🔗 Link</button>;
+                    })()}
                   </div>
                 </td>
               </tr>;
