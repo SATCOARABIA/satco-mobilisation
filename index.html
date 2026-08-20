@@ -169,6 +169,11 @@ const SUPA_URL = 'https://oaerqjrkdpuhiproppaz.supabase.co';
 const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9hZXJxanJrZHB1aGlwcm9wcGF6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5NTQ0NjksImV4cCI6MjA5NTUzMDQ2OX0.qBtb3OV1aFGX8e1QUg19qZmOwIIjipF6IZwBOLXY3YI';
 const db = supabase.createClient(SUPA_URL, SUPA_KEY);
 
+// Ops Portal Supabase (separate project — purchase orders, customers)
+const OPS_URL = 'https://mbwsfwebbrzurpozyxks.supabase.co';
+const OPS_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1id3Nmd2ViYnJ6dXJwb3p5eGtzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyODA0MzMsImV4cCI6MjA5Njg1NjQzM30.K2GhBkRnCCjwSv0n42fL-92k1HwXvmDnMszpFo4C8aY';
+const opsDb = supabase.createClient(OPS_URL, OPS_KEY);
+
 const CLAUDE_PROXY = 'https://satco-hr.vercel.app/api/claude';
 const DOC_BUCKET   = 'mob-documents';
 
@@ -293,6 +298,10 @@ ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS demob_reason text;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS demob_remarks text;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS wp_action_on_demob text;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS cicpa_returned boolean DEFAULT false;
+ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS wp_expiry date;
+ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS medical_expiry date;
+ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS hse_passport_expiry date;
+ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS h2s_expiry date;
 `;
 
 const ALL_SQL = SETUP_SQL + '\n' + MAIN_SQL;
@@ -360,22 +369,46 @@ async function getSignedUrl(filePath) {
 // AI scan a document image/PDF for passport/EID/visa data
 async function aiScanDocument(file, docType) {
   const b64      = await fileToBase64(file);
-  const mimeType = file.type || 'application/pdf';
-  const prompts  = {
-    passport:     'Extract from this passport: full_name, passport_no, nationality, date_of_birth (YYYY-MM-DD), expiry_date (YYYY-MM-DD), country_of_issue. Return ONLY valid JSON, no markdown.',
-    eid:          'Extract from this UAE Emirates ID: full_name, emirates_id (15 digits), nationality, date_of_birth (YYYY-MM-DD), expiry_date (YYYY-MM-DD), id_number. Return ONLY valid JSON.',
-    visa:         'Extract from this UAE visa/entry permit: full_name, visa_no, visa_type, nationality, issue_date (YYYY-MM-DD), expiry_date (YYYY-MM-DD), sponsor_name, place_of_issue. Return ONLY valid JSON.',
-    medical:      'Extract from this medical report: full_name, result (Fit/Unfit), exam_date (YYYY-MM-DD), expiry_date if shown (YYYY-MM-DD), issuing_authority. Return ONLY valid JSON.',
-    work_permit:  'Extract from this UAE work permit: full_name, wp_no, occupation, issue_date (YYYY-MM-DD), expiry_date (YYYY-MM-DD), sponsor. Return ONLY valid JSON.',
-    cicpa:        'Extract from this CICPA gate pass: full_name, pass_no, designation, issue_date (YYYY-MM-DD), expiry_date (YYYY-MM-DD), location. Return ONLY valid JSON.',
-    other:        'Extract all key information from this document. Return ONLY valid JSON with relevant fields.',
-  };
-  const prompt = prompts[docType] || prompts.other;
+  const mimeType = file.type || 'image/jpeg';
+  const prompt = `You are reading an official document image from the oil & gas / construction industry in UAE. Identify the document type and extract ALL visible information.
+
+Return ONLY a valid JSON object with these fields (include only what is visible):
+{
+  "doc_type": "passport|emirates_id|uae_visa|medical_certificate|work_permit|cicpa_gate_pass|hse_passport|h2s_certificate|safety_training|first_aid|bosiet|chubet|scaffolding|fire_warden|other_training|other",
+  "full_name": "full name as written",
+  "passport_no": "passport number",
+  "emirates_id": "15-digit UAE ID number",
+  "visa_no": "visa or entry permit number",
+  "wp_no": "work permit number",
+  "cicpa_pass_no": "CICPA gate pass number",
+  "nationality": "nationality or country",
+  "date_of_birth": "YYYY-MM-DD",
+  "passport_expiry": "YYYY-MM-DD if passport expiry",
+  "eid_expiry": "YYYY-MM-DD if Emirates ID expiry",
+  "visa_expiry": "YYYY-MM-DD if visa expiry",
+  "visa_type": "visa type or category",
+  "medical_result": "Fit or Unfit (for medical certificates)",
+  "medical_date": "YYYY-MM-DD exam or issue date (for medical)",
+  "medical_expiry": "YYYY-MM-DD expiry if shown (for medical)",
+  "training_name": "exact name of the training or certificate (for training certs)",
+  "training_date": "YYYY-MM-DD date of training or issue",
+  "training_expiry": "YYYY-MM-DD expiry date if shown",
+  "training_passed": "true if passed/completed, false if failed",
+  "cicpa_expiry": "YYYY-MM-DD CICPA expiry",
+  "wp_expiry": "YYYY-MM-DD work permit expiry",
+  "issue_date": "YYYY-MM-DD issue or approval date",
+  "issuing_authority": "name of issuing body or sponsor",
+  "designation": "job title or occupation if shown",
+  "certificate_no": "any certificate or reference number"
+}
+
+Return ONLY the JSON. No explanation, no markdown, no backticks.`;
+
   const contentType = mimeType.startsWith('image/') ? 'image' : 'document';
   const res = await fetch(CLAUDE_PROXY, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
-      model:'claude-sonnet-4-6', max_tokens:800,
+      model:'claude-sonnet-4-6', max_tokens:1000,
       messages:[{ role:'user', content:[
         { type: contentType, source:{ type:'base64', media_type:mimeType, data:b64 } },
         { type:'text', text: prompt },
@@ -386,7 +419,7 @@ async function aiScanDocument(file, docType) {
   const data = await res.json();
   const text = (data.content||[]).map(c=>c.text||'').join('').trim();
   const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('AI did not return JSON: ' + text.slice(0,200));
+  if (!match) throw new Error('AI did not return JSON. Response: ' + text.slice(0,200));
   return JSON.parse(match[0]);
 }
 
@@ -619,15 +652,30 @@ function DocumentPanel({entity, entityType, onClose, onApplyAiData}) {
 
   // Field mapping from AI scan result to record fields
   const getSuggestedFields = (aiData, docType) => {
-    const map = {
-      passport:    [['full_name','Full Name'],['passport_no','Passport No'],['nationality','Nationality'],['date_of_birth','Date of Birth'],['expiry_date','Passport Expiry']],
-      eid:         [['full_name','Full Name'],['emirates_id','Emirates ID'],['expiry_date','EID Expiry']],
-      visa:        [['full_name','Full Name'],['visa_no','Visa No'],['visa_type','Visa Type'],['expiry_date','Visa Expiry']],
-      medical:     [['result','Result'],['exam_date','Medical Date'],['expiry_date','Medical Expiry']],
-      work_permit: [['full_name','Full Name'],['wp_no','WP Number'],['expiry_date','WP Expiry']],
-      cicpa:       [['full_name','Full Name'],['pass_no','CICPA Pass No'],['expiry_date','CICPA Expiry']],
-    };
-    return (map[docType] || []).filter(([k]) => aiData[k]);
+    // Build list of fields that will actually be updated
+    const fields = [];
+    const dt = aiData.doc_type || docType || '';
+    if (aiData.full_name)         fields.push('Full Name');
+    if (aiData.passport_no)       fields.push('Passport No');
+    if (aiData.nationality)       fields.push('Nationality');
+    if (aiData.date_of_birth)     fields.push('Date of Birth');
+    if (aiData.passport_expiry)   fields.push('Passport Expiry');
+    if (aiData.emirates_id)       fields.push('Emirates ID');
+    if (aiData.eid_expiry)        fields.push('EID Expiry');
+    if (aiData.visa_no)           fields.push('Visa No');
+    if (aiData.visa_type)         fields.push('Visa Type');
+    if (aiData.visa_expiry)       fields.push('Visa Expiry');
+    if (aiData.wp_no)             fields.push('Work Permit No');
+    if (aiData.cicpa_pass_no)     fields.push('CICPA Pass No');
+    if (aiData.cicpa_expiry)      fields.push('CICPA Expiry');
+    if (dt.includes('medical') || aiData.medical_result) fields.push('Medical Done ✓', aiData.medical_result||'');
+    if (dt.includes('medical') && aiData.medical_date)   fields.push('Medical Date');
+    if (dt==='hse_passport'||(aiData.training_name||'').toLowerCase().includes('hse')) fields.push('HSE Passport ✓');
+    if (dt==='h2s_certificate'||(aiData.training_name||'').toLowerCase().includes('h2s')) fields.push('H2S Training ✓');
+    if (aiData.training_name)     fields.push(`Training: ${aiData.training_name}`);
+    if (aiData.training_date)     fields.push('Training Date');
+    if (aiData.training_expiry)   fields.push('Training Expiry');
+    return fields.filter(Boolean).map(f => [f, f]); // return in expected [[key,label]] format
   };
 
   const typeColor = { passport:'#2563eb',eid:'#7c3aed',visa:'#0369a1',medical:'#166534',work_permit:'#b45309',cicpa:'#991b1b',other:'#475569' };
@@ -906,12 +954,54 @@ function Dashboard({data, loaUsed, setTab, setFilterStatus}) {
   const noWP       = mobList.filter(m=>!m.wp_approved_date&&!['rejected','demobilised'].includes(m.status)).length;
   const noCICPA    = mobList.filter(m=>!m.cicpa_pass_no&&!['rejected','demobilised'].includes(m.status)).length;
   const medPending = mobList.filter(m=>!m.medical_done&&!['rejected','demobilised'].includes(m.status)).length;
-  const expCICPA   = mobList.filter(m=>m.cicpa_expiry_date&&daysUntil(m.cicpa_expiry_date)<=30&&daysUntil(m.cicpa_expiry_date)>=0&&m.status==='mobilised');
-  const expVisa    = candidates.filter(c=>c.visa_expiry&&isExpired(c.visa_expiry)&&c.active);
 
-  // Available candidates (no active mobilisation)
+  // Available candidates
   const activeCandIds = new Set(mobList.filter(m=>m.status==='mobilised').map(m=>m.candidate_id).filter(Boolean));
   const availCands = candidates.filter(c=>!activeCandIds.has(c.id)&&c.active);
+
+  // ── Comprehensive expiry collection ────────────────────────────────────────
+  // Collect ALL expiry dates across all document types for all active people
+  const ALERT_DAYS = 60; // show alert if expiring within 60 days
+  const allExpiries = [];
+
+  mobList.filter(m=>!['rejected','demobilised'].includes(m.status)).forEach(r => {
+    const add = (type, date, label, critical) => {
+      const d = daysUntil(date);
+      if (date && d !== null && d <= ALERT_DAYS) {
+        allExpiries.push({ person: r.full_name, type, label, date, daysLeft: d, expired: d < 0, critical: !!critical, record: r });
+      }
+    };
+    add('CICPA Gate Pass',   r.cicpa_expiry_date,   'CICPA Gate Pass',      true);
+    add('Work Permit',       r.wp_expiry,            'Work Permit',          true);
+    add('Medical',           r.medical_expiry,       'Medical Certificate',  true);
+    add('HSE Passport',      r.hse_passport_expiry,  'HSE Passport',         false);
+    add('H2S Training',      r.h2s_expiry,           'H2S Certificate',      false);
+    // Extra trainings
+    (r.extra_trainings||[]).forEach(t => {
+      if (t.expiry) add(t.name, t.expiry, t.name + ' Certificate', false);
+    });
+  });
+
+  // Candidate document expiries
+  candidates.filter(c=>c.active).forEach(c => {
+    const add = (type, date) => {
+      const d = daysUntil(date);
+      if (date && d !== null && d <= ALERT_DAYS) {
+        allExpiries.push({ person: c.full_name, type, label: type, date, daysLeft: d, expired: d < 0, critical: d < 0 || type==='Visa', candidate: c });
+      }
+    };
+    add('Passport',    c.passport_expiry);
+    add('Emirates ID', c.eid_expiry);
+    add('Visa',        c.visa_expiry);
+  });
+
+  // Sort: expired first, then by days ascending
+  allExpiries.sort((a,b) => a.daysLeft - b.daysLeft);
+
+  const expired   = allExpiries.filter(x => x.expired);
+  const expiring7 = allExpiries.filter(x => !x.expired && x.daysLeft <= 7);
+  const expiring30= allExpiries.filter(x => !x.expired && x.daysLeft > 7 && x.daysLeft <= 30);
+  const expiring60= allExpiries.filter(x => !x.expired && x.daysLeft > 30 && x.daysLeft <= 60);
 
   const Stat=({label,value,color,sub,onClick})=>(
     <div onClick={onClick} style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'18px 20px',cursor:onClick?'pointer':'default',transition:'border-color 0.15s'}}
@@ -923,20 +1013,81 @@ function Dashboard({data, loaUsed, setTab, setFilterStatus}) {
     </div>
   );
 
+  const ExpiryTable = ({items, title, bg, border, headColor}) => items.length === 0 ? null : (
+    <div style={{...S.card,border:`1px solid ${border}`}}>
+      <div style={{padding:'10px 16px',borderBottom:`1px solid ${border}`,background:bg}}>
+        <div style={{fontWeight:800,fontSize:'13px',color:headColor}}>{title} ({items.length})</div>
+      </div>
+      <table style={{width:'100%',borderCollapse:'collapse'}}>
+        <thead><tr style={{background:'#f8fafc'}}>
+          {['Person','Document / Certificate','Expiry Date','Days Left'].map(h=><th key={h} style={S.th}>{h}</th>)}
+        </tr></thead>
+        <tbody>
+          {items.map((x,i)=>(
+            <tr key={i} style={{borderTop:'1px solid #f1f5f9',background:x.expired?'#fef2f2':x.daysLeft<=7?'#fff7f0':'#fffbeb'}}>
+              <td style={{...S.td,fontWeight:600}}>{x.person}</td>
+              <td style={S.td}>
+                <span style={{background:x.critical?'#fee2e2':'#fef3c7',color:x.critical?'#991b1b':'#92400e',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:8,marginRight:'6px'}}>{x.type}</span>
+                {x.label}
+              </td>
+              <td style={{...S.td,fontFamily:'monospace',fontSize:'12px'}}>{fmtDate(x.date)}</td>
+              <td style={{...S.td,fontWeight:800,color:x.expired?'#dc2626':x.daysLeft<=7?'#b45309':'#92400e'}}>
+                {x.expired ? `EXPIRED ${Math.abs(x.daysLeft)}d ago` : `${x.daysLeft}d`}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
   return (
     <div>
+      {/* Stat cards */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(155px,1fr))',gap:'12px',marginBottom:'20px'}}>
         <Stat label="Candidates Pool"    value={candidates.length}  color="#2563eb"  onClick={()=>setTab('candidates')} />
-        <Stat label="Available"          value={availCands.length}  color="#0369a1"  sub="not currently mobilised" onClick={()=>setTab('candidates')} />
+        <Stat label="Available"          value={availCands.length}  color="#0369a1"  sub="not on site" onClick={()=>setTab('candidates')} />
         <Stat label="Active On Site"     value={active}             color="#166534"  onClick={()=>{setFilterStatus('mobilised');setTab('mobilisation');}} />
         <Stat label="Pending"            value={pending}            color="#b45309"  onClick={()=>{setFilterStatus('pending');setTab('mobilisation');}} />
-        <Stat label="Demobilised"        value={demobbed}           color="#475569"  onClick={()=>{setFilterStatus('demobilised');setTab('mobilisation');}} />
         <Stat label="No Work Permit"     value={noWP}               color="#dc2626"  sub="approved" />
         <Stat label="No CICPA Pass"      value={noCICPA}            color="#7c3aed" />
-        <Stat label="CICPA Expiring"     value={expCICPA.length}    color="#b45309"  sub="within 30 days" />
+        <Stat label="Medical Pending"    value={medPending}         color="#0369a1" />
+        <Stat label="Expiry Alerts"      value={allExpiries.length} color={expired.length>0?'#dc2626':'#b45309'} sub={`${expired.length} expired · ${expiring7.length} critical`} />
       </div>
 
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'16px'}}>
+      {/* Expiry Alert Banner */}
+      {(expired.length > 0 || expiring7.length > 0) && (
+        <div style={{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'8px',padding:'10px 16px',marginBottom:'16px',display:'flex',gap:'12px',alignItems:'flex-start'}}>
+          <span style={{fontSize:'22px',flexShrink:0}}>🚨</span>
+          <div>
+            <div style={{fontWeight:800,fontSize:'13px',color:'#991b1b',marginBottom:'4px'}}>
+              Urgent: {expired.length} expired + {expiring7.length} expiring within 7 days
+            </div>
+            <div style={{fontSize:'12px',color:'#991b1b'}}>
+              {[...expired,...expiring7].slice(0,5).map((x,i)=>(
+                <span key={i} style={{marginRight:'12px'}}>
+                  <strong>{x.person}</strong> — {x.label} {x.expired?`expired ${Math.abs(x.daysLeft)}d ago`:`(${x.daysLeft}d)`}
+                </span>
+              ))}
+              {(expired.length+expiring7.length)>5 && <span>+ {(expired.length+expiring7.length)-5} more below</span>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Expiry tables */}
+      <ExpiryTable items={expired}    title="🚨 EXPIRED — Immediate Action Required" bg="#fef2f2" border="#fecaca" headColor="#991b1b"/>
+      <ExpiryTable items={expiring7}  title="⚠️ Expiring within 7 days — Critical"    bg="#fff7f0" border="#fed7aa" headColor="#c2410c"/>
+      <ExpiryTable items={expiring30} title="⏰ Expiring within 30 days"               bg="#fffbeb" border="#fde68a" headColor="#92400e"/>
+      <ExpiryTable items={expiring60} title="📅 Expiring within 60 days"               bg="#f8fafc" border="#e2e8f0" headColor="#475569"/>
+
+      {allExpiries.length === 0 && (
+        <div style={{...S.card,padding:'20px',textAlign:'center',color:'#166534',fontWeight:700,fontSize:'14px',background:'#f0fdf4',border:'1px solid #bbf7d0'}}>
+          ✅ All certificates and documents are valid — no expiry alerts
+        </div>
+      )}
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'16px',marginTop:'16px'}}>
         {/* LOA Status */}
         <div style={S.card}>
           <div style={{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#f8fafc'}}>
@@ -961,49 +1112,6 @@ function Dashboard({data, loaUsed, setTab, setFilterStatus}) {
           </table>
         </div>
 
-        {/* CICPA Expiry */}
-        <div style={S.card}>
-          <div style={{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',background:'#f8fafc'}}>
-            <div style={{fontWeight:800,fontSize:'13px'}}>⏰ CICPA Expiring (30 days)</div>
-          </div>
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
-            <thead><tr>{['Name','Customer / Location','Pass No','Days Left'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
-            <tbody>
-              {expCICPA.length===0&&<tr><td colSpan={4} style={{padding:'16px',textAlign:'center',color:'#94a3b8',fontSize:'13px'}}>No expiries in next 30 days</td></tr>}
-              {expCICPA.map(r=>{
-                const d=daysUntil(r.cicpa_expiry_date);
-                return <tr key={r.id} style={{background:d<=7?'#fee2e2':'#fffbeb'}}>
-                  <td style={{...S.td,fontWeight:600}}>{r.full_name}</td>
-                  <td style={S.td}>{r.customer_name} / {r.location}</td>
-                  <td style={{...S.td,fontFamily:'monospace',fontSize:'11px'}}>{r.cicpa_pass_no}</td>
-                  <td style={{...S.td,fontWeight:800,color:d<=7?'#dc2626':'#b45309'}}>{d}d</td>
-                </tr>;
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Expired Visas */}
-        {expVisa.length>0&&(
-          <div style={S.card}>
-            <div style={{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',background:'#fef2f2'}}>
-              <div style={{fontWeight:800,fontSize:'13px',color:'#991b1b'}}>🚨 Expired Visas in Candidates Pool</div>
-            </div>
-            <table style={{width:'100%',borderCollapse:'collapse'}}>
-              <thead><tr>{['Name','Designation','Supplier','Visa Location','Expired'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
-              <tbody>
-                {expVisa.slice(0,10).map(c=><tr key={c.id}>
-                  <td style={{...S.td,fontWeight:600}}>{c.full_name}</td>
-                  <td style={S.td}>{c.designation||'—'}</td>
-                  <td style={S.td}>{c.supplier_name||'SATCO Own'}</td>
-                  <td style={S.td}>{c.visa_location||'—'}</td>
-                  <td style={{...S.td,color:'#dc2626',fontWeight:700}}>{fmtDate(c.visa_expiry)}</td>
-                </tr>)}
-              </tbody>
-            </table>
-          </div>
-        )}
-
         {/* Recent mob */}
         <div style={S.card}>
           <div style={{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',background:'#f8fafc'}}>
@@ -1027,6 +1135,7 @@ function Dashboard({data, loaUsed, setTab, setFilterStatus}) {
     </div>
   );
 }
+
 // ── Candidates Tab ────────────────────────────────────────────────────────────
 function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch}) {
   const [draft,setDraft]   = useState(null);
@@ -1134,6 +1243,73 @@ function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch}) {
       {draft&&(
         <div style={{...S.card,padding:'16px',marginBottom:'14px',background:'#fffbeb',border:'1px solid #fde68a'}}>
           <div style={{fontWeight:800,fontSize:'14px',color:'#92400e',marginBottom:'14px'}}>{draft.id?'Edit Person':'Add Person to Candidates Pool'}</div>
+
+          {/* AI Document Scan — upload all docs at once */}
+          <div style={{background:'#0f172a',borderRadius:'8px',padding:'14px 16px',marginBottom:'16px'}}>
+            <div style={{fontWeight:800,fontSize:'13px',color:'#b8972a',marginBottom:'4px'}}>✨ Scan All Documents — AI fills the form automatically</div>
+            <div style={{fontSize:'11px',color:'#64748b',marginBottom:'10px'}}>Upload passport, Emirates ID, visa, medical — all at once. AI reads each and fills the matching fields.</div>
+            <label style={{display:'inline-flex',alignItems:'center',gap:'10px',padding:'10px 20px',background:'#b8972a',color:'#fff',borderRadius:'6px',cursor:'pointer',fontWeight:700,fontSize:'13px',whiteSpace:'nowrap'}}>
+              {draft._scanning ? '⏳ Reading documents…' : '📂 Upload Documents (select multiple)'}
+              <input type="file" accept="image/*,application/pdf" multiple style={{display:'none'}}
+                onChange={async e=>{
+                  const files=Array.from(e.target.files||[]); if(!files.length)return;
+                  setDraft(d=>({...d,_scanning:true,_scanErr:'',_scanResult:null}));
+                  const allUpdates={};
+                  const allResults=[];
+                  const docTypeGuess = f => {
+                    const n=f.name.toLowerCase();
+                    if(n.includes('passport')||n.includes('pp')) return 'passport';
+                    if(n.includes('eid')||n.includes('emirates')||n.includes('id')) return 'eid';
+                    if(n.includes('visa')||n.includes('entry')) return 'visa';
+                    if(n.includes('medical')||n.includes('fit')||n.includes('health')) return 'medical';
+                    if(n.includes('cicpa')||n.includes('gate')) return 'cicpa';
+                    if(n.includes('permit')||n.includes('wp')) return 'work_permit';
+                    return 'passport'; // default — passport most common
+                  };
+                  // Unified field map — covers all document types including medical & training
+                  const directMap = {
+                    full_name:'full_name', passport_no:'passport_no', nationality:'nationality',
+                    date_of_birth:'date_of_birth', passport_expiry:'passport_expiry',
+                    emirates_id:'emirates_id', eid_expiry:'eid_expiry',
+                    visa_no:'visa_no', visa_type:'visa_type', visa_expiry:'visa_expiry',
+                    designation:'designation',
+                  };
+                  try {
+                    for (const file of files) {
+                      const result = await aiScanDocument(file, 'other');
+                      const detectedType = result.doc_type || 'unknown';
+                      // Map standard document fields
+                      Object.entries(result).forEach(([k,v]) => {
+                        if(directMap[k] && v && !allUpdates[directMap[k]]) allUpdates[directMap[k]] = v;
+                      });
+                      allResults.push({file:file.name, docType:detectedType, result});
+                    }
+                    setDraft(d=>({...d,...allUpdates,_scanning:false,_scanResult:allResults}));
+                  } catch(ex) { setDraft(d=>({...d,_scanning:false,_scanErr:ex.message})); }
+                  e.target.value='';
+                }}/>
+            </label>
+            {draft._scanning&&(
+              <div style={{marginTop:'10px',color:'#b8972a',fontSize:'13px',fontWeight:600}}>⏳ Reading documents, please wait…</div>
+            )}
+            {draft._scanErr&&<div style={{color:'#f87171',fontSize:'12px',marginTop:'8px'}}>⚠ {draft._scanErr}</div>}
+            {draft._scanResult&&Array.isArray(draft._scanResult)&&(
+              <div style={{marginTop:'10px'}}>
+                <div style={{color:'#4ade80',fontWeight:700,fontSize:'13px',marginBottom:'6px'}}>✓ {draft._scanResult.length} document(s) scanned — fields filled below</div>
+                {draft._scanResult.map((r,i)=>(
+                  <div key={i} style={{background:'#1e293b',borderRadius:'5px',padding:'6px 10px',marginBottom:'4px',fontSize:'11px',color:'#94a3b8'}}>
+                    <span style={{color:'#b8972a',fontWeight:700}}>{r.file}</span>
+                    <span style={{color:'#4ade80',fontWeight:700,marginLeft:'8px'}}>[{r.docType.replace(/_/g,' ')}]</span>:&nbsp;
+                    {Object.entries(r.result).filter(([k,v])=>v&&k!=='doc_type').map(([k,v])=>`${k.replace(/_/g,' ')}: ${v}`).join(' · ')}
+                  </div>
+                ))}
+                <div style={{fontSize:'11px',color:'#64748b',marginTop:'4px'}}>Review the fields below — edit anything if needed — then click Save.</div>
+              </div>
+            )}
+            <div style={{marginTop:'8px',fontSize:'11px',color:'#475569'}}>
+              💡 Tip: Name files before uploading for better detection — e.g. <em>passport.jpg</em>, <em>eid.jpg</em>, <em>visa.pdf</em>. Or select all files and AI will do its best to identify each.
+            </div>
+          </div>
           <Grid cols={3}>
             <Field label="Full Name *"><input value={draft.full_name||''} onChange={e=>setDraft(d=>({...d,full_name:e.target.value}))} style={S.input}/></Field>
             <Field label="Designation"><input value={draft.designation||''} onChange={e=>setDraft(d=>({...d,designation:e.target.value}))} placeholder="Pipe Fitter / Fabricator / Engineer…" style={S.input}/></Field>
@@ -1238,6 +1414,30 @@ function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch}) {
 // ── Requirements Tab ──────────────────────────────────────────────────────────
 function RequirementsTab({requirements, onSave}) {
   const [draft,setDraft]=useState(null);
+  const [opsPOs, setOpsPOs]=useState([]);
+  const [opsLoading, setOpsLoading]=useState(false);
+
+  // Load POs from Ops portal on mount
+  useEffect(()=>{
+    setOpsLoading(true);
+    opsDb.from('purchase_orders')
+      .select('id, po_no, po_date, expiry_date, po_value, currency, status, remarks, customers(name)')
+      .neq('status','closed')
+      .order('po_date',{ascending:false})
+      .then(({data,error})=>{
+        if(!error) setOpsPOs(data||[]);
+        setOpsLoading(false);
+      });
+  },[]);
+
+  const fillFromPO = po => {
+    setDraft(d=>({...d,
+      customer_name: po.customers?.name || d.customer_name,
+      po_reference:  po.po_no,
+      requirement_date: po.po_date || todayStr(),
+      notes: [po.remarks, po.po_value?`PO Value: ${po.currency||'AED'} ${Number(po.po_value).toLocaleString()}`:''].filter(Boolean).join(' · ') || d.notes || '',
+    }));
+  };
   const blank=()=>setDraft({customer_name:'',po_reference:'',location:'',requirement_date:todayStr(),_lines:'',notes:''});
   const save=()=>{
     if(!draft.customer_name||!draft.location)return alert('Customer and location required');
@@ -1252,6 +1452,32 @@ function RequirementsTab({requirements, onSave}) {
       {draft&&(
         <div style={{...S.card,padding:'16px',marginBottom:'14px',background:'#eff6ff',border:'1px solid #bfdbfe'}}>
           <div style={{fontWeight:800,fontSize:'14px',color:'#1e40af',marginBottom:'14px'}}>{draft.id?'Edit Requirement':'New Customer Requirement'}</div>
+
+          {/* Pull from Ops Portal PO */}
+          <div style={{background:'#0f172a',borderRadius:'8px',padding:'12px 16px',marginBottom:'14px'}}>
+            <div style={{fontWeight:700,fontSize:'12px',color:'#b8972a',marginBottom:'6px'}}>🔗 Import from Ops Portal PO</div>
+            <div style={{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}}>
+              <select onChange={e=>{
+                  const po=opsPOs.find(p=>p.id===e.target.value);
+                  if(po) fillFromPO(po);
+                }}
+                style={{...S.input,width:'380px',background:'#1e293b',color:'#fff',border:'1px solid #334155'}}>
+                <option value="">{opsLoading?'Loading POs from Ops portal…':'Select a PO to auto-fill customer & reference…'}</option>
+                {opsPOs.map(po=>(
+                  <option key={po.id} value={po.id}>
+                    {po.po_no} — {po.customers?.name||'Unknown'} ({po.status}) {po.po_value?`· ${po.currency||'AED'} ${Number(po.po_value).toLocaleString()}`:''}
+                  </option>
+                ))}
+              </select>
+              <a href="https://satco-ops.vercel.app" target="_blank" rel="noopener noreferrer"
+                style={{color:'#b8972a',fontSize:'12px',fontWeight:700,textDecoration:'none'}}>
+                Open Ops Portal ↗
+              </a>
+            </div>
+            <div style={{fontSize:'11px',color:'#475569',marginTop:'6px'}}>
+              Selecting a PO fills Customer Name and PO Reference automatically. Then add the manpower positions and quantities below.
+            </div>
+          </div>
           <Grid cols={3}>
             <Field label="Customer *"><input value={draft.customer_name||''} onChange={e=>setDraft(d=>({...d,customer_name:e.target.value}))} placeholder="ADNOC / TAQA / Linde…" style={S.input}/></Field>
             <Field label="Location *"><input value={draft.location||''} onChange={e=>setDraft(d=>({...d,location:e.target.value}))} placeholder="Ruwais / KEZAD / Das Island…" style={S.input}/></Field>
@@ -1359,14 +1585,107 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
   const [draft,setDraft]     = useState(null);
   const [demobRec,setDemobRec] = useState(null);
   const [docPanel, setDocPanel] = useState(null);
+  const [readinessRow, setReadinessRow] = useState(null); // person being inspected
   const clickTimer = useRef(null);
   const [search,setSearch]   = useState(tabSearch||'');
   const [fCust,setFCust]     = useState('');
   const [fLoc,setFLoc]       = useState('');
   const [fStatus,setFStatus] = useState(initialStatus||'');
+  const [fReady,setFReady]   = useState(''); // 'ready'|'not_ready'|''
 
   useEffect(()=>{ if(initialStatus) setFStatus(initialStatus); },[initialStatus]);
   useEffect(()=>{ if(tabSearch) setSearch(tabSearch); },[tabSearch]);
+
+  // ── Compute readiness for one mobilisation record ────────────────────────
+  const computeReadiness = useCallback((r) => {
+    const cfg = locConfigs.find(l => l.location === r.location);
+    const required = [];
+
+    // Always required
+    required.push({ name:'Passport',      done: !!r.passport_no,           label:'Passport No',        critical:true });
+    required.push({ name:'Emirates ID',   done: !!r.emirates_id,           label:'Emirates ID',        critical:true });
+    required.push({ name:'Visa',          done: !!r.visa_no,               label:'Visa No',            critical:true });
+    required.push({ name:'Work Permit',   done: !!r.wp_approved_date,      label:'WP Approved',        critical:true });
+    required.push({ name:'Medical',       done: !!r.medical_done && r.medical_result!=='Unfit', label:'Medical Fit', critical:true });
+    required.push({ name:'HSE Passport',  done: !!r.hse_passport_done,     label:'HSE Passport',       critical:false });
+    required.push({ name:'H2S Training',  done: !!r.h2s_done,             label:'H2S',                critical:false });
+
+    // Location-specific from config
+    if (cfg?.trainings?.length) {
+      cfg.trainings.forEach(t => {
+        const found = (r.extra_trainings||[]).find(et => et.name.toLowerCase() === t.name.toLowerCase());
+        required.push({
+          name:     t.name,
+          done:     !!(found?.done),
+          label:    t.name,
+          critical: !!t.mandatory,
+          expiry:   found?.expiry || null,
+        });
+      });
+    }
+
+    // Check CICPA (needed for final submission)
+    required.push({ name:'CICPA', done: !!r.cicpa_pass_no, label:'CICPA Gate Pass', critical:false });
+
+    const missing  = required.filter(x => !x.done);
+    const critical = missing.filter(x => x.critical);
+    const ready    = missing.length === 0;
+    const readyForSubmission = critical.length === 0; // critical docs all present
+
+    return { required, missing, ready, readyForSubmission, criticalMissing: critical };
+  }, [locConfigs]);
+
+  // ── Readiness Panel ───────────────────────────────────────────────────────
+  const ReadinessPanel = ({ r, onClose }) => {
+    const rd = computeReadiness(r);
+    return (
+      <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:400,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}} onClick={onClose}>
+        <div style={{background:'#fff',borderRadius:'12px',width:'100%',maxWidth:'580px',maxHeight:'90vh',overflowY:'auto'}} onClick={e=>e.stopPropagation()}>
+          <div style={{padding:'16px 20px',background:'#0f172a',borderRadius:'12px 12px 0 0',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div>
+              <div style={{fontWeight:800,fontSize:'15px',color:'#fff'}}>{r.full_name}</div>
+              <div style={{fontSize:'12px',color:'#94a3b8'}}>{r.designation||'—'} · {r.customer_name} / {r.location}</div>
+            </div>
+            <div style={{display:'flex',gap:'10px',alignItems:'center'}}>
+              <span style={{background:rd.ready?'#166534':rd.readyForSubmission?'#92400e':'#991b1b',color:'#fff',fontWeight:800,fontSize:'12px',padding:'4px 12px',borderRadius:20}}>
+                {rd.ready ? '✅ FULLY READY' : rd.readyForSubmission ? '⚠ READY (pending CICPA)' : '❌ NOT READY'}
+              </span>
+              <button onClick={onClose} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'#fff',width:30,height:30,borderRadius:'50%',cursor:'pointer',fontSize:'16px'}}>×</button>
+            </div>
+          </div>
+          <div style={{padding:'16px 20px'}}>
+            <div style={{fontWeight:700,fontSize:'12px',color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'10px'}}>
+              Document & Training Checklist — {r.location}
+            </div>
+            {rd.required.map((item,i) => (
+              <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',borderRadius:'6px',marginBottom:'4px',background:item.done?'#f0fdf4':'#fef2f2',border:`1px solid ${item.done?'#bbf7d0':item.critical?'#fecaca':'#fed7aa'}`}}>
+                <div style={{display:'flex',gap:'10px',alignItems:'center'}}>
+                  <span style={{fontSize:'16px'}}>{item.done ? '✅' : item.critical ? '❌' : '⚠️'}</span>
+                  <div>
+                    <div style={{fontWeight:600,fontSize:'13px',color: item.done?'#166534':item.critical?'#991b1b':'#92400e'}}>{item.name}</div>
+                    {item.expiry && <div style={{fontSize:'11px',color:'#64748b'}}>Expires: {fmtDate(item.expiry)}</div>}
+                  </div>
+                </div>
+                <span style={{fontSize:'11px',fontWeight:700,color:item.done?'#166534':item.critical?'#dc2626':'#b45309'}}>
+                  {item.done ? 'Done' : item.critical ? 'REQUIRED' : 'Pending'}
+                </span>
+              </div>
+            ))}
+            {rd.missing.length > 0 && (
+              <div style={{marginTop:'12px',padding:'10px 14px',background:'#fef3c7',borderRadius:'8px',fontSize:'12px',color:'#92400e'}}>
+                <strong>Missing ({rd.missing.length}):</strong> {rd.missing.map(x=>x.name).join(', ')}
+              </div>
+            )}
+            {rd.ready && (
+              <div style={{marginTop:'12px',padding:'10px 14px',background:'#dcfce7',borderRadius:'8px',fontSize:'12px',color:'#166534',fontWeight:700}}>
+                ✅ All documents complete — this person can be included in the client submission list.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const customers = useMemo(()=>[...new Set(mobList.map(m=>m.customer_name).filter(Boolean))].sort(),[mobList]);
   const locations = useMemo(()=>[...new Set(mobList.map(m=>m.location).filter(Boolean))].sort(),[mobList]);
@@ -1375,8 +1694,13 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
     if (fCust && m.customer_name!==fCust) return false;
     if (fLoc  && m.location!==fLoc)      return false;
     if (fStatus && m.status!==fStatus)   return false;
+    if (fReady) {
+      const rd = computeReadiness(m);
+      if (fReady==='ready'     && !rd.readyForSubmission) return false;
+      if (fReady==='not_ready' && rd.readyForSubmission)  return false;
+    }
     return matchSearch(m, search);
-  }), [mobList, search, fCust, fLoc, fStatus]);
+  }), [mobList, search, fCust, fLoc, fStatus, fReady, computeReadiness]);
 
   const fillFromCandidate = candId => {
     const c = candidates.find(x=>x.id===candId);
@@ -1413,26 +1737,82 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
 
   const applyAiData = async (aiData, docType) => {
     if (!docPanel) return;
-    const fieldMap = {
-      full_name:'full_name', passport_no:'passport_no', nationality:'nationality',
-      date_of_birth:'date_of_birth', emirates_id:'emirates_id',
-      visa_no:'visa_no', visa_type:'visa_type',
-      wp_no:'wp_no',
-      pass_no:'cicpa_pass_no',
-      expiry_date: docType==='work_permit'?null:docType==='cicpa'?'cicpa_expiry_date':null,
-      exam_date: docType==='medical'?'medical_date':null,
-      result: docType==='medical'?'medical_result':null,
-    };
+    const dt = (aiData.doc_type || docType || '').toLowerCase();
+    const tn = (aiData.training_name || '').toLowerCase();
     const updates = {};
-    Object.entries(aiData).forEach(([k,v])=>{ if(fieldMap[k]&&v) updates[fieldMap[k]]=v; });
-    if(docType==='medical'&&aiData.result) updates.medical_done=true;
-    if(docType==='work_permit'&&aiData.wp_no) updates.wp_approved_date=aiData.issue_date||undefined;
-    if(docType==='cicpa'&&aiData.pass_no){ updates.cicpa_pass_no=aiData.pass_no; updates.cicpa_approved_date=aiData.issue_date||undefined; }
-    if(!Object.keys(updates).length)return;
-    const{error}=await db.from('mob_register').update({...updates,updated_at:new Date().toISOString()}).eq('id',docPanel.entity.id);
-    if(error){alert(error.message);return;}
-    setDocPanel(d=>d?{...d,entity:{...d.entity,...updates}}:d);
-    alert('Mobilisation record updated from AI scan ✓');
+
+    // Identity fields
+    if (aiData.full_name)       updates.full_name       = aiData.full_name;
+    if (aiData.passport_no)     updates.passport_no     = aiData.passport_no;
+    if (aiData.nationality)     updates.nationality     = aiData.nationality;
+    if (aiData.date_of_birth)   updates.date_of_birth   = aiData.date_of_birth;
+    if (aiData.passport_expiry) updates.passport_expiry = aiData.passport_expiry;
+    if (aiData.emirates_id)     updates.emirates_id     = aiData.emirates_id;
+    if (aiData.eid_expiry)      updates.eid_expiry      = aiData.eid_expiry;
+    if (aiData.visa_no)         updates.visa_no         = aiData.visa_no;
+    if (aiData.visa_type)       updates.visa_type       = aiData.visa_type;
+    if (aiData.visa_expiry)     updates.visa_expiry     = aiData.visa_expiry;
+    if (aiData.designation)     updates.designation     = aiData.designation;
+
+    // Work permit
+    if (dt.includes('work_permit') || aiData.wp_no) {
+      if (aiData.wp_no)       updates.wp_no            = aiData.wp_no;
+      if (aiData.issue_date)  updates.wp_approved_date = aiData.issue_date;
+    }
+    // CICPA
+    if (dt.includes('cicpa') || aiData.cicpa_pass_no) {
+      if (aiData.cicpa_pass_no)   updates.cicpa_pass_no       = aiData.cicpa_pass_no;
+      if (aiData.issue_date)      updates.cicpa_approved_date = aiData.issue_date;
+      if (aiData.cicpa_expiry)    updates.cicpa_expiry_date   = aiData.cicpa_expiry;
+      if (aiData.training_expiry) updates.cicpa_expiry_date   = aiData.training_expiry;
+    }
+    // Medical
+    if (dt.includes('medical') || aiData.medical_result || aiData.medical_date) {
+      updates.medical_done = true;
+      if (aiData.medical_result) updates.medical_result = aiData.medical_result;
+      const md = aiData.medical_date || aiData.issue_date;
+      if (md) updates.medical_date = md;
+    }
+    // HSE Passport
+    else if (dt === 'hse_passport' || tn.includes('hse passport') || tn.includes('hse induction')) {
+      updates.hse_passport_done = true;
+      const d = aiData.training_date || aiData.issue_date;
+      if (d) updates.hse_passport_date = d;
+    }
+    // H2S
+    else if (dt === 'h2s_certificate' || tn.includes('h2s')) {
+      updates.h2s_done = true;
+      const d = aiData.training_date || aiData.issue_date;
+      if (d) updates.h2s_date = d;
+    }
+    // Any other training certificate — add to extra_trainings (unlimited)
+    else if (aiData.training_name && !dt.includes('medical') && !dt.includes('passport') && !dt.includes('emirates') && !dt.includes('visa') && !dt.includes('work_permit') && !dt.includes('cicpa')) {
+      const current = Array.isArray(docPanel.entity.extra_trainings) ? docPanel.entity.extra_trainings : [];
+      const certName = aiData.training_name;
+      const alreadyExists = current.some(t => (t.name||'').toLowerCase() === certName.toLowerCase());
+      if (!alreadyExists) {
+        const newEntry = {
+          name:      certName,
+          done:      aiData.training_passed !== false,
+          date:      aiData.training_date || aiData.issue_date || null,
+          expiry:    aiData.training_expiry || null,
+          cert_no:   aiData.certificate_no  || null,
+          issuer:    aiData.issuing_authority || null,
+          mandatory: false,
+        };
+        updates.extra_trainings = [...current, newEntry];
+      }
+    }
+
+    if (!Object.keys(updates).length) {
+      alert('No matching fields found. Make sure the image is clear and the document is readable.');
+      return;
+    }
+    const { error } = await db.from('mob_register').update({ ...updates, updated_at: new Date().toISOString() }).eq('id', docPanel.entity.id);
+    if (error) { alert(error.message); return; }
+    setDocPanel(d => d ? {...d, entity:{...d.entity,...updates}} : d);
+    const changed = Object.keys(updates).filter(k => k !== 'updated_at');
+    alert('✓ Updated: ' + changed.join(', '));
   };
 
   // Read prefill from candidates tab
@@ -1460,37 +1840,41 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
   return (
     <div>
       {demobRec && <DemobModal record={demobRec} onClose={()=>setDemobRec(null)} onSave={(id,form)=>{onDemob(id,form);setDemobRec(null);}}/>}
-      {docPanel && (
-        <DocumentPanel
-          entity={docPanel.entity}
-          entityType={docPanel.entityType}
-          onClose={()=>setDocPanel(null)}
-          onApplyAiData={applyAiData}
-        />
-      )}
+      {docPanel && <DocumentPanel entity={docPanel.entity} entityType={docPanel.entityType} onClose={()=>setDocPanel(null)} onApplyAiData={applyAiData}/>}
+      {readinessRow && <ReadinessPanel r={readinessRow} onClose={()=>setReadinessRow(null)}/>}
 
       <div ref={measureToStk2} className="sticky-toolbar" style={{padding:'8px 14px',display:'flex',gap:'8px',justifyContent:'space-between',flexWrap:'wrap',alignItems:'center'}}>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}}>
-          <input placeholder="Search name, EID, passport, CICPA…" value={search} onChange={e=>setSearch(e.target.value)} style={{...S.input,width:'260px'}}/>
-          <select value={fCust} onChange={e=>setFCust(e.target.value)} style={{...S.input,width:'140px'}}>
+          <input placeholder="Search name, EID, passport, CICPA…" value={search} onChange={e=>setSearch(e.target.value)} style={{...S.input,width:'200px'}}/>
+          <select value={fCust} onChange={e=>setFCust(e.target.value)} style={{...S.input,width:'130px'}}>
             <option value="">All customers</option>
             {customers.map(c=><option key={c} value={c}>{c}</option>)}
           </select>
-          <select value={fLoc} onChange={e=>setFLoc(e.target.value)} style={{...S.input,width:'130px'}}>
+          <select value={fLoc} onChange={e=>setFLoc(e.target.value)} style={{...S.input,width:'120px'}}>
             <option value="">All locations</option>
             {locations.map(l=><option key={l} value={l}>{l}</option>)}
           </select>
-          <select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={{...S.input,width:'120px'}}>
+          <select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={{...S.input,width:'115px'}}>
             <option value="">All statuses</option>
             <option value="pending">Pending</option>
             <option value="mobilised">Mobilised</option>
             <option value="demobilised">Demobilised</option>
             <option value="rejected">Rejected</option>
           </select>
+          <select value={fReady} onChange={e=>setFReady(e.target.value)} style={{...S.input,width:'130px',borderColor:fReady?'#b8972a':undefined,fontWeight:fReady?700:400}}>
+            <option value="">All readiness</option>
+            <option value="ready">✅ Ready only</option>
+            <option value="not_ready">❌ Not ready</option>
+          </select>
           <span style={{fontSize:'12px',color:'#64748b',whiteSpace:'nowrap'}}>{filtered.length} records</span>
         </div>
         <div style={{display:'flex',gap:'8px'}}>
-          <button style={S.btnGold} onClick={()=>exportCSV(filtered,`SATCO_Mob_${fCust||'All'}_${fLoc||'AllLoc'}`,exportCols)}>⬇ Export Excel</button>
+          <button style={{...S.btnGold,background:'#166534'}} onClick={()=>{
+            const readyOnly=filtered.filter(r=>computeReadiness(r).readyForSubmission);
+            if(!readyOnly.length)return alert('No ready personnel in current filter. Check location config for required certs.');
+            exportCSV(readyOnly,`SATCO_Ready_${fCust||'All'}_${fLoc||'AllLoc'}`,exportCols);
+          }}>✅ Export Ready</button>
+          <button style={S.btnGold} onClick={()=>exportCSV(filtered,`SATCO_Mob_${fCust||'All'}_${fLoc||'AllLoc'}`,exportCols)}>⬇ Export All</button>
           <button style={S.btnPri} onClick={blank}>+ Add Person</button>
         </div>
       </div>
@@ -1538,10 +1922,11 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
             </Field>
           </Grid>
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Work Permit (under SATCO)</div>
-          <Grid cols={3}>
+          <Grid cols={4}>
             <Field label="WP Applied Date"><input type="date" value={draft.wp_applied_date||''} onChange={e=>setDraft(d=>({...d,wp_applied_date:e.target.value}))} style={S.input}/></Field>
             <Field label="WP Approved Date"><input type="date" value={draft.wp_approved_date||''} onChange={e=>setDraft(d=>({...d,wp_approved_date:e.target.value}))} style={S.input}/></Field>
             <Field label="WP Number"><input value={draft.wp_no||''} onChange={e=>setDraft(d=>({...d,wp_no:e.target.value}))} style={S.input}/></Field>
+            <Field label="WP Expiry"><input type="date" value={draft.wp_expiry||''} onChange={e=>setDraft(d=>({...d,wp_expiry:e.target.value}))} style={S.input}/></Field>
           </Grid>
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Medical</div>
           <div style={{display:'flex',gap:'20px',flexWrap:'wrap',marginBottom:'12px',alignItems:'center'}}>
@@ -1550,17 +1935,19 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
             </label>
             {draft.medical_done&&<>
               <div style={{width:'150px'}}><Field label="Date"><input type="date" value={draft.medical_date||''} onChange={e=>setDraft(d=>({...d,medical_date:e.target.value}))} style={S.input}/></Field></div>
+              <div style={{width:'150px'}}><Field label="Expiry Date"><input type="date" value={draft.medical_expiry||''} onChange={e=>setDraft(d=>({...d,medical_expiry:e.target.value}))} style={S.input}/></Field></div>
               <div style={{width:'140px'}}><Field label="Result"><select value={draft.medical_result||''} onChange={e=>setDraft(d=>({...d,medical_result:e.target.value}))} style={S.input}><option value="">Select…</option><option>Fit</option><option>Unfit</option><option>Pending</option></select></Field></div>
             </>}
           </div>
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Standard O&G Trainings</div>
           <div style={{display:'flex',gap:'28px',flexWrap:'wrap',marginBottom:'12px'}}>
-            {[['hse_passport_done','hse_passport_date','HSE Passport'],['h2s_done','h2s_date','H2S Training']].map(([dk,dtk,lbl])=>(
+            {[['hse_passport_done','hse_passport_date','hse_passport_expiry','HSE Passport'],['h2s_done','h2s_date','h2s_expiry','H2S Training']].map(([dk,dtk,dek,lbl])=>(
               <div key={dk} style={{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}}>
                 <label style={{display:'flex',gap:'6px',alignItems:'center',cursor:'pointer',fontWeight:600,fontSize:'13px'}}>
                   <input type="checkbox" checked={!!draft[dk]} onChange={e=>setDraft(d=>({...d,[dk]:e.target.checked}))} style={{width:16,height:16}}/>{lbl}
                 </label>
-                {draft[dk]&&<div style={{width:'150px'}}><Field label="Date"><input type="date" value={draft[dtk]||''} onChange={e=>setDraft(d=>({...d,[dtk]:e.target.value}))} style={S.input}/></Field></div>}
+                {draft[dk]&&<><div style={{width:'150px'}}><Field label="Date"><input type="date" value={draft[dtk]||''} onChange={e=>setDraft(d=>({...d,[dtk]:e.target.value}))} style={S.input}/></Field></div><div style={{width:'150px'}}><Field label="Expiry"><input type="date" value={draft[dek]||''} onChange={e=>setDraft(d=>({...d,[dek]:e.target.value}))} style={S.input}/></Field></div></>
+                }
               </div>
             ))}
           </div>
@@ -1608,7 +1995,7 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
         <table style={{width:'100%',borderCollapse:'collapse',minWidth:'1400px'}}>
           <thead><tr>
             <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,minWidth:'150px'}}>Name</th>
-            {['Designation','Supplier / EmpNo','Customer','Location','Work Permit','Medical','HSE','H2S','Extra','CICPA','Mob Date','Demob Date','Status','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
+            {['Designation','Supplier / EmpNo','Customer','Location','Work Permit','Medical','HSE','H2S','Extra','CICPA','Readiness','Mob Date','Demob Date','Status','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
           </tr></thead>
           <tbody>
             {filtered.length===0&&<tr><td colSpan={15} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No records. Use filters or click <strong>+ Add Person</strong>.</td></tr>}
@@ -1647,9 +2034,27 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
                 </td>
                 <td style={S.td}><StatusBadge status={r.status}/></td>
                 <td style={S.td}>
+                  {(()=>{
+                    const rd=computeReadiness(r);
+                    return(
+                      <div style={{display:'flex',flexDirection:'column',gap:'2px'}}>
+                        <span style={{fontSize:'11px',fontWeight:800,cursor:'pointer',
+                          color:rd.ready?'#166534':rd.readyForSubmission?'#92400e':'#dc2626'}}
+                          onClick={e=>{e.stopPropagation();setReadinessRow(r);}}>
+                          {rd.ready?'✅ Ready':rd.readyForSubmission?'⚠ Near ready':`❌ ${rd.criticalMissing.length} missing`}
+                        </span>
+                        <span style={{fontSize:'10px',color:'#94a3b8',cursor:'pointer'}}
+                          onClick={e=>{e.stopPropagation();setReadinessRow(r);}}>
+                          {rd.missing.length>0?`${rd.missing.length} pending`:'View checklist'}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </td>
+                <td style={S.td}>
                   <div style={{display:'flex',gap:'4px',flexWrap:'wrap'}}>
-                    <button style={S.btnSm} onClick={()=>{setDraft({...r});setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);}}>Edit</button>
-                    {r.status==='mobilised'&&<button style={{...S.btnSm,background:'#991b1b',color:'#fff',border:'none'}} onClick={()=>setDemobRec(r)}>Demob</button>}
+                    <button style={S.btnSm} onClick={e=>{e.stopPropagation();setDraft({...r});setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);}}>Edit</button>
+                    {r.status==='mobilised'&&<button style={{...S.btnSm,background:'#991b1b',color:'#fff',border:'none'}} onClick={e=>{e.stopPropagation();setDemobRec(r);}}>Demob</button>}
                   </div>
                 </td>
               </tr>;
