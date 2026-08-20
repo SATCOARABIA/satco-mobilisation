@@ -2374,7 +2374,9 @@ function App() {
   const onSave = async(type,draft,onDone)=>{
     const tableMap={candidates:'mob_candidates',suppliers:'mob_suppliers',requirements:'mob_requirements',loa:'mob_loa',mob:'mob_register',locconfig:'mob_location_config'};
     const table=tableMap[type];
-    const clean={...draft,updated_at:new Date().toISOString()};
+    const hasUpdatedAt = ['mob_candidates','mob_register','mob_location_config'].includes(table);
+    const clean={...draft};
+    if(hasUpdatedAt) clean.updated_at=new Date().toISOString();
     delete clean._lines; delete clean._candidate;
     const{error}=draft.id
       ?await db.from(table).update(clean).eq('id',draft.id)
