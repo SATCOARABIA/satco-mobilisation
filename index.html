@@ -1492,29 +1492,46 @@ function RequirementsTab({requirements, onSave}) {
         <div style={{...S.card,padding:'16px',marginBottom:'14px',background:'#eff6ff',border:'1px solid #bfdbfe'}}>
           <div style={{fontWeight:800,fontSize:'14px',color:'#1e40af',marginBottom:'14px'}}>{draft.id?'Edit Requirement':'New Customer Requirement'}</div>
 
-          {/* Pull from Ops Portal PO */}
+          {/* Import from Ops PO + AI Scan PO document */}
           <div style={{background:'#0f172a',borderRadius:'8px',padding:'12px 16px',marginBottom:'14px'}}>
-            <div style={{fontWeight:700,fontSize:'12px',color:'#b8972a',marginBottom:'6px'}}>🔗 Import from Ops Portal PO</div>
-            <div style={{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}}>
-              <select onChange={e=>{
-                  const po=opsPOs.find(p=>p.id===e.target.value);
-                  if(po) fillFromPO(po);
-                }}
-                style={{...S.input,width:'380px',background:'#1e293b',color:'#fff',border:'1px solid #334155'}}>
-                <option value="">{opsLoading?'Loading POs from Ops portal…':'Select a PO to auto-fill customer & reference…'}</option>
-                {opsPOs.map(po=>(
-                  <option key={po.id} value={po.id}>
-                    {po.po_no} — {po.customers?.name||'Unknown'} ({po.status}) {po.po_value?`· ${po.currency||'AED'} ${Number(po.po_value).toLocaleString()}`:''}
-                  </option>
-                ))}
-              </select>
-              <a href="https://satco-ops.vercel.app" target="_blank" rel="noopener noreferrer"
-                style={{color:'#b8972a',fontSize:'12px',fontWeight:700,textDecoration:'none'}}>
-                Open Ops Portal ↗
-              </a>
-            </div>
-            <div style={{fontSize:'11px',color:'#475569',marginTop:'6px'}}>
-              Selecting a PO fills Customer Name and PO Reference automatically. Then add the manpower positions and quantities below.
+            <div style={{fontWeight:700,fontSize:'12px',color:'#b8972a',marginBottom:'8px'}}>🔗 Import from Ops Portal — Select PO or Scan Document</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'4px'}}>
+              <div>
+                <div style={{fontSize:'11px',color:'#94a3b8',marginBottom:'4px'}}>Search by PO number or customer:</div>
+                <input placeholder="Type to filter…" value={draft._poSearch||''} onChange={e=>setDraft(d=>({...d,_poSearch:e.target.value}))} style={{...S.input,background:'#1e293b',color:'#fff',border:'1px solid #334155',marginBottom:'4px'}}/>
+                <select onChange={e=>{const po=opsPOs.find(p=>p.id===e.target.value);if(po)fillFromPO(po);}} style={{...S.input,background:'#1e293b',color:'#fff',border:'1px solid #334155',height:'110px'}} size={5}>
+                  <option value="">{opsLoading?'Loading…':'— select PO —'}</option>
+                  {opsPOs.filter(po=>{const q=(draft._poSearch||'').toLowerCase();if(!q)return true;return(po.po_no||'').toLowerCase().includes(q)||(po.customers?.name||'').toLowerCase().includes(q);}).map(po=>(
+                    <option key={po.id} value={po.id}>{po.po_no} — {po.customers?.name||'?'} {po.po_value?`(${po.currency||'AED'} ${Number(po.po_value).toLocaleString()})`:''}</option>
+                  ))}
+                </select>
+                <a href="https://satco-ops.vercel.app" target="_blank" rel="noopener noreferrer" style={{color:'#b8972a',fontSize:'11px',fontWeight:700,textDecoration:'none',display:'block',marginTop:'4px'}}>Open Ops Portal ↗</a>
+              </div>
+              <div>
+                <div style={{fontSize:'11px',color:'#94a3b8',marginBottom:'4px'}}>Or upload the PO document — AI reads all details:</div>
+                <label style={{display:'flex',alignItems:'center',gap:'8px',padding:'10px 14px',background:'#b8972a',color:'#fff',borderRadius:'6px',cursor:'pointer',fontWeight:700,fontSize:'12px',marginBottom:'6px',whiteSpace:'nowrap'}}>
+                  {draft._poScanning?'⏳ Reading PO…':'📄 Upload PO PDF / Image'}
+                  <input type="file" accept="image/*,application/pdf" style={{display:'none'}} onChange={async e=>{
+                    const file=e.target.files?.[0];if(!file)return;
+                    setDraft(d=>({...d,_poScanning:true,_poScanErr:''}));
+                    try{
+                      const b64=await fileToBase64(file);
+                      const mime=file.type||'application/pdf';
+                      const res=await fetch(CLAUDE_PROXY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,messages:[{role:'user',content:[{type:mime.startsWith('image/')?'image':'document',source:{type:'base64',media_type:mime,data:b64}},{type:'text',text:'Extract from this Purchase Order. Return ONLY valid JSON: {"customer_name":"","po_no":"","po_date":"YYYY-MM-DD","location":"","positions":[{"designation":"","qty":0}],"notes":""}'}]}]})});
+                      const data=await res.json();
+                      const text=(data.content||[]).map(c=>c.text||'').join('').trim();
+                      const match=text.match(/\{[\s\S]*\}/);
+                      if(!match)throw new Error('AI did not return JSON');
+                      const r=JSON.parse(match[0]);
+                      setDraft(d=>({...d,customer_name:r.customer_name||d.customer_name,po_reference:r.po_no||d.po_reference,requirement_date:r.po_date||d.requirement_date||todayStr(),location:r.location||d.location,_lines:r.positions?.length?r.positions.map(p=>`${p.designation}: ${p.qty}`).join('\n'):(d._lines||''),notes:r.notes||d.notes||'',_poScanning:false,_poScanResult:r}));
+                    }catch(ex){setDraft(d=>({...d,_poScanning:false,_poScanErr:ex.message}));}
+                    e.target.value='';
+                  }}/>
+                </label>
+                {draft._poScanErr&&<div style={{color:'#f87171',fontSize:'11px',marginBottom:'4px'}}>⚠ {draft._poScanErr}</div>}
+                {draft._poScanResult&&<div style={{color:'#4ade80',fontSize:'11px',fontWeight:700,marginBottom:'4px'}}>✓ PO scanned — fields filled. Review below and save.</div>}
+                <div style={{fontSize:'11px',color:'#475569'}}>Upload scanned PDF or photo. AI extracts customer, PO no, location and positions.</div>
+              </div>
             </div>
           </div>
           <Grid cols={3}>
@@ -2434,7 +2451,8 @@ function App() {
     const hasUpdatedAt = ['mob_candidates','mob_register','mob_location_config'].includes(table);
     const clean={...draft};
     if(hasUpdatedAt) clean.updated_at=new Date().toISOString();
-    delete clean._lines; delete clean._candidate;
+    // Strip all internal UI state fields (anything starting with _)
+    Object.keys(clean).forEach(k=>{ if(k.startsWith('_')) delete clean[k]; });
     const{error}=draft.id
       ?await db.from(table).update(clean).eq('id',draft.id)
       :await db.from(table).insert(clean);
