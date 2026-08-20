@@ -335,7 +335,39 @@ function exportCSV(rows, filename, cols) {
   URL.revokeObjectURL(url);
 }
 
-// ── Document / Storage helpers ────────────────────────────────────────────────
+// ── Draft persistence — survives tab switching ────────────────────────────────
+function usePersistentDraft(key) {
+  const stored = React.useMemo(() => {
+    try { const v = localStorage.getItem('satco_mob_draft_' + key); return v ? JSON.parse(v) : null; } catch { return null; }
+  }, [key]);
+  const [draft, setDraftRaw] = useState(stored);
+  const setDraft = useCallback((valOrFn) => {
+    setDraftRaw(prev => {
+      const next = typeof valOrFn === 'function' ? valOrFn(prev) : valOrFn;
+      try {
+        if (next === null) localStorage.removeItem('satco_mob_draft_' + key);
+        else localStorage.setItem('satco_mob_draft_' + key, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, [key]);
+  return [draft, setDraft];
+}
+
+function DraftBanner({draft, onRestore, onDiscard}) {
+  if (!draft) return null;
+  return (
+    <div style={{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'8px',padding:'10px 16px',marginBottom:'12px',display:'flex',gap:'12px',alignItems:'center'}}>
+      <span style={{fontSize:'18px'}}>💾</span>
+      <div style={{flex:1}}>
+        <div style={{fontWeight:700,fontSize:'13px',color:'#92400e'}}>Unsaved draft found — {draft.full_name||'(no name yet)'}</div>
+        <div style={{fontSize:'12px',color:'#78350f'}}>You left this form without saving. Click Restore to continue where you left off.</div>
+      </div>
+      <button onClick={onRestore} style={{padding:'6px 14px',background:'#b8972a',color:'#fff',border:'none',borderRadius:'6px',fontWeight:700,fontSize:'12px',cursor:'pointer'}}>Restore</button>
+      <button onClick={onDiscard} style={{padding:'6px 14px',background:'#fff',color:'#64748b',border:'1px solid #e2e8f0',borderRadius:'6px',fontWeight:600,fontSize:'12px',cursor:'pointer'}}>Discard</button>
+    </div>
+  );
+}
 const fileToBase64 = file => new Promise((res,rej)=>{
   const r = new FileReader();
   r.onload = () => res(r.result.split(',')[1]);
@@ -1138,11 +1170,12 @@ function Dashboard({data, loaUsed, setTab, setFilterStatus}) {
 
 // ── Candidates Tab ────────────────────────────────────────────────────────────
 function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch}) {
-  const [draft,setDraft]   = useState(null);
+  const [draft,setDraft]   = usePersistentDraft('candidate');
+  const [savedDraft, setSavedDraft] = useState(() => { try { const v=localStorage.getItem('satco_mob_draft_candidate'); return v?JSON.parse(v):null; } catch{return null;} });
   const [search,setSearch] = useState(tabSearch||'');
   const [suppF,setSuppF]   = useState('');
   const [histPerson, setHistPerson] = useState(null);
-  const [docPanel,  setDocPanel]   = useState(null); // {entity, entityType}
+  const [docPanel,  setDocPanel]   = useState(null);
   const clickTimer  = useRef(null);
 
   useEffect(()=>{ if(tabSearch) setSearch(tabSearch); },[tabSearch]);
@@ -1208,6 +1241,12 @@ function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch}) {
 
   return (
     <div>
+      {!draft && savedDraft && (
+        <DraftBanner draft={savedDraft}
+          onRestore={()=>{ setDraft(savedDraft); setSavedDraft(null); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); }}
+          onDiscard={()=>{ localStorage.removeItem('satco_mob_draft_candidate'); setSavedDraft(null); }}
+        />
+      )}
       {histPerson && (
         <PersonHistoryModal
           candidate={histPerson.candidate}
@@ -1582,10 +1621,11 @@ function LoaTab({loaList, usedMap, onSave}) {
 }
 // ── Mobilisation Tab ──────────────────────────────────────────────────────────
 function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onSave, onDemob, initialStatus, tabSearch}) {
-  const [draft,setDraft]     = useState(null);
+  const [draft,setDraft]     = usePersistentDraft('mobilisation');
+  const [savedDraft, setSavedDraft] = useState(() => { try { const v=localStorage.getItem('satco_mob_draft_mobilisation'); return v?JSON.parse(v):null; } catch{return null;} });
   const [demobRec,setDemobRec] = useState(null);
   const [docPanel, setDocPanel] = useState(null);
-  const [readinessRow, setReadinessRow] = useState(null); // person being inspected
+  const [readinessRow, setReadinessRow] = useState(null);
   const clickTimer = useRef(null);
   const [search,setSearch]   = useState(tabSearch||'');
   const [fCust,setFCust]     = useState('');
@@ -1839,6 +1879,12 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
 
   return (
     <div>
+      {!draft && savedDraft && (
+        <DraftBanner draft={savedDraft}
+          onRestore={()=>{ setDraft(savedDraft); setSavedDraft(null); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); }}
+          onDiscard={()=>{ localStorage.removeItem('satco_mob_draft_mobilisation'); setSavedDraft(null); }}
+        />
+      )}
       {demobRec && <DemobModal record={demobRec} onClose={()=>setDemobRec(null)} onSave={(id,form)=>{onDemob(id,form);setDemobRec(null);}}/>}
       {docPanel && <DocumentPanel entity={docPanel.entity} entityType={docPanel.entityType} onClose={()=>setDocPanel(null)} onApplyAiData={applyAiData}/>}
       {readinessRow && <ReadinessPanel r={readinessRow} onClose={()=>setReadinessRow(null)}/>}
@@ -2323,6 +2369,17 @@ function App() {
   const [tabSearch,    setTabSearch]    = useState('');
 
   const [data, setData] = useState({candidates:[],suppliers:[],requirements:[],loaList:[],mobList:[],locConfigs:[]});
+
+  // Warn browser tab close if unsaved draft exists
+  useEffect(()=>{
+    const handler = e => {
+      if (localStorage.getItem('satco_mob_draft_candidate') || localStorage.getItem('satco_mob_draft_mobilisation')) {
+        e.preventDefault(); e.returnValue = 'You have an unsaved form. Are you sure you want to leave?';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, []);
 
   useEffect(()=>{
     db.auth.getSession().then(({data})=>{setSession(data.session);setAuthReady(true);});
