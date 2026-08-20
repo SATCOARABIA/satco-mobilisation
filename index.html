@@ -166,7 +166,7 @@ function useDragScroll() {
 }
 
 const SUPA_URL = 'https://oaerqjrkdpuhiproppaz.supabase.co';
-const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9hZXJxanJrZHB1aGlwcm9wcGF6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5NTQ0NjksImV4cCI6MjA5NTUzMDQ2OX0.qBtb3OV1aFGX8e1QUg19qZmOwIIjipF6IZwBOLXY3YI';
+const SUPA_KEY = 'YOUR_SUPABASE_ANON_KEY';
 const db = supabase.createClient(SUPA_URL, SUPA_KEY);
 
 const CLAUDE_PROXY = 'https://satco-hr.vercel.app/api/claude';
@@ -207,7 +207,10 @@ DO $$ BEGIN
     CREATE POLICY mob_auth ON mob_documents FOR ALL TO authenticated USING (true) WITH CHECK (true);
   END IF;
 END $$;
-`
+`;
+
+const MAIN_SQL = `-- SATCO Mobilisation Portal — Run ONCE in HR Supabase SQL Editor
+-- Project: oaerqjrkdpuhiproppaz
 
 CREATE TABLE IF NOT EXISTS mob_suppliers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -291,6 +294,8 @@ ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS demob_remarks text;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS wp_action_on_demob text;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS cicpa_returned boolean DEFAULT false;
 `;
+
+const ALL_SQL = SETUP_SQL + '\n' + MAIN_SQL;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const fmtDate  = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '—';
@@ -1850,10 +1855,10 @@ function SetupScreen({onRetry}) {
       <div style={{fontWeight:800,fontSize:'18px',color:'#0f172a',marginBottom:'6px'}}>🏗️ One-time Setup Required</div>
       <div style={{fontSize:'13px',color:'#64748b',marginBottom:'16px'}}>Run this SQL once in <strong>Supabase → SQL Editor</strong> (project: oaerqjrkdpuhiproppaz), then click Check Again.</div>
       <div style={{display:'flex',gap:'10px',marginBottom:'12px'}}>
-        <button onClick={()=>{navigator.clipboard.writeText(SETUP_SQL);setCopied(true);setTimeout(()=>setCopied(false),2000);}} style={S.btnGold}>{copied?'✓ Copied!':'Copy SQL'}</button>
+        <button onClick={()=>{navigator.clipboard.writeText(ALL_SQL);setCopied(true);setTimeout(()=>setCopied(false),2000);}} style={S.btnGold}>{copied?'✓ Copied!':'Copy SQL'}</button>
         <button onClick={onRetry} style={S.btnPri}>Check Again</button>
       </div>
-      <pre style={{background:'#1e293b',color:'#f8fafc',padding:'16px',borderRadius:'8px',fontSize:'11px',overflowX:'auto',whiteSpace:'pre',maxHeight:'500px',overflowY:'auto'}}>{SETUP_SQL}</pre>
+      <pre style={{background:'#1e293b',color:'#f8fafc',padding:'16px',borderRadius:'8px',fontSize:'11px',overflowX:'auto',whiteSpace:'pre',maxHeight:'500px',overflowY:'auto'}}>{ALL_SQL}</pre>
     </div>
   );
 }
