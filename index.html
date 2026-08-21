@@ -1177,7 +1177,7 @@ function Dashboard({data, loaUsed, setTab, setFilterStatus, hrMobActive=new Set(
 }
 
 // ── Candidates Tab ────────────────────────────────────────────────────────────
-function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch, hrMobActive=new Set()}) {
+function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSearch, hrMobActive=new Set()}) {
   const [draft,setDraft]   = usePersistentDraft('candidate');
   const [savedDraft, setSavedDraft] = useState(() => { try { const v=localStorage.getItem('satco_mob_draft_candidate'); return v?JSON.parse(v):null; } catch{return null;} });
   const [search,setSearch] = useState(tabSearch||'');
@@ -1540,6 +1540,7 @@ function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch, hrMo
                     <button style={S.btnSm} onClick={()=>personHistory(c)}>History</button>
                     <button style={S.btnSm} onClick={()=>setDraft({...c})}>Edit</button>
                     <button style={{...S.btnSm,background:'#7c3aed',color:'#fff',border:'none'}} onClick={()=>onMobilise(c)}>+ Mob</button>
+                    <button style={{...S.btnSm,color:'#dc2626',border:'1px solid #fecaca'}} onClick={()=>onDelete('candidates',c)}>Delete</button>
                   </div>
                 </td>
               </tr>;
@@ -2835,6 +2836,21 @@ function App() {
     onDone?.();
   };
 
+  // Delete handler — with confirmation, blocks if person has mob records
+  const onDelete = async(type, record) => {
+    if (type === 'candidates') {
+      const hasMob = data.mobList.some(m => m.candidate_id === record.id || m.full_name === record.full_name);
+      if (hasMob) {
+        alert(`Cannot delete "${record.full_name}" — they have mobilisation records. Demobilise them first or edit those records.`);
+        return;
+      }
+      if (!window.confirm(`Delete "${record.full_name}" (${record.supplier_emp_no||'no EMP no'}) from the candidates pool?\n\nThis cannot be undone.`)) return;
+      const { error } = await db.from('mob_candidates').delete().eq('id', record.id);
+      if (error) { alert(error.message); return; }
+      await loadAll();
+    }
+  };
+
   // Demob handler — updates status + demob fields
   const onDemob = async(id, form) => {
     const{error}=await db.from('mob_register').update({
@@ -2880,7 +2896,7 @@ function App() {
           {loading&&tableReady===null&&<div style={{padding:'40px',textAlign:'center',color:'#94a3b8'}}>Loading…</div>}
           {!loading&&tableReady&&<>
             {tab==='dashboard'    &&<Dashboard data={data} loaUsed={loaUsed} setTab={t=>{setTab(t);}} setFilterStatus={setFilterStatus} hrMobActive={hrMobActive}/>}
-            {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onMobilise={handleMobilise} tabSearch={tabSearch} hrMobActive={hrMobActive}/>}
+            {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} tabSearch={tabSearch} hrMobActive={hrMobActive}/>}
             {tab==='requirements' &&<RequirementsTab requirements={data.requirements} onSave={onSave}/>}
             {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
             {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} initialStatus={filterStatus} tabSearch={tabSearch}/>}
