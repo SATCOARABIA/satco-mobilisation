@@ -1191,7 +1191,7 @@ function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch, hrMo
 
   useEffect(()=>{
     db.from('employees')
-      .select('employee_id,full_name,nationality,dob,passport_no,passport_expiry,eid_no,eid_expiry,visa_no,visa_type,location,visa_expiry,mobile')
+      .select('employee_id,full_name,nationality,dob,passport_no,passport_expiry,eid_no,eid_expiry,evisa_no,visa_expiry,location,mobile')
       .is('deleted_at', null)
       .order('employee_id')
       .then(({data})=>setSatcoEmps(data||[]));
@@ -1447,8 +1447,7 @@ function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch, hrMo
                     passport_expiry: emp?.passport_expiry||d.passport_expiry,
                     emirates_id: emp?.eid_no||d.emirates_id,
                     eid_expiry: emp?.eid_expiry||d.eid_expiry,
-                    visa_no: emp?.visa_no||d.visa_no,
-                    visa_type: emp?.visa_type||d.visa_type,
+                    visa_no: emp?.evisa_no||d.visa_no,
                     visa_location: emp?.location||d.visa_location,
                     visa_expiry: emp?.visa_expiry||d.visa_expiry,
                     phone: emp?.mobile||d.phone,
