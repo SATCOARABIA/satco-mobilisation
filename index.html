@@ -346,8 +346,10 @@ function usePersistentDraft(key) {
     setDraftRaw(prev => {
       const next = typeof valOrFn === 'function' ? valOrFn(prev) : valOrFn;
       try {
+        // Only persist NEW drafts (no id) — editing existing records should never be stored
         if (next === null) localStorage.removeItem('satco_mob_draft_' + key);
-        else localStorage.setItem('satco_mob_draft_' + key, JSON.stringify(next));
+        else if (!next.id) localStorage.setItem('satco_mob_draft_' + key, JSON.stringify(next));
+        else localStorage.removeItem('satco_mob_draft_' + key); // clear any stale draft when editing existing
       } catch {}
       return next;
     });
@@ -1191,7 +1193,7 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
 
   useEffect(()=>{
     db.from('employees')
-      .select('employee_id,full_name,nationality,dob,passport_no,passport_expiry,eid_no,eid_expiry,evisa_no,visa_expiry,location,mobile')
+      .select('employee_id,full_name,nationality,dob,passport_no,passport_expiry,eid_no,eid_expiry,evisa_no,visa_expiry,location,mobile,position')
       .is('deleted_at', null)
       .order('employee_id')
       .then(({data})=>setSatcoEmps(data||[]));
@@ -1441,6 +1443,7 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
                     supplier_emp_no: e.target.value,
                     supplier_name: 'SATCO Arabia',
                     full_name: emp?.full_name||d.full_name,
+                    designation: emp?.position||d.designation,
                     nationality: emp?.nationality||d.nationality,
                     date_of_birth: emp?.dob||d.date_of_birth,
                     passport_no: emp?.passport_no||d.passport_no,
@@ -1538,7 +1541,7 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
                 <td style={S.td}>
                   <div style={{display:'flex',gap:'4px',flexWrap:'wrap'}}>
                     <button style={S.btnSm} onClick={()=>personHistory(c)}>History</button>
-                    <button style={S.btnSm} onClick={()=>setDraft({...c})}>Edit</button>
+                    <button style={S.btnSm} onClick={()=>{setDraft({...c});setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);}}>Edit</button>
                     <button style={{...S.btnSm,background:'#7c3aed',color:'#fff',border:'none'}} onClick={()=>onMobilise(c)}>+ Mob</button>
                     <button style={{...S.btnSm,color:'#dc2626',border:'1px solid #fecaca'}} onClick={()=>onDelete('candidates',c)}>Delete</button>
                   </div>
