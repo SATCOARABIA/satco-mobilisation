@@ -2028,7 +2028,20 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
     setDraft(d=>({...d, extra_trainings:cfg.trainings.map(t=>({name:t.name,mandatory:t.mandatory,done:false,date:null}))}));
   };
 
-  const availLoas = draft ? loaList.filter(l=>(!draft.customer_name||l.customer_name===draft.customer_name)&&(!draft.location||l.location===draft.location)) : [];
+  // availLoas: show all LOAs for selected customer, also show all if no customer selected
+  const availLoas = draft ? loaList.filter(l=>{
+    if (!draft.customer_name) return true;
+    // exact match first, then partial match on customer name
+    const custMatch = l.customer_name===draft.customer_name ||
+      l.customer_name?.toLowerCase().includes(draft.customer_name.toLowerCase().split(' ')[0]) ||
+      draft.customer_name.toLowerCase().includes((l.customer_name||'').toLowerCase().split(' ')[0]);
+    if (!custMatch) return false;
+    if (!draft.location) return true;
+    const locMatch = !l.location || l.location===draft.location ||
+      l.location?.toLowerCase().includes(draft.location.toLowerCase().split(' ')[0]) ||
+      draft.location.toLowerCase().includes((l.location||'').toLowerCase().split(' ')[0]);
+    return locMatch;
+  }) : [];
 
   const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',emirates_id:'',visa_no:'',visa_location:'',customer_name:'',location:'',loa_id:'',medical_done:false,medical_result:'',hse_passport_done:false,h2s_done:false,extra_trainings:[],status:'pending',notes:''}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
 
@@ -2259,12 +2272,65 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
               </select>
             </Field>
             <Field label="LOA Reference">
-              <select value={draft.loa_id||''} onChange={e=>setDraft(d=>({...d,loa_id:e.target.value||null}))} style={S.input}>
-                <option value="">Select LOA…</option>
-                {availLoas.map(l=>{const rem=l.total_count-(usedMap[l.id]||0);return<option key={l.id} value={l.id}>{l.loa_reference||'LOA'} — {rem} remaining</option>;})}
+              <select value={draft.loa_id||''} onChange={e=>setDraft(d=>({...d,loa_id:e.target.value||null}))} style={{...S.input,borderColor:availLoas.length===0?'#fca5a5':undefined}}>
+                <option value="">{availLoas.length===0?'⚠ No LOA found — check LOA tab':'Select LOA…'}</option>
+                {availLoas.map(l=>{
+                  const totalUsed = usedMap[l.id]||0;
+                  const cicpaIssued = mobList.filter(m=>m.loa_id===l.id&&m.cicpa_pass_no).length;
+                  const rem=l.total_count-totalUsed;
+                  return <option key={l.id} value={l.id}>
+                    {l.loa_reference||'LOA'} — {rem} of {l.total_count} remaining | CICPA: {cicpaIssued} issued
+                  </option>;
+                })}
               </select>
             </Field>
           </Grid>
+          {/* LOA Status Panel — always visible when LOA selected */}
+          {draft.loa_id && (()=>{
+            const loa = loaList.find(l=>l.id===draft.loa_id);
+            if (!loa) return null;
+            const totalUsed   = usedMap[loa.id]||0;
+            const cicpaIssued = mobList.filter(m=>m.loa_id===loa.id&&m.cicpa_pass_no).length;
+            const cicpaPending= mobList.filter(m=>m.loa_id===loa.id&&!m.cicpa_pass_no&&m.status!=='demobilised').length;
+            const remaining   = loa.total_count - totalUsed;
+            const pct = Math.round((totalUsed/loa.total_count)*100);
+            return (
+              <div style={{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'8px',padding:'12px 16px',marginBottom:'12px'}}>
+                <div style={{fontWeight:800,fontSize:'12px',color:'#92400e',marginBottom:'8px'}}>
+                  📄 LOA Status — {loa.customer_name} / {loa.location}
+                  {loa.loa_reference && <span style={{marginLeft:'8px',fontFamily:'monospace',color:'#b45309'}}>Ref: {loa.loa_reference}</span>}
+                </div>
+                {/* Progress bar */}
+                <div style={{background:'#e2e8f0',borderRadius:'4px',height:'8px',marginBottom:'10px'}}>
+                  <div style={{background:remaining<=loa.alert_threshold?'#dc2626':'#b8972a',borderRadius:'4px',height:'8px',width:`${Math.min(pct,100)}%`,transition:'width 0.3s'}}/>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'8px',fontSize:'12px'}}>
+                  <div style={{textAlign:'center'}}>
+                    <div style={{fontSize:'22px',fontWeight:800,color:'#92400e'}}>{loa.total_count}</div>
+                    <div style={{color:'#64748b'}}>LOA Total</div>
+                  </div>
+                  <div style={{textAlign:'center'}}>
+                    <div style={{fontSize:'22px',fontWeight:800,color:'#1e40af'}}>{totalUsed}</div>
+                    <div style={{color:'#64748b'}}>Mobilised</div>
+                  </div>
+                  <div style={{textAlign:'center'}}>
+                    <div style={{fontSize:'22px',fontWeight:800,color:'#166534'}}>{cicpaIssued}</div>
+                    <div style={{color:'#64748b'}}>CICPA Issued</div>
+                  </div>
+                  <div style={{textAlign:'center'}}>
+                    <div style={{fontSize:'22px',fontWeight:800,color:remaining<=loa.alert_threshold?'#dc2626':'#0369a1'}}>{remaining}</div>
+                    <div style={{color:'#64748b'}}>Remaining</div>
+                  </div>
+                </div>
+                {cicpaPending>0 && (
+                  <div style={{marginTop:'8px',fontSize:'12px',color:'#b45309',fontWeight:600}}>
+                    ⚠ {cicpaPending} personnel mobilised but CICPA pass not yet issued
+                  </div>
+                )}
+                {loa.notes && <div style={{marginTop:'6px',fontSize:'11px',color:'#78350f'}}>{loa.notes}</div>}
+              </div>
+            );
+          })()}
           {/* Requirements panel — shows when customer+location selected */}
           {(()=>{
             if (!draft.customer_name || !draft.location) return null;
@@ -2888,7 +2954,7 @@ function App() {
 
   const loaUsed = useMemo(()=>{
     const m={};
-    data.mobList.forEach(r=>{if(r.loa_id)m[r.loa_id]=(m[r.loa_id]||0)+1;});
+    data.mobList.forEach(r=>{if(r.loa_id&&r.status!=='demobilised')m[r.loa_id]=(m[r.loa_id]||0)+1;});
     return m;
   },[data.mobList]);
 
