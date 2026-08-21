@@ -1886,7 +1886,7 @@ function CandidatePicker({candidates, movedIds, onSelect, selectedId}) {
 }
 
 // ── Mobilisation Tab ──────────────────────────────────────────────────────────
-function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onSave, onDemob, initialStatus, tabSearch}) {
+function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, locConfigs, onSave, onDemob, initialStatus, tabSearch}) {
   const [draft,setDraft]     = usePersistentDraft('mobilisation');
   const [savedDraft, setSavedDraft] = useState(() => { try { const v=localStorage.getItem('satco_mob_draft_mobilisation'); return v?JSON.parse(v):null; } catch{return null;} });
   const [demobRec,setDemobRec] = useState(null);
@@ -2244,8 +2244,20 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
           </Grid>
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Deployment</div>
           <Grid cols={3}>
-            <Field label="Customer *"><input value={draft.customer_name||''} onChange={e=>setDraft(d=>({...d,customer_name:e.target.value}))} style={S.input}/></Field>
-            <Field label="Location *"><input value={draft.location||''} onChange={e=>{setDraft(d=>({...d,location:e.target.value}));applyLocTrainings(e.target.value);}} style={S.input}/></Field>
+            <Field label="Customer *">
+              <select value={draft.customer_name||''} onChange={e=>setDraft(d=>({...d,customer_name:e.target.value,location:'',loa_id:''}))} style={S.input}>
+                <option value="">Select customer…</option>
+                {[...new Set(requirements.map(r=>r.customer_name).filter(Boolean))].sort().map(c=><option key={c} value={c}>{c}</option>)}
+                {draft.customer_name && !requirements.find(r=>r.customer_name===draft.customer_name) && <option value={draft.customer_name}>{draft.customer_name}</option>}
+              </select>
+            </Field>
+            <Field label="Location *">
+              <select value={draft.location||''} onChange={e=>{const loc=e.target.value;setDraft(d=>({...d,location:loc,loa_id:''}));applyLocTrainings(loc);}} style={S.input}>
+                <option value="">Select location…</option>
+                {[...new Set(requirements.filter(r=>!draft.customer_name||r.customer_name===draft.customer_name).map(r=>r.location).filter(Boolean))].sort().map(l=><option key={l} value={l}>{l}</option>)}
+                {draft.location && !requirements.find(r=>r.location===draft.location) && <option value={draft.location}>{draft.location}</option>}
+              </select>
+            </Field>
             <Field label="LOA Reference">
               <select value={draft.loa_id||''} onChange={e=>setDraft(d=>({...d,loa_id:e.target.value||null}))} style={S.input}>
                 <option value="">Select LOA…</option>
@@ -2253,6 +2265,44 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
               </select>
             </Field>
           </Grid>
+          {/* Requirements panel — shows when customer+location selected */}
+          {(()=>{
+            if (!draft.customer_name || !draft.location) return null;
+            const reqs = requirements.filter(r=>r.customer_name===draft.customer_name && r.location===draft.location);
+            const locCfg = locConfigs.find(l=>l.location===draft.location);
+            if (!reqs.length && !locCfg) return null;
+            // Count how many already mobilised for this customer+location
+            const alreadyMob = mobList.filter(m=>m.customer_name===draft.customer_name&&m.location===draft.location&&m.status==='mobilised').length;
+            return (
+              <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'12px 16px',marginBottom:'12px'}}>
+                <div style={{fontWeight:800,fontSize:'12px',color:'#1e40af',marginBottom:'8px'}}>📋 Requirement for {draft.customer_name} — {draft.location}</div>
+                {reqs.map((r,i)=>(
+                  <div key={i} style={{marginBottom:'6px'}}>
+                    <div style={{display:'flex',gap:'16px',flexWrap:'wrap',fontSize:'13px'}}>
+                      {(r.positions||[]).map((p,j)=>{
+                        const mobilised = mobList.filter(m=>m.customer_name===r.customer_name&&m.location===r.location&&(m.designation||'').toLowerCase()===p.designation.toLowerCase()&&m.status==='mobilised').length;
+                        const remaining = p.qty - mobilised;
+                        return (
+                          <span key={j} style={{background:remaining<=0?'#dcfce7':remaining<3?'#fef3c7':'#fff',border:`1px solid ${remaining<=0?'#bbf7d0':remaining<3?'#fde68a':'#bfdbfe'}`,borderRadius:'6px',padding:'4px 12px',fontWeight:700,color:remaining<=0?'#166534':remaining<3?'#92400e':'#1e40af'}}>
+                            {p.designation}: <span style={{fontSize:'15px'}}>{mobilised}/{p.qty}</span> {remaining>0?<span style={{fontWeight:400,color:'#64748b'}}>({remaining} still needed)</span>:<span style={{color:'#166534'}}>✓ Full</span>}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    {r.po_reference && <div style={{fontSize:'11px',color:'#64748b',marginTop:'4px'}}>PO: {r.po_reference}{r.notes?` · ${r.notes.slice(0,80)}`:''}</div>}
+                  </div>
+                ))}
+                {locCfg?.trainings?.length>0 && (
+                  <div style={{marginTop:'8px',fontSize:'12px',color:'#1e40af'}}>
+                    <span style={{fontWeight:700}}>Site requirements:</span> {locCfg.trainings.map(t=>t.name).join(', ')}
+                  </div>
+                )}
+                <div style={{marginTop:'6px',fontSize:'12px',color:'#475569'}}>
+                  Total mobilised to this site: <strong>{alreadyMob}</strong>
+                </div>
+              </div>
+            );
+          })()}
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Work Permit (under SATCO)</div>
           <Grid cols={4}>
             <Field label="WP Applied Date"><input type="date" value={draft.wp_applied_date||''} onChange={e=>setDraft(d=>({...d,wp_applied_date:e.target.value}))} style={S.input}/></Field>
@@ -2912,7 +2962,7 @@ function App() {
             {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} tabSearch={tabSearch} hrMobActive={hrMobActive}/>}
             {tab==='requirements' &&<RequirementsTab requirements={data.requirements} onSave={onSave}/>}
             {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
-            {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} initialStatus={filterStatus} tabSearch={tabSearch}/>}
+            {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} requirements={data.requirements} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} initialStatus={filterStatus} tabSearch={tabSearch}/>}
             {tab==='letters'      &&<LettersTab mobList={data.mobList}/>}
             {tab==='config'       &&<ConfigTab locConfigs={data.locConfigs} suppliers={data.suppliers} onSave={onSave}/>}
           </>}
