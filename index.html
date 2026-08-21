@@ -2836,15 +2836,16 @@ function App() {
     onDone?.();
   };
 
-  // Delete handler — with confirmation, blocks if person has mob records
+  // Delete handler — only affects mob_candidates in this portal, never touches HR or Finance
   const onDelete = async(type, record) => {
     if (type === 'candidates') {
-      const hasMob = data.mobList.some(m => m.candidate_id === record.id || m.full_name === record.full_name);
-      if (hasMob) {
-        alert(`Cannot delete "${record.full_name}" — they have mobilisation records. Demobilise them first or edit those records.`);
+      // Only block if they have an active (mobilised) record in THIS portal's mob_register
+      const hasActiveMob = data.mobList.some(m => m.candidate_id === record.id && m.status === 'mobilised');
+      if (hasActiveMob) {
+        alert(`Cannot delete "${record.full_name}" — they are currently mobilised on site. Demobilise them first.`);
         return;
       }
-      if (!window.confirm(`Delete "${record.full_name}" (${record.supplier_emp_no||'no EMP no'}) from the candidates pool?\n\nThis cannot be undone.`)) return;
+      if (!window.confirm(`Delete "${record.full_name}" (${record.supplier_emp_no||'no EMP no'}) from the Mobilisation candidates pool?\n\nThis only removes them from this portal — HR records are not affected.`)) return;
       const { error } = await db.from('mob_candidates').delete().eq('id', record.id);
       if (error) { alert(error.message); return; }
       await loadAll();
