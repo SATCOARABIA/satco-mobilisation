@@ -1886,7 +1886,7 @@ function CandidatePicker({candidates, movedIds, onSelect, selectedId}) {
 }
 
 // ── Mobilisation Tab ──────────────────────────────────────────────────────────
-function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, locConfigs, onSave, onDemob, initialStatus, tabSearch}) {
+function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, locConfigs, onSave, onDemob, onRefresh, initialStatus, tabSearch}) {
   const [draft,setDraft]     = usePersistentDraft('mobilisation');
   const [savedDraft, setSavedDraft] = useState(() => { try { const v=localStorage.getItem('satco_mob_draft_mobilisation'); return v?JSON.parse(v):null; } catch{return null;} });
   const [demobRec,setDemobRec] = useState(null);
@@ -2373,77 +2373,102 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
       )}
 
       <div style={{...S.card,overflow:'hidden'}}>
-        <div className="tbl-box drag-scroll" style={{maxHeight:'calc(100vh - var(--stk-2) - 32px)'}}>
-        <table style={{width:'100%',borderCollapse:'collapse',minWidth:'1400px'}}>
-          <thead><tr>
-            <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,minWidth:'150px'}}>Name</th>
-            {['Designation','Supplier / EmpNo','Customer','Location','Work Permit','Medical','HSE','H2S','Extra','CICPA','Readiness','Mob Date','Demob Date','Status','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
+        <div className="tbl-box drag-scroll" style={{maxHeight:'calc(100vh - var(--stk-2) - 32px)',overflowX:'auto',overflowY:'auto'}}>
+        <table style={{width:'max-content',minWidth:'100%',borderCollapse:'collapse',tableLayout:'fixed'}}>
+          <colgroup>
+            <col style={{width:'170px'}}/>{/* Name */}
+            <col style={{width:'130px'}}/>{/* Designation */}
+            <col style={{width:'120px'}}/>{/* Supplier/EmpNo */}
+            <col style={{width:'130px'}}/>{/* Customer */}
+            <col style={{width:'110px'}}/>{/* Location */}
+            <col style={{width:'100px'}}/>{/* Work Permit */}
+            <col style={{width:'130px'}}/>{/* Medical */}
+            <col style={{width:'80px'}}/>{/* HSE */}
+            <col style={{width:'80px'}}/>{/* H2S */}
+            <col style={{width:'60px'}}/>{/* Extra */}
+            <col style={{width:'110px'}}/>{/* CICPA */}
+            <col style={{width:'95px'}}/>{/* Mob Date */}
+            <col style={{width:'95px'}}/>{/* Demob Date */}
+            <col style={{width:'85px'}}/>{/* Status */}
+            <col style={{width:'110px'}}/>{/* Readiness */}
+            <col style={{width:'170px'}}/>{/* Actions */}
+          </colgroup>
+          <thead><tr style={{background:'#f8fafc'}}>
+            <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,background:'#f8fafc',borderRight:'2px solid #e2e8f0'}}>Name</th>
+            {['Designation','Supplier / EmpNo','Customer','Location','Work Permit','Medical','HSE','H2S','Extra','CICPA','Mob Date','Demob Date','Status','Readiness','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
           </tr></thead>
           <tbody>
-            {filtered.length===0&&<tr><td colSpan={15} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No records. Use filters or click <strong>+ Add Person</strong>.</td></tr>}
-            {filtered.map(r=>{
+            {filtered.length===0&&<tr><td colSpan={16} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No records. Use filters or click <strong>+ Add Person</strong>.</td></tr>}
+            {filtered.map((r,idx)=>{
               const ex=(r.extra_trainings||[]), exDone=ex.filter(t=>t.done).length;
               const cicpaExpiring = r.cicpa_expiry_date&&daysUntil(r.cicpa_expiry_date)<=30&&daysUntil(r.cicpa_expiry_date)>=0;
+              const rowBg = docPanel?.entity?.id===r.id ? '#eff6ff' : idx%2===0 ? '#fff' : '#fafafa';
+              const rd = computeReadiness(r);
               return <tr key={r.id} className="hr-row"
-                style={{cursor:'pointer', background: docPanel?.entity?.id===r.id ? '#eff6ff' : undefined}}
+                style={{cursor:'pointer',background:rowBg,height:'36px'}}
                 onClick={e=>handleRowClick(r,e)}
                 onDoubleClick={e=>handleRowDblClick(r,e)}
                 title="Click to view documents · Double-click to edit">
-                <td className="frozen-col" style={{...S.td,fontWeight:700,minWidth:'150px',borderLeft: docPanel?.entity?.id===r.id ? '3px solid #2563eb' : '3px solid transparent'}}>
-                  {r.full_name}
-                  <div style={{fontSize:'10px',color:'#64748b'}}>{r.source==='satco_own'?'SATCO Own':'Supplier'}</div>
-                  {r.passport_no&&<div style={{fontSize:'10px',fontFamily:'monospace',color:'#94a3b8'}}>{r.passport_no}</div>}
-                  {r.emirates_id&&<div style={{fontSize:'10px',fontFamily:'monospace',color:'#94a3b8'}}>{r.emirates_id}</div>}
+                {/* Name — frozen */}
+                <td className="frozen-col" style={{...S.td,fontWeight:700,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',borderLeft:docPanel?.entity?.id===r.id?'3px solid #2563eb':'3px solid transparent',borderRight:'2px solid #e2e8f0',background:rowBg,paddingTop:'4px',paddingBottom:'4px'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:'5px',overflow:'hidden'}}>
+                    <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.full_name}</span>
+                    <span style={{flexShrink:0,fontFamily:'monospace',fontSize:'9px',color:'#94a3b8'}}>{r.supplier_emp_no||''}</span>
+                  </div>
                 </td>
-                <td style={S.td}>{r.designation||'—'}</td>
-                <td style={S.td}>
-                  <div style={{fontSize:'12px'}}>{r.supplier_name||'—'}</div>
-                  {r.supplier_emp_no&&<div style={{fontSize:'11px',color:'#64748b',fontFamily:'monospace'}}>#{r.supplier_emp_no}</div>}
+                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px'}}>{r.designation||'—'}</td>
+                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px',fontSize:'12px'}}>{r.supplier_name||'SATCO'}</td>
+                <td style={{...S.td,fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px',fontSize:'12px'}}>{r.customer_name}</td>
+                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px'}}>{r.location}</td>
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
+                  {r.wp_approved_date?<span style={{color:'#166534',fontWeight:700,fontSize:'11px'}}>✓ {r.wp_no||'Appr'}</span>
+                   :r.wp_applied_date?<span style={{color:'#b45309',fontSize:'11px'}}>Applied</span>
+                   :<span style={{color:'#dc2626',fontSize:'11px'}}>—</span>}
                 </td>
-                <td style={{...S.td,fontWeight:600}}>{r.customer_name}</td>
-                <td style={S.td}>{r.location}</td>
-                <td style={S.td}>{r.wp_approved_date?<span style={{color:'#166534',fontWeight:700,fontSize:'11px'}}>✓ {r.wp_no||'Approved'}</span>:r.wp_applied_date?<span style={{color:'#b45309',fontSize:'11px'}}>Applied</span>:<span style={{color:'#dc2626',fontSize:'11px'}}>—</span>}</td>
-                <td style={S.td}><Tick done={r.medical_done} label={r.medical_result||'Medical'} date={r.medical_date}/></td>
-                <td style={S.td}><Tick done={r.hse_passport_done} label="HSE" date={r.hse_passport_date}/></td>
-                <td style={S.td}><Tick done={r.h2s_done} label="H2S" date={r.h2s_date}/></td>
-                <td style={S.td}>{ex.length>0?<span style={{fontSize:'11px',fontWeight:700,color:exDone===ex.length?'#166534':'#b45309'}}>{exDone}/{ex.length}</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}</td>
-                <td style={S.td}>{r.cicpa_pass_no?<span style={{color:cicpaExpiring?'#b45309':'#166534',fontWeight:700,fontSize:'11px'}}>✓ {r.cicpa_pass_no}{cicpaExpiring&&` (${daysUntil(r.cicpa_expiry_date)}d)`}</span>:r.cicpa_applied_date?<span style={{color:'#b45309',fontSize:'11px'}}>Applied</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}</td>
-                <td style={{...S.td,fontSize:'11px'}}>{fmtDate(r.mobilisation_date)}</td>
-                <td style={S.td}>
-                  {r.demobilisation_date
-                    ? <div><div style={{fontSize:'11px'}}>{fmtDate(r.demobilisation_date)}</div><div style={{fontSize:'10px',color:'#64748b'}}>{r.demob_reason||''}</div></div>
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
+                  {r.medical_done
+                    ? <span style={{color:'#166534',fontWeight:700,fontSize:'11px'}}>✓ {r.medical_result||'Fit'} {r.medical_date?fmtDate(r.medical_date):''}</span>
                     : <span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
                 </td>
-                <td style={S.td}><StatusBadge status={r.status}/></td>
-                <td style={S.td}>
-                  {(()=>{
-                    const rd=computeReadiness(r);
-                    return(
-                      <div style={{display:'flex',flexDirection:'column',gap:'2px'}}>
-                        <span style={{fontSize:'11px',fontWeight:800,cursor:'pointer',
-                          color:rd.ready?'#166534':rd.readyForSubmission?'#92400e':'#dc2626'}}
-                          onClick={e=>{e.stopPropagation();setReadinessRow(r);}}>
-                          {rd.ready?'✅ Ready':rd.readyForSubmission?'⚠ Near ready':`❌ ${rd.criticalMissing.length} missing`}
-                        </span>
-                        <span style={{fontSize:'10px',color:'#94a3b8',cursor:'pointer'}}
-                          onClick={e=>{e.stopPropagation();setReadinessRow(r);}}>
-                          {rd.missing.length>0?`${rd.missing.length} pending`:'View checklist'}
-                        </span>
-                      </div>
-                    );
-                  })()}
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
+                  {r.hse_passport_done?<span style={{color:'#166534',fontWeight:700,fontSize:'11px'}}>✓ HSE</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>— HSE</span>}
                 </td>
-                <td style={S.td}>
-                  <div style={{display:'flex',gap:'4px',flexWrap:'wrap'}}>
-                    <button style={S.btnSm} onClick={e=>{e.stopPropagation();setDraft({...r});setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);}}>Edit</button>
-                    {r.status==='mobilised'&&<button style={{...S.btnSm,background:'#991b1b',color:'#fff',border:'none'}} onClick={e=>{e.stopPropagation();setDemobRec(r);}}>Demob</button>}
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
+                  {r.h2s_done?<span style={{color:'#166534',fontWeight:700,fontSize:'11px'}}>✓ H2S</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>— H2S</span>}
+                </td>
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
+                  {ex.length>0?<span style={{fontSize:'11px',fontWeight:700,color:exDone===ex.length?'#166534':'#b45309'}}>{exDone}/{ex.length}</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
+                </td>
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
+                  {r.cicpa_pass_no
+                    ?<span style={{color:cicpaExpiring?'#b45309':'#166534',fontWeight:700,fontSize:'11px'}}>✓ {r.cicpa_pass_no}{cicpaExpiring&&` (${daysUntil(r.cicpa_expiry_date)}d)`}</span>
+                    :r.cicpa_applied_date?<span style={{color:'#b45309',fontSize:'11px'}}>Applied</span>
+                    :<span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
+                </td>
+                <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px'}}>{fmtDate(r.mobilisation_date)}</td>
+                <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px'}}>
+                  {r.demobilisation_date?<span>{fmtDate(r.demobilisation_date)}</span>:<span style={{color:'#9ca3af'}}>—</span>}
+                </td>
+                <td style={{...S.td,paddingTop:'4px',paddingBottom:'4px'}}><StatusBadge status={r.status}/></td>
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
+                  <span style={{fontSize:'11px',fontWeight:800,cursor:'pointer',color:rd.ready?'#166534':rd.readyForSubmission?'#92400e':'#dc2626'}}
+                    onClick={e=>{e.stopPropagation();setReadinessRow(r);}}>
+                    {rd.ready?'✅ Ready':rd.readyForSubmission?`⚠ ${rd.missing.length}p`:`❌ ${rd.criticalMissing.length}m`}
+                  </span>
+                </td>
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'2px',paddingBottom:'2px'}}>
+                  <div style={{display:'flex',gap:'3px',alignItems:'center'}}>
+                    <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px'}} onClick={e=>{e.stopPropagation();setDraft({...r});setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);}}>Edit</button>
+                    {r.status==='mobilised'&&<button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px',background:'#991b1b',color:'#fff',border:'none'}} onClick={e=>{e.stopPropagation();setDemobRec(r);}}>Demob</button>}
                     {!r.candidate_id&&(()=>{
                       const match=candidates.find(c=>(c.full_name||'').toLowerCase().trim()===(r.full_name||'').toLowerCase().trim());
                       if(!match)return null;
-                      return <button style={{...S.btnSm,background:'#2563eb',color:'#fff',border:'none',fontSize:'10px'}}
+                      return <button style={{...S.btnSm,padding:'3px 7px',fontSize:'10px',background:'#2563eb',color:'#fff',border:'none'}}
                         onClick={async e=>{e.stopPropagation();await db.from('mob_register').update({candidate_id:match.id}).eq('id',r.id);alert('Linked ✓');}}
-                        title={`Link to candidate: ${match.full_name}`}>🔗 Link</button>;
+                        title={`Link to candidate: ${match.full_name}`}>🔗</button>;
                     })()}
+                    <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px',color:'#dc2626',border:'1px solid #fecaca'}}
+                      onClick={async e=>{e.stopPropagation();if(!window.confirm(`Delete mob record for "${r.full_name}"?\n\nThis only removes from this portal.`))return;const{error}=await db.from('mob_register').delete().eq('id',r.id);if(error){alert(error.message);return;}onRefresh();}}>Del</button>
                   </div>
                 </td>
               </tr>;
@@ -2962,7 +2987,7 @@ function App() {
             {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} tabSearch={tabSearch} hrMobActive={hrMobActive}/>}
             {tab==='requirements' &&<RequirementsTab requirements={data.requirements} onSave={onSave}/>}
             {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
-            {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} requirements={data.requirements} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} initialStatus={filterStatus} tabSearch={tabSearch}/>}
+            {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} requirements={data.requirements} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} onRefresh={loadAll} initialStatus={filterStatus} tabSearch={tabSearch}/>}
             {tab==='letters'      &&<LettersTab mobList={data.mobList}/>}
             {tab==='config'       &&<ConfigTab locConfigs={data.locConfigs} suppliers={data.suppliers} onSave={onSave}/>}
           </>}
