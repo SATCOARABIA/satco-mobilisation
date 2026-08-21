@@ -8,6 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root {
     --stk-1: 56px;   /* top nav height — measured live */
@@ -1851,8 +1852,12 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
     if (!c) return;
     setDraft(d=>({...d, candidate_id:c.id, full_name:c.full_name, designation:c.designation||d.designation,
       source:c.source||'supplier', supplier_name:c.supplier_name, supplier_emp_no:c.supplier_emp_no,
-      nationality:c.nationality, date_of_birth:c.date_of_birth, passport_no:c.passport_no,
-      emirates_id:c.emirates_id, visa_no:c.visa_no, visa_location:c.visa_location}));
+      nationality:c.nationality, date_of_birth:c.date_of_birth,
+      passport_no:c.passport_no, passport_expiry:c.passport_expiry||d.passport_expiry,
+      emirates_id:c.emirates_id, eid_expiry:c.eid_expiry||d.eid_expiry,
+      visa_no:c.visa_no, visa_type:c.visa_type||d.visa_type,
+      visa_location:c.visa_location, visa_expiry:c.visa_expiry||d.visa_expiry,
+      phone:c.phone||d.phone}));
   };
 
   const applyLocTrainings = loc => {
@@ -2025,6 +2030,27 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
             exportCSV(readyOnly,`SATCO_Ready_${fCust||'All'}_${fLoc||'AllLoc'}`,exportCols);
           }}>✅ Export Ready</button>
           <button style={S.btnGold} onClick={()=>exportCSV(filtered,`SATCO_Mob_${fCust||'All'}_${fLoc||'AllLoc'}`,exportCols)}>⬇ Export All</button>
+          <button style={{...S.btnGold,background:'#0f172a',color:'#c49a28',fontWeight:700,fontSize:'12px'}} onClick={()=>{
+            const XLSX=window.XLSX;
+            if(!XLSX)return alert('SheetJS not loaded — refresh page.');
+            const rows=filtered.map((r,i)=>({
+              'SI No':i+1,'Company Name':'SATCO Arabia','Employee Number':r.supplier_emp_no||'',
+              'Employee Name':r.full_name||'','Designation':r.designation||'',
+              'DOB':r.date_of_birth?new Date(r.date_of_birth).toLocaleDateString('en-GB'):'',
+              'Nationality':r.nationality||'','Emirates ID Number':r.emirates_id||'',
+              'Emirates ID Validity Date':r.eid_expiry?new Date(r.eid_expiry).toLocaleDateString('en-GB'):'',
+              'Visa State':r.visa_location||'','Passport Number':r.passport_no||'',
+              'Email ID':'admin@satcoarabiaengg.com','Phone Number':'+971565032032',
+              'Security Pass Expiry':r.cicpa_expiry_date?new Date(r.cicpa_expiry_date).toLocaleDateString('en-GB'):'',
+              'Security Pass No':r.cicpa_pass_no||'',
+              'Adnoc Medical Status':r.medical_done&&r.medical_expiry?new Date(r.medical_expiry).toLocaleDateString('en-GB'):(r.medical_done?(r.medical_result||'Fit'):'')
+            }));
+            const ws=XLSX.utils.json_to_sheet(rows);
+            ws['!cols']=[{wch:6},{wch:22},{wch:14},{wch:26},{wch:16},{wch:12},{wch:14},{wch:22},{wch:18},{wch:14},{wch:14},{wch:28},{wch:16},{wch:16},{wch:16},{wch:18}];
+            const wb2=XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb2,ws,'Mob Submission List');
+            XLSX.writeFile(wb2,`SATCO_ClientList_${(fCust||'All').replace(/\s+/g,'_')}_${todayStr()}.xlsx`);
+          }}>📊 Client Excel</button>
           <button style={S.btnPri} onClick={blank}>+ Add Person</button>
         </div>
       </div>
@@ -2252,6 +2278,75 @@ function LettersTab({mobList}) {
   const toggleAll=()=>selected.size===pool.length?setSelected(new Set()):setSelected(new Set(pool.map(r=>r.id)));
   const selRows=pool.filter(r=>selected.has(r.id));
 
+  const generateClientExcel=()=>{
+    if(!selRows.length)return alert('Select at least one person');
+    const XLSX = window.XLSX;
+    if(!XLSX)return alert('SheetJS not loaded — check internet connection and refresh.');
+
+    const wb = XLSX.utils.book_new();
+
+    // ── Sheet 1: Candidate Submission List (PSN format) ──────────────────────
+    const hdrs = ['SI No','Company Name','Employee Number','Employee Name','Designation',
+      'DOB','Nationality','Emirates ID Number','Emirates ID Validity Date','Visa State',
+      'Passport Number','Email ID','Phone Number','Security Pass Expiry','Security Pass No',
+      'Adnoc Medical Status'];
+
+    const rows = selRows.map((r,i)=>({
+      'SI No': i+1,
+      'Company Name': COMPANY_SHORT,
+      'Employee Number': r.supplier_emp_no||'',
+      'Employee Name': r.full_name||'',
+      'Designation': r.designation||'',
+      'DOB': r.date_of_birth ? new Date(r.date_of_birth).toLocaleDateString('en-GB') : '',
+      'Nationality': r.nationality||'',
+      'Emirates ID Number': r.emirates_id||'',
+      'Emirates ID Validity Date': r.eid_expiry ? new Date(r.eid_expiry).toLocaleDateString('en-GB') : '',
+      'Visa State': r.visa_location||'',
+      'Passport Number': r.passport_no||'',
+      'Email ID': 'admin@satcoarabiaengg.com',
+      'Phone Number': '+971565032032',
+      'Security Pass Expiry': r.cicpa_expiry_date ? new Date(r.cicpa_expiry_date).toLocaleDateString('en-GB') : '',
+      'Security Pass No': r.cicpa_pass_no||'',
+      'Adnoc Medical Status': r.medical_done && r.medical_expiry ? new Date(r.medical_expiry).toLocaleDateString('en-GB') : (r.medical_done ? (r.medical_result||'Fit') : ''),
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(rows, {header: hdrs});
+
+    // Column widths (characters)
+    ws['!cols'] = [
+      {wch:6},{wch:22},{wch:14},{wch:26},{wch:16},
+      {wch:12},{wch:14},{wch:22},{wch:18},{wch:14},
+      {wch:14},{wch:28},{wch:16},{wch:16},{wch:16},{wch:18}
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Mob Submission List');
+
+    // ── Sheet 2: Pending Actions ──────────────────────────────────────────────
+    const pendingRows = selRows
+      .filter(r => !r.emirates_id || !r.passport_no || !r.cicpa_pass_no || !r.medical_done)
+      .map(r => {
+        const missing = [];
+        if(!r.emirates_id)    missing.push('Emirates ID');
+        if(!r.eid_expiry)     missing.push('EID Expiry');
+        if(!r.passport_no)    missing.push('Passport No');
+        if(!r.cicpa_pass_no)  missing.push('CICPA Pass No');
+        if(!r.medical_done)   missing.push('Medical');
+        return {'Employee Name':r.full_name,'Designation':r.designation||'','Customer':r.customer_name||'','Location':r.location||'','Missing / Action Required':missing.join(', ')};
+      });
+
+    if(pendingRows.length){
+      const ws2 = XLSX.utils.json_to_sheet(pendingRows);
+      ws2['!cols']=[{wch:26},{wch:16},{wch:18},{wch:16},{wch:50}];
+      XLSX.utils.book_append_sheet(wb, ws2, 'Pending Actions');
+    }
+
+    // ── File name: SATCO_MobList_<Customer>_<Date>.xlsx ─────────────────────
+    const custTag = (fCust||'All').replace(/\s+/g,'_');
+    const locTag  = (fLoc||'').replace(/\s+/g,'_');
+    const fname   = `SATCO_MobList_${custTag}${locTag?'_'+locTag:''}_${todayStr()}.xlsx`;
+    XLSX.writeFile(wb, fname);
+  };
+
   const generateLetter=()=>{
     if(!selRows.length)return alert('Select at least one person');
     const dateStr=new Date(date).toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'});
@@ -2321,9 +2416,10 @@ function LettersTab({mobList}) {
             </tbody>
           </table>
         </div>
-        <div style={{display:'flex',gap:'10px',alignItems:'center'}}>
+        <div style={{display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap'}}>
           <button style={S.btnPri} onClick={generateLetter}>🖨️ Generate & Print ({selRows.length} selected)</button>
-          <span style={{fontSize:'12px',color:'#64748b'}}>Opens print dialog → Save as PDF. Company shown: <strong>SATCO Arabia</strong></span>
+          <button style={{...S.btnGold,background:'#166534',color:'#fff',fontWeight:700}} onClick={generateClientExcel}>📊 Export Excel ({selRows.length} selected)</button>
+          <span style={{fontSize:'12px',color:'#64748b'}}>Excel matches client format — SI No, EID, Visa State, Passport, Medical, CICPA. Email: admin@satcoarabiaengg.com</span>
         </div>
       </div>
     </div>
@@ -2397,11 +2493,40 @@ function ConfigTab({locConfigs, suppliers, onSave}) {
             <Grid cols={2}>
               <Field label="Location Name *"><input value={locDraft.location||''} onChange={e=>setLocDraft(d=>({...d,location:e.target.value}))} placeholder="Ruwais / Das Island / KEZAD…" style={S.input}/></Field>
             </Grid>
+            <div style={{marginBottom:'10px'}}>
+              <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'6px'}}>Required Documents for This Site</div>
+              <div style={{display:'flex',gap:'10px',flexWrap:'wrap'}}>
+                {[
+                  ['req_passport','Passport'],['req_eid','Emirates ID'],['req_visa','UAE Visa'],
+                  ['req_wp','Work Permit'],['req_medical','Medical'],
+                  ['req_cicpa','CICPA Gate Pass'],['req_hse','HSE Passport'],['req_h2s','H2S Training'],
+                ].map(([key,label])=>(
+                  <label key={key} style={{display:'flex',alignItems:'center',gap:'5px',fontSize:'12px',fontWeight:600,cursor:'pointer',background:'#fff',border:'1px solid #e2e8f0',borderRadius:'6px',padding:'5px 10px'}}>
+                    <input type="checkbox" checked={locDraft[key]!==false} onChange={e=>setLocDraft(d=>({...d,[key]:e.target.checked}))}/>
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
             <Field label="Required Trainings — one per line">
-              <textarea value={locDraft._lines||''} onChange={e=>setLocDraft(d=>({...d,_lines:e.target.value}))} placeholder={"BOSIET\nCHUSET\nH2S Awareness\nFire Warden\nBasic First Aid"} style={{...S.input,height:'110px',resize:'vertical',fontFamily:'monospace',marginTop:'2px'}}/>
+              <textarea value={locDraft._lines||''} onChange={e=>setLocDraft(d=>({...d,_lines:e.target.value}))} placeholder={"BOSIET\nCHUSET\nH2S Awareness\nFire Warden\nBasic First Aid"} style={{...S.input,height:'90px',resize:'vertical',fontFamily:'monospace',marginTop:'2px'}}/>
             </Field>
             <div style={{display:'flex',gap:'8px',marginTop:'10px'}}>
-              <button style={S.btnPri} onClick={()=>{if(!locDraft.location)return alert('Location required');const trainings=(locDraft._lines||'').split('\n').map(l=>l.trim()).filter(Boolean).map(name=>({name,mandatory:true}));onSave('locconfig',{...locDraft,trainings},()=>setLocDraft(null));}}>Save</button>
+              <button style={S.btnPri} onClick={()=>{
+                if(!locDraft.location)return alert('Location required');
+                const trainings=(locDraft._lines||'').split('\n').map(l=>l.trim()).filter(Boolean).map(name=>({name,mandatory:true}));
+                const payload={...locDraft,trainings,
+                  req_passport:locDraft.req_passport!==false,
+                  req_eid:locDraft.req_eid!==false,
+                  req_visa:locDraft.req_visa!==false,
+                  req_wp:locDraft.req_wp!==false,
+                  req_medical:locDraft.req_medical!==false,
+                  req_cicpa:locDraft.req_cicpa||false,
+                  req_hse:locDraft.req_hse||false,
+                  req_h2s:locDraft.req_h2s||false,
+                };
+                onSave('locconfig',payload,()=>setLocDraft(null));
+              }}>Save</button>
               <button style={S.btnSec} onClick={()=>setLocDraft(null)}>Cancel</button>
             </div>
           </div>
@@ -2483,9 +2608,17 @@ function App() {
   const [hrMobActive, setHrMobActive] = useState(new Set()); // SATCO employee IDs currently on site per HR portal
 
   // Load HR portal mob_demob active records at app level
+  // mob_demob.employee_id is the HR employee_number (e.g. "SA1015") stored as supplier_emp_no in mob_candidates
   useEffect(()=>{
-    db.from('mob_demob').select('employee_id').is('demobilization_date',null)
-      .then(({data})=>setHrMobActive(new Set((data||[]).map(r=>r.employee_id).filter(Boolean))));
+    db.from('mob_demob').select('employee_id,employee_number').is('demobilization_date',null)
+      .then(({data:rows})=>{
+        const ids = new Set();
+        (rows||[]).forEach(r=>{
+          if(r.employee_id)   ids.add(String(r.employee_id));
+          if(r.employee_number) ids.add(String(r.employee_number));
+        });
+        setHrMobActive(ids);
+      });
   },[]);
 
   // Warn browser tab close if unsaved draft exists
@@ -2583,8 +2716,10 @@ function App() {
       designation:candidate.designation, source:candidate.source||'supplier',
       supplier_name:candidate.supplier_name, supplier_emp_no:candidate.supplier_emp_no,
       nationality:candidate.nationality, date_of_birth:candidate.date_of_birth,
-      passport_no:candidate.passport_no, emirates_id:candidate.emirates_id,
-      visa_no:candidate.visa_no, visa_location:candidate.visa_location,
+      passport_no:candidate.passport_no, passport_expiry:candidate.passport_expiry||'',
+      emirates_id:candidate.emirates_id, eid_expiry:candidate.eid_expiry||'',
+      visa_no:candidate.visa_no, visa_type:candidate.visa_type||'', visa_location:candidate.visa_location, visa_expiry:candidate.visa_expiry||'',
+      phone:candidate.phone||'',
       customer_name:'',location:'',loa_id:'',
       medical_done:false,hse_passport_done:false,h2s_done:false,extra_trainings:[],status:'pending',notes:'',
     }));
