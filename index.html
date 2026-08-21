@@ -1190,7 +1190,10 @@ function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch, hrMo
   useEffect(()=>{ if(tabSearch) setSearch(tabSearch); },[tabSearch]);
 
   useEffect(()=>{
-    db.from('wps_employee_master').select('employee_id,full_name').eq('active',true).order('employee_id')
+    db.from('employees')
+      .select('employee_id,full_name,nationality,dob,passport_no,passport_expiry,eid_no,eid_expiry,visa_no,visa_type,location,visa_expiry,mobile')
+      .is('deleted_at', null)
+      .order('employee_id')
       .then(({data})=>setSatcoEmps(data||[]));
   },[]);
 
@@ -1438,12 +1441,23 @@ function CandidatesTab({candidates, mobList, onSave, onMobilise, tabSearch, hrMo
                     supplier_emp_no: e.target.value,
                     supplier_name: 'SATCO Arabia',
                     full_name: emp?.full_name||d.full_name,
+                    nationality: emp?.nationality||d.nationality,
+                    date_of_birth: emp?.dob||d.date_of_birth,
+                    passport_no: emp?.passport_no||d.passport_no,
+                    passport_expiry: emp?.passport_expiry||d.passport_expiry,
+                    emirates_id: emp?.eid_no||d.emirates_id,
+                    eid_expiry: emp?.eid_expiry||d.eid_expiry,
+                    visa_no: emp?.visa_no||d.visa_no,
+                    visa_type: emp?.visa_type||d.visa_type,
+                    visa_location: emp?.location||d.visa_location,
+                    visa_expiry: emp?.visa_expiry||d.visa_expiry,
+                    phone: emp?.mobile||d.phone,
                   }));
                 }} style={S.input}>
                   <option value="">Select SATCO employee…</option>
                   {satcoEmps.map(e=><option key={e.employee_id} value={e.employee_id}>{e.employee_id} — {e.full_name}</option>)}
                 </select>
-                <div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Select to auto-fill name and employee ID</div>
+                <div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Select to auto-fill all details from HR records</div>
               </Field>
             )}
             <Field label="Nationality"><input value={draft.nationality||''} onChange={e=>setDraft(d=>({...d,nationality:e.target.value}))} style={S.input}/></Field>
@@ -1724,6 +1738,138 @@ function LoaTab({loaList, usedMap, onSave}) {
     </div>
   );
 }
+// ── Candidate Picker ─────────────────────────────────────────────────────────
+// Shows all candidates/SATCO employees as a searchable card list for selection
+function CandidatePicker({candidates, movedIds, onSelect, selectedId}) {
+  const [search, setSearch] = useState('');
+  const [srcFilter, setSrcFilter] = useState(''); // '' | 'satco_own' | 'supplier'
+  const [open, setOpen] = useState(!selectedId); // collapsed once someone is selected
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    return candidates.filter(c => {
+      if (srcFilter && c.source !== srcFilter) return false;
+      if (!q) return true;
+      return (c.full_name||'').toLowerCase().includes(q)
+        || (c.designation||'').toLowerCase().includes(q)
+        || (c.supplier_name||'').toLowerCase().includes(q)
+        || (c.supplier_emp_no||'').toLowerCase().includes(q)
+        || (c.emirates_id||'').toLowerCase().includes(q)
+        || (c.passport_no||'').toLowerCase().includes(q);
+    });
+  }, [candidates, search, srcFilter]);
+
+  const selected = candidates.find(c => c.id === selectedId);
+
+  return (
+    <div style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'8px',marginBottom:'14px',overflow:'hidden'}}>
+      {/* Header */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',cursor:'pointer'}} onClick={()=>setOpen(o=>!o)}>
+        <div style={{fontWeight:700,fontSize:'12px',color:'#0f172a'}}>
+          👤 Select Candidate for This Mobilisation
+        </div>
+        <div style={{display:'flex',gap:'10px',alignItems:'center'}}>
+          {selected && (
+            <span style={{background:'#dbeafe',color:'#1e40af',fontWeight:700,fontSize:'11px',padding:'2px 10px',borderRadius:12}}>
+              ✓ {selected.full_name} — {selected.supplier_emp_no||selected.designation||'SATCO Own'}
+            </span>
+          )}
+          <span style={{color:'#64748b',fontSize:'13px'}}>{open?'▲':'▼'}</span>
+        </div>
+      </div>
+
+      {/* Picker body */}
+      {open && (
+        <div>
+          {/* Filters */}
+          <div style={{display:'flex',gap:'8px',padding:'10px 14px',borderBottom:'1px solid #f1f5f9',flexWrap:'wrap',alignItems:'center'}}>
+            <input
+              placeholder="Search name, EMP no, EID, designation…"
+              value={search}
+              onChange={e=>setSearch(e.target.value)}
+              style={{...S.input,width:'280px',fontSize:'12px',padding:'6px 10px'}}
+              autoFocus
+            />
+            <select value={srcFilter} onChange={e=>setSrcFilter(e.target.value)} style={{...S.input,width:'160px',fontSize:'12px',padding:'6px 10px'}}>
+              <option value="">All sources</option>
+              <option value="satco_own">SATCO Own Employees</option>
+              <option value="supplier">Labour Suppliers</option>
+            </select>
+            <span style={{fontSize:'12px',color:'#64748b'}}>{filtered.length} people</span>
+          </div>
+
+          {/* Card grid */}
+          <div style={{maxHeight:'340px',overflowY:'auto',padding:'10px 14px',display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:'8px'}}>
+            {filtered.length === 0 && (
+              <div style={{gridColumn:'1/-1',textAlign:'center',padding:'24px',color:'#94a3b8',fontSize:'13px'}}>
+                No candidates match. <span style={{color:'#2563eb',cursor:'pointer'}} onClick={()=>{setSearch('');setSrcFilter('');}}>Clear filters</span>
+              </div>
+            )}
+            {filtered.map(c => {
+              const isSelected = c.id === selectedId;
+              const isOnSite = movedIds.has(c.id);
+              const isSatco = c.source === 'satco_own';
+              return (
+                <div key={c.id}
+                  onClick={()=>{ onSelect(c.id); setOpen(false); }}
+                  style={{
+                    border: isSelected ? '2px solid #2563eb' : '1px solid #e2e8f0',
+                    borderRadius:'8px', padding:'10px 12px',
+                    cursor:'pointer', background: isSelected?'#eff6ff':'#fff',
+                    transition:'border-color 0.15s',
+                    position:'relative',
+                  }}
+                  onMouseEnter={e=>{ if(!isSelected) e.currentTarget.style.borderColor='#b897 2a'; }}
+                  onMouseLeave={e=>{ if(!isSelected) e.currentTarget.style.borderColor='#e2e8f0'; }}
+                >
+                  {/* Status badges */}
+                  <div style={{display:'flex',gap:'4px',marginBottom:'4px',flexWrap:'wrap'}}>
+                    {isSatco
+                      ? <span style={{background:'#dbeafe',color:'#1e40af',fontSize:'10px',fontWeight:700,padding:'1px 6px',borderRadius:8}}>SATCO</span>
+                      : <span style={{background:'#f1f5f9',color:'#475569',fontSize:'10px',fontWeight:700,padding:'1px 6px',borderRadius:8}}>Supplier</span>
+                    }
+                    {isOnSite && <span style={{background:'#dcfce7',color:'#166534',fontSize:'10px',fontWeight:700,padding:'1px 6px',borderRadius:8}}>On Site</span>}
+                    {isSelected && <span style={{background:'#2563eb',color:'#fff',fontSize:'10px',fontWeight:700,padding:'1px 6px',borderRadius:8}}>✓ Selected</span>}
+                  </div>
+                  {/* Name */}
+                  <div style={{fontWeight:700,fontSize:'13px',color:'#0f172a',marginBottom:'2px'}}>{c.full_name}</div>
+                  {/* Designation */}
+                  <div style={{fontSize:'11px',color:'#475569',marginBottom:'4px'}}>{c.designation||'—'}</div>
+                  {/* Details */}
+                  <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
+                    {c.supplier_emp_no && (
+                      <span style={{fontFamily:'monospace',fontSize:'11px',color:'#0369a1',fontWeight:700}}>{c.supplier_emp_no}</span>
+                    )}
+                    {c.supplier_name && !isSatco && (
+                      <span style={{fontSize:'11px',color:'#64748b'}}>{c.supplier_name}</span>
+                    )}
+                    {c.nationality && (
+                      <span style={{fontSize:'11px',color:'#64748b'}}>{c.nationality}</span>
+                    )}
+                  </div>
+                  {c.passport_no && (
+                    <div style={{fontFamily:'monospace',fontSize:'10px',color:'#94a3b8',marginTop:'3px'}}>PP: {c.passport_no}</div>
+                  )}
+                  {c.emirates_id && (
+                    <div style={{fontFamily:'monospace',fontSize:'10px',color:'#94a3b8'}}>EID: {c.emirates_id}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {selected && (
+            <div style={{padding:'8px 14px',borderTop:'1px solid #f1f5f9',display:'flex',gap:'8px',alignItems:'center'}}>
+              <span style={{fontSize:'12px',color:'#166534',fontWeight:600}}>✓ Selected: {selected.full_name}</span>
+              <button onClick={()=>{onSelect('');setOpen(true);}} style={{...S.btnSm,fontSize:'11px',color:'#dc2626'}}>Clear selection</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Mobilisation Tab ──────────────────────────────────────────────────────────
 function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onSave, onDemob, initialStatus, tabSearch}) {
   const [draft,setDraft]     = usePersistentDraft('mobilisation');
@@ -1848,6 +1994,7 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
   }), [mobList, search, fCust, fLoc, fStatus, fReady, computeReadiness]);
 
   const fillFromCandidate = candId => {
+    if (!candId) { setDraft(d=>({...d,candidate_id:null})); return; }
     const c = candidates.find(x=>x.id===candId);
     if (!c) return;
     setDraft(d=>({...d, candidate_id:c.id, full_name:c.full_name, designation:c.designation||d.designation,
@@ -2058,13 +2205,7 @@ function MobilisationTab({mobList, candidates, loaList, usedMap, locConfigs, onS
       {draft&&(
         <div style={{...S.card,padding:'16px',marginBottom:'14px',background:'#f0fdf4',border:'1px solid #bbf7d0'}}>
           <div style={{fontWeight:800,fontSize:'14px',color:'#166534',marginBottom:'14px'}}>{draft.id?`Edit — ${draft.full_name}`:'Add Person to Mobilisation'}</div>
-          <div style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'8px',padding:'10px 14px',marginBottom:'14px'}}>
-            <label style={S.label}>Quick Fill — Select from Candidates Pool</label>
-            <select onChange={e=>fillFromCandidate(e.target.value)} style={{...S.input,width:'420px'}}>
-              <option value="">Choose a person to auto-fill their details…</option>
-              {candidates.map(c=><option key={c.id} value={c.id}>{c.full_name} — {c.designation||'—'} ({c.supplier_name||'SATCO Own'}) {c.emirates_id?'EID:'+c.emirates_id:''}</option>)}
-            </select>
-          </div>
+          <CandidatePicker candidates={candidates} movedIds={new Set(mobList.filter(m=>m.status==='mobilised').map(m=>m.candidate_id).filter(Boolean))} onSelect={fillFromCandidate} selectedId={draft.candidate_id}/>
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>Personal Details</div>
           <Grid cols={3}>
             <Field label="Full Name *"><input value={draft.full_name||''} onChange={e=>setDraft(d=>({...d,full_name:e.target.value}))} style={S.input}/></Field>
