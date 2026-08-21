@@ -1491,59 +1491,71 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
       )}
 
       <div style={{...S.card,overflow:'hidden'}}>
-        <div className="tbl-box drag-scroll" style={{maxHeight:'calc(100vh - var(--stk-2) - 32px)'}}>
-        <table style={{width:'100%',borderCollapse:'collapse',minWidth:'1100px'}}>
-          <thead><tr>
-            <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,minWidth:'160px'}}>Name / Status</th>
-            {['Designation','Supplier','Emp No','Nationality','DOB','Passport','Emirates ID','Visa / Emirate','Expiry','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
+        <div className="tbl-box drag-scroll" style={{maxHeight:'calc(100vh - var(--stk-2) - 32px)',overflowX:'auto',overflowY:'auto'}}>
+        <table style={{width:'max-content',minWidth:'100%',borderCollapse:'collapse',tableLayout:'fixed'}}>
+          <colgroup>
+            <col style={{width:'200px'}}/>
+            <col style={{width:'140px'}}/>
+            <col style={{width:'110px'}}/>
+            <col style={{width:'80px'}}/>
+            <col style={{width:'90px'}}/>
+            <col style={{width:'95px'}}/>
+            <col style={{width:'105px'}}/>
+            <col style={{width:'155px'}}/>
+            <col style={{width:'130px'}}/>
+            <col style={{width:'95px'}}/>
+            <col style={{width:'185px'}}/>
+          </colgroup>
+          <thead><tr style={{background:'#f8fafc'}}>
+            <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,background:'#f8fafc',borderRight:'2px solid #e2e8f0'}}>Name</th>
+            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Designation</th>
+            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Supplier</th>
+            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Emp No</th>
+            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Nationality</th>
+            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>DOB</th>
+            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Passport</th>
+            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Emirates ID</th>
+            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Visa / Emirate</th>
+            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Expiry</th>
+            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Actions</th>
           </tr></thead>
           <tbody>
-            {filtered.length===0&&<tr><td colSpan={10} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
-            {filtered.map(c=>{
+            {filtered.length===0&&<tr><td colSpan={11} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
+            {filtered.map((c,idx)=>{
               const isOnSite = isOnSiteFn(c);
               const vExp = c.visa_expiry&&isExpired(c.visa_expiry);
               const pExp = c.passport_expiry&&isExpired(c.passport_expiry);
+              const rowBg = docPanel?.entity?.id===c.id ? '#eff6ff' : idx%2===0 ? '#fff' : '#fafafa';
               return <tr key={c.id} className="hr-row"
-                style={{cursor:'pointer', background: docPanel?.entity?.id===c.id ? '#eff6ff' : undefined}}
+                style={{cursor:'pointer',background:rowBg,height:'36px'}}
                 onClick={e=>handleRowClick(c,e)}
                 onDoubleClick={e=>handleRowDblClick(c,e)}
                 title="Click to view documents · Double-click to edit">
-                <td className="frozen-col" style={{...S.td,fontWeight:700,minWidth:'160px',borderLeft: docPanel?.entity?.id===c.id ? '3px solid #2563eb' : '3px solid transparent'}}>
-                  <div style={{cursor:'pointer',color:'#2563eb'}} onClick={()=>personHistory(c)}>{c.full_name}</div>
-                  <div style={{marginTop:'2px'}}>
-                    {isOnSite
-                      ? <span style={{background:'#dcfce7',color:'#166534',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:8}}>🏗️ On Site</span>
-                      : <span style={{background:'#eff6ff',color:'#2563eb',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:8}}>✓ Available</span>}
+                {/* Name — frozen left col */}
+                <td className="frozen-col" style={{...S.td,fontWeight:700,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'200px',borderLeft:docPanel?.entity?.id===c.id?'3px solid #2563eb':'3px solid transparent',borderRight:'2px solid #e2e8f0',background:rowBg,paddingTop:'4px',paddingBottom:'4px'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:'6px',overflow:'hidden'}}>
+                    <span style={{color:'#2563eb',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}} onClick={e=>{e.stopPropagation();personHistory(c);}}>{c.full_name}</span>
+                    <span style={{flexShrink:0,background:isOnSite?'#dcfce7':'#eff6ff',color:isOnSite?'#166534':'#2563eb',fontSize:'9px',fontWeight:800,padding:'1px 5px',borderRadius:6,whiteSpace:'nowrap'}}>
+                      {isOnSite?'ON SITE':'FREE'}
+                    </span>
                   </div>
                 </td>
-                <td style={S.td}>{c.designation||'—'}</td>
-                <td style={S.td}>
-                  {c.source==='satco_own'
-                    ? <span style={{fontWeight:700,color:'#2563eb',fontSize:'12px'}}>SATCO Arabia</span>
-                    : <div style={{fontWeight:600,fontSize:'12px'}}>{c.supplier_name||'—'}</div>
-                  }
-                </td>
-                <td style={{...S.td,fontFamily:'monospace',fontSize:'12px',fontWeight:700,color:'#0369a1'}}>
-                  {c.supplier_emp_no||'—'}
-                </td>
-                <td style={S.td}>{c.nationality||'—'}</td>
-                <td style={{...S.td,fontSize:'12px'}}>{c.date_of_birth?fmtDOB(c.date_of_birth):'—'}</td>
-                <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',color:pExp?'#dc2626':undefined}}>
-                  {c.passport_no||'—'}
-                  {pExp&&<div style={{fontSize:'10px',fontWeight:700,color:'#dc2626'}}>EXPIRED</div>}
-                </td>
-                <td style={{...S.td,fontFamily:'monospace',fontSize:'11px'}}>{c.emirates_id||'—'}</td>
-                <td style={S.td}>{c.visa_type||'—'}<div style={{fontSize:'11px',color:'#64748b'}}>{c.visa_location||''}</div></td>
-                <td style={{...S.td,color:vExp?'#dc2626':undefined,fontWeight:vExp?700:400}}>
-                  {fmtDate(c.visa_expiry)}
-                  {vExp&&<div style={{fontSize:'10px',fontWeight:700,color:'#dc2626'}}>EXPIRED</div>}
-                </td>
-                <td style={S.td}>
-                  <div style={{display:'flex',gap:'4px',flexWrap:'wrap'}}>
-                    <button style={S.btnSm} onClick={()=>personHistory(c)}>History</button>
-                    <button style={S.btnSm} onClick={()=>{setDraft({...c});setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);}}>Edit</button>
-                    <button style={{...S.btnSm,background:'#7c3aed',color:'#fff',border:'none'}} onClick={()=>onMobilise(c)}>+ Mob</button>
-                    <button style={{...S.btnSm,color:'#dc2626',border:'1px solid #fecaca'}} onClick={()=>onDelete('candidates',c)}>Delete</button>
+                {/* All other cells — single line, no wrap */}
+                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px'}}>{c.designation||'—'}</td>
+                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px',fontWeight:c.source==='satco_own'?700:400,color:c.source==='satco_own'?'#2563eb':'inherit',fontSize:'12px'}}>{c.source==='satco_own'?'SATCO Arabia':c.supplier_name||'—'}</td>
+                <td style={{...S.td,fontFamily:'monospace',fontSize:'12px',fontWeight:700,color:'#0369a1',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.supplier_emp_no||'—'}</td>
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.nationality||'—'}</td>
+                <td style={{...S.td,fontSize:'12px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.date_of_birth?fmtDOB(c.date_of_birth):'—'}</td>
+                <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',color:pExp?'#dc2626':'inherit',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.passport_no||'—'}{pExp&&<span style={{marginLeft:'4px',fontSize:'9px',fontWeight:800,color:'#dc2626'}}>EXP</span>}</td>
+                <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.emirates_id||'—'}</td>
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.visa_type||'—'} <span style={{color:'#94a3b8',fontSize:'11px'}}>{c.visa_location||''}</span></td>
+                <td style={{...S.td,color:vExp?'#dc2626':'inherit',fontWeight:vExp?700:400,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{fmtDate(c.visa_expiry)}{vExp&&<span style={{marginLeft:'4px',fontSize:'9px',fontWeight:800,color:'#dc2626'}}>EXP</span>}</td>
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'2px',paddingBottom:'2px'}}>
+                  <div style={{display:'flex',gap:'3px',alignItems:'center'}}>
+                    <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px'}} onClick={e=>{e.stopPropagation();personHistory(c);}}>History</button>
+                    <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px'}} onClick={e=>{e.stopPropagation();setDraft({...c});setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);}}>Edit</button>
+                    <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px',background:'#7c3aed',color:'#fff',border:'none'}} onClick={e=>{e.stopPropagation();onMobilise(c);}}>+Mob</button>
+                    <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px',color:'#dc2626',border:'1px solid #fecaca'}} onClick={e=>{e.stopPropagation();onDelete('candidates',c);}}>Del</button>
                   </div>
                 </td>
               </tr>;
@@ -2754,13 +2766,10 @@ function App() {
   // Load HR portal mob_demob active records at app level
   // mob_demob.employee_id is the HR employee_number (e.g. "SA1015") stored as supplier_emp_no in mob_candidates
   useEffect(()=>{
-    db.from('mob_demob').select('employee_id,employee_number').is('demobilization_date',null)
+    db.from('mob_demob').select('employee_id').is('demobilization_date',null).is('deleted_at',null)
       .then(({data:rows})=>{
         const ids = new Set();
-        (rows||[]).forEach(r=>{
-          if(r.employee_id)   ids.add(String(r.employee_id));
-          if(r.employee_number) ids.add(String(r.employee_number));
-        });
+        (rows||[]).forEach(r=>{ if(r.employee_id) ids.add(String(r.employee_id)); });
         setHrMobActive(ids);
       });
   },[]);
