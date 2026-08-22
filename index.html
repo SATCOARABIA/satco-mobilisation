@@ -565,6 +565,7 @@ function TopNav({tab, setTab, onSignOut, globalSearch, setGlobalSearch, searchRe
   const navRef = useStkPublish('--stk-1');
   const tabs = [
     {k:'dashboard',   l:'📊 Dashboard'},
+    {k:'planning',    l:'🎯 Planning'},
     {k:'requirements',l:'📋 Requirements'},
     {k:'loa',         l:'📄 LOA'},
     {k:'candidates',  l:'👥 Candidates'},
@@ -1192,18 +1193,293 @@ function Dashboard({data, loaUsed, setTab, setFilterStatus, hrMobActive=new Set(
 }
 
 // ── Candidates Tab ────────────────────────────────────────────────────────────
-function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSearch, hrMobActive=new Set(), hrMobLocs={}, thresholds=[]}) {
+// Inline colored cell used in candidates table
+const Cell = ({col,text,title}) => (
+  <td style={{padding:'3px 6px',whiteSpace:'nowrap'}} title={title}>
+    <span style={{background:col.bg,color:col.color,fontWeight:700,fontSize:'11px',padding:'2px 7px',borderRadius:4,display:'inline-block'}}>
+      {col.icon} {text}
+    </span>
+  </td>
+);
+// Mob status tick cell
+const MobTick = ({done,label,date,optional}) => {
+  const col = done
+    ? {bg:'#dcfce7',color:'#166534',icon:'✓'}
+    : optional
+      ? {bg:'#f1f5f9',color:'#94a3b8',icon:'—'}
+      : {bg:'#fee2e2',color:'#dc2626',icon:'✗'};
+  return <Cell col={col} text={done?(label+(date?' '+fmtDate(date):'')):(optional?'—':'✗')} title={label}/>;
+};
+
+// ── Planning Tab ──────────────────────────────────────────────────────────────
+function PlanningTab({candidates, mobList, onMobilise}) {
+  const [plans, setPlans]       = useState([]);
+  const [activePlan, setActivePlan] = useState(null);
+  const [planDraft, setPlanDraft]   = useState(null);
+
+  const loadPlans = async() => {
+    const {data} = await db.from('mob_deployment_plan').select('*').eq('active',true).order('created_at',{ascending:false});
+    setPlans(data||[]);
+  };
+  useEffect(()=>{ loadPlans(); },[]);
+
+  const savePlan = async(p) => {
+    const {error,data} = p.id
+      ? await db.from('mob_deployment_plan').update({...p,updated_at:new Date().toISOString()}).eq('id',p.id).select().single()
+      : await db.from('mob_deployment_plan').insert(p).select().single();
+    if(error){alert(error.message);return;}
+    await loadPlans();
+    setPlanDraft(null);
+    if(!p.id && data) setActivePlan(data.id);
+  };
+
+  const deletePlan = async(id) => {
+    if(!window.confirm('Remove this plan?')) return;
+    await db.from('mob_deployment_plan').update({active:false}).eq('id',id);
+    await loadPlans();
+    if(activePlan===id) setActivePlan(null);
+  };
+
+  const meetsPlan = useCallback((c, plan) => {
+    if(!plan) return null;
+    const mob = mobList.filter(m=>m.candidate_id===c.id||m.full_name===c.full_name)
+      .sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
+    const checks = [];
+    checks.push({label:'Passport',    done:!!c.passport_no&&!!c.passport_expiry, action:'Edit candidate → add passport'});
+    checks.push({label:'Emirates ID', done:!!c.emirates_id&&!!c.eid_expiry,      action:'Edit candidate → add EID'});
+    checks.push({label:'UAE Visa',    done:!!c.visa_no&&!!c.visa_expiry,         action:'Edit candidate → add visa'});
+    if(plan.designation) checks.push({label:`Trade: ${plan.designation}`, done:(c.designation||'').toLowerCase().includes(plan.designation.toLowerCase()), action:`Candidate designation must match ${plan.designation}`});
+    if(plan.cicpa_required)         checks.push({label:'CICPA Gate Pass',  done:c.cicpa_status==='active'&&!!c.security_pass_no, action:'Apply for CICPA gate pass via LOA', warning:c.cicpa_status==='confiscated'?'CICPA confiscated':''});
+    if(plan.adnoc_medical_required) checks.push({label:'ADNOC Medical',    done:!!c.adnoc_medical_status&&c.adnoc_medical_status!=='Unfit', action:'Edit candidate → add ADNOC medical'});
+    if(plan.medical_required)       checks.push({label:'Site Medical',     done:!!mob?.medical_done&&mob?.medical_result!=='Unfit', action:'Mobilisation → mark medical done'});
+    if(plan.wp_required)            checks.push({label:'Work Permit',      done:!!mob?.wp_approved_date, action:'Mobilisation → update work permit'});
+    if(plan.hse_required)           checks.push({label:'HSE Passport',     done:!!mob?.hse_passport_done, action:'Mobilisation → mark HSE done'});
+    if(plan.h2s_required)           checks.push({label:'H2S Training',     done:!!mob?.h2s_done, action:'Mobilisation → mark H2S done'});
+    (plan.extra_trainings||[]).forEach(t=>{
+      const found=(mob?.extra_trainings||[]).find(et=>(et.name||'').toLowerCase()===t.toLowerCase()&&et.done);
+      checks.push({label:t, done:!!found, action:`Complete ${t} training`});
+    });
+    const allMet = checks.every(x=>x.done);
+    return {checks, allMet, missing:checks.filter(x=>!x.done)};
+  },[mobList]);
+
+  const plan = plans.find(p=>p.id===activePlan);
+  const {greenCands, yellowCands} = useMemo(()=>{
+    if(!plan) return {greenCands:[], yellowCands:[]};
+    const green=[], yellow=[];
+    candidates.forEach(c=>{
+      const r = meetsPlan(c,plan);
+      if(r?.allMet) green.push({...c,_pr:r});
+      else yellow.push({...c,_pr:r});
+    });
+    return {greenCands:green, yellowCands:yellow};
+  },[candidates,plan,meetsPlan]);
+
+  const blankPlan = {name:'',customer_name:'',location:'',designation:'',headcount:1,
+    cicpa_required:false,medical_required:true,adnoc_medical_required:false,
+    wp_required:false,hse_required:false,h2s_required:false,extra_trainings:[],notes:''};
+
+  return (
+    <div style={{maxWidth:'1400px',margin:'0 auto',padding:'16px'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'16px'}}>
+        <div>
+          <div style={{fontWeight:800,fontSize:'18px',color:'#0f172a'}}>🎯 Mobilisation Planning</div>
+          <div style={{fontSize:'12px',color:'#64748b',marginTop:'2px'}}>Define requirements per deployment — candidates auto-sort into Ready and Needs Action</div>
+        </div>
+        <button style={S.btnPri} onClick={()=>setPlanDraft({...blankPlan})}>+ New Plan</button>
+      </div>
+
+      {/* Plan cards row */}
+      {plans.length>0&&(
+        <div style={{display:'flex',gap:'10px',flexWrap:'wrap',marginBottom:'16px'}}>
+          {plans.map(p=>{
+            const isActive = activePlan===p.id;
+            const green = candidates.filter(c=>meetsPlan(c,p)?.allMet).length;
+            const total = candidates.length;
+            return (
+              <div key={p.id} onClick={()=>setActivePlan(isActive?null:p.id)}
+                style={{background:isActive?'#0f172a':'#fff',border:`2px solid ${isActive?'#0f172a':'#e2e8f0'}`,borderRadius:'10px',padding:'12px 16px',cursor:'pointer',minWidth:'200px',transition:'all 0.15s'}}>
+                <div style={{fontWeight:800,fontSize:'14px',color:isActive?'#f8fafc':'#0f172a'}}>{p.name}</div>
+                {p.customer_name&&<div style={{fontSize:'11px',color:isActive?'#94a3b8':'#64748b',marginTop:'2px'}}>{p.customer_name}</div>}
+                {p.location&&<div style={{fontSize:'11px',color:isActive?'#94a3b8':'#64748b'}}>{p.location}</div>}
+                <div style={{display:'flex',gap:'8px',marginTop:'8px',flexWrap:'wrap'}}>
+                  {p.designation&&<span style={{background:isActive?'#1e293b':'#f1f5f9',color:isActive?'#94a3b8':'#475569',fontSize:'10px',fontWeight:700,padding:'2px 8px',borderRadius:10}}>{p.designation}</span>}
+                  {p.headcount>0&&<span style={{background:isActive?'#1e293b':'#f1f5f9',color:isActive?'#94a3b8':'#475569',fontSize:'10px',fontWeight:700,padding:'2px 8px',borderRadius:10}}>{p.headcount} pax</span>}
+                  <span style={{background:'#dcfce7',color:'#166534',fontSize:'10px',fontWeight:700,padding:'2px 8px',borderRadius:10}}>{green} ready</span>
+                  <span style={{background:'#fef3c7',color:'#b45309',fontSize:'10px',fontWeight:700,padding:'2px 8px',borderRadius:10}}>{total-green} pending</span>
+                </div>
+                <div style={{display:'flex',gap:'6px',marginTop:'8px'}}>
+                  <button style={{...S.btnSm,padding:'2px 8px',fontSize:'10px',color:isActive?'#fff':undefined,borderColor:isActive?'#475569':undefined,background:isActive?'#1e293b':'transparent'}}
+                    onClick={e=>{e.stopPropagation();setPlanDraft({...p,extra_trainings:p.extra_trainings||[]});}}>Edit</button>
+                  <button style={{...S.btnSm,padding:'2px 8px',fontSize:'10px',color:'#dc2626',borderColor:isActive?'#475569':undefined}}
+                    onClick={e=>{e.stopPropagation();deletePlan(p.id);}}>Delete</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Plan editor */}
+      {planDraft&&(
+        <div style={{...S.card,marginBottom:'16px',padding:'16px'}}>
+          <div style={{fontWeight:800,fontSize:'14px',marginBottom:'12px'}}>{planDraft.id?'Edit Deployment Plan':'New Deployment Plan'}</div>
+          <Grid cols={3}>
+            <Field label="Plan Name *"><input value={planDraft.name||''} onChange={e=>setPlanDraft(d=>({...d,name:e.target.value}))} placeholder="e.g. VOLTA TAZIZ Aug 2026" style={S.input}/></Field>
+            <Field label="Customer"><input value={planDraft.customer_name||''} onChange={e=>setPlanDraft(d=>({...d,customer_name:e.target.value}))} placeholder="Alghanim, ADNOC..." style={S.input}/></Field>
+            <Field label="Location / Site"><input value={planDraft.location||''} onChange={e=>setPlanDraft(d=>({...d,location:e.target.value}))} placeholder="TAZIZ, Ruwais, Habshan..." style={S.input}/></Field>
+          </Grid>
+          <Grid cols={3}>
+            <Field label="Designation / Trade"><input value={planDraft.designation||''} onChange={e=>setPlanDraft(d=>({...d,designation:e.target.value}))} placeholder="Grinder, Fitter Piping..." style={S.input}/></Field>
+            <Field label="Headcount Required"><input type="number" min={1} value={planDraft.headcount||1} onChange={e=>setPlanDraft(d=>({...d,headcount:+e.target.value}))} style={S.input}/></Field>
+            <Field label="PO / LOA Reference"><input value={planDraft.notes||''} onChange={e=>setPlanDraft(d=>({...d,notes:e.target.value}))} placeholder="PO-072-46, LOA-50..." style={S.input}/></Field>
+          </Grid>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'12px 0 8px'}}>Requirements — check all that apply for this deployment</div>
+          <div style={{display:'flex',gap:'10px',flexWrap:'wrap',marginBottom:'12px'}}>
+            {[
+              {key:'cicpa_required',          label:'CICPA Gate Pass',   icon:'🔒'},
+              {key:'adnoc_medical_required',  label:'ADNOC Medical',     icon:'🏥'},
+              {key:'medical_required',        label:'Site Medical',      icon:'💊'},
+              {key:'wp_required',             label:'Work Permit',       icon:'📄'},
+              {key:'hse_required',            label:'HSE Passport',      icon:'🦺'},
+              {key:'h2s_required',            label:'H2S Training',      icon:'⚗️'},
+            ].map(({key,label,icon})=>(
+              <label key={key} style={{display:'flex',gap:'8px',alignItems:'center',cursor:'pointer',
+                background:planDraft[key]?'#eff6ff':'#f8fafc',padding:'8px 14px',borderRadius:8,
+                border:`1.5px solid ${planDraft[key]?'#2563eb':'#e2e8f0'}`,transition:'all 0.1s'}}>
+                <input type="checkbox" checked={!!planDraft[key]} onChange={e=>setPlanDraft(d=>({...d,[key]:e.target.checked}))} style={{width:15,height:15,accentColor:'#2563eb'}}/>
+                <span style={{fontSize:'13px',fontWeight:planDraft[key]?700:400,color:planDraft[key]?'#1e40af':'#374151'}}>{icon} {label}</span>
+              </label>
+            ))}
+          </div>
+          <Field label="Additional Trainings Required (comma-separated)">
+            <input value={(planDraft.extra_trainings||[]).join(', ')} onChange={e=>setPlanDraft(d=>({...d,extra_trainings:e.target.value.split(',').map(x=>x.trim()).filter(Boolean)}))}
+              placeholder="First Aid, BOSIET, Fire Warden, Rigging..." style={S.input}/>
+          </Field>
+          <div style={{display:'flex',gap:'8px',marginTop:'12px'}}>
+            <button style={S.btnPri} onClick={()=>savePlan(planDraft)} disabled={!planDraft.name}>Save Plan</button>
+            <button style={S.btnSec} onClick={()=>setPlanDraft(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {plans.length===0&&!planDraft&&(
+        <div style={{...S.card,padding:'40px',textAlign:'center'}}>
+          <div style={{fontSize:'40px',marginBottom:'12px'}}>🎯</div>
+          <div style={{fontWeight:700,fontSize:'16px',color:'#0f172a',marginBottom:'8px'}}>No deployment plans yet</div>
+          <div style={{color:'#64748b',fontSize:'13px',marginBottom:'16px'}}>Create a plan to define requirements for a specific deployment.<br/>Candidates will auto-sort into Ready and Needs Action.</div>
+          <button style={S.btnPri} onClick={()=>setPlanDraft({...blankPlan})}>+ Create First Plan</button>
+        </div>
+      )}
+
+      {/* Active plan results */}
+      {plan&&(
+        <div>
+          <div style={{fontWeight:800,fontSize:'15px',color:'#0f172a',marginBottom:'12px'}}>
+            Results for: <span style={{color:'#2563eb'}}>{plan.name}</span>
+            {plan.notes&&<span style={{fontWeight:400,fontSize:'12px',color:'#64748b',marginLeft:'10px'}}>PO/LOA: {plan.notes}</span>}
+          </div>
+
+          {/* Requirements summary bar */}
+          <div style={{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'16px',padding:'10px 14px',background:'#f8fafc',borderRadius:'8px',border:'1px solid #e2e8f0'}}>
+            <span style={{fontSize:'11px',fontWeight:700,color:'#64748b',marginRight:'4px',alignSelf:'center'}}>REQUIRED:</span>
+            {[
+              {show:true,              label:'Passport + EID + Visa'},
+              {show:plan.designation,  label:`Trade: ${plan.designation}`},
+              {show:plan.cicpa_required,         label:'CICPA'},
+              {show:plan.adnoc_medical_required, label:'ADNOC Medical'},
+              {show:plan.medical_required,       label:'Site Medical'},
+              {show:plan.wp_required,            label:'Work Permit'},
+              {show:plan.hse_required,           label:'HSE'},
+              {show:plan.h2s_required,           label:'H2S'},
+              ...(plan.extra_trainings||[]).map(t=>({show:true,label:t})),
+            ].filter(x=>x.show).map((x,i)=>(
+              <span key={i} style={{background:'#e2e8f0',color:'#374151',fontSize:'11px',fontWeight:600,padding:'2px 8px',borderRadius:10}}>{x.label}</span>
+            ))}
+          </div>
+
+          {/* GREEN: ready */}
+          <div style={{background:'#f0fdf4',border:'2px solid #86efac',borderRadius:'10px',padding:'14px 16px',marginBottom:'12px'}}>
+            <div style={{fontWeight:800,fontSize:'14px',color:'#166534',marginBottom:'10px',display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}}>
+              <span>✅ {greenCands.length} Ready to Mobilise</span>
+              {plan.headcount>0&&(
+                <span style={{fontWeight:400,fontSize:'12px',padding:'3px 10px',borderRadius:10,
+                  background:greenCands.length>=plan.headcount?'#bbf7d0':'#fef3c7',
+                  color:greenCands.length>=plan.headcount?'#166534':'#b45309'}}>
+                  {greenCands.length} / {plan.headcount} needed {greenCands.length>=plan.headcount?'— FULL ✓':'— need more'}
+                </span>
+              )}
+            </div>
+            {greenCands.length===0&&<div style={{color:'#15803d',fontSize:'13px'}}>No candidates meet all requirements yet. Check the yellow section below.</div>}
+            <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
+              {greenCands.map(c=>(
+                <div key={c.id} style={{background:'#fff',border:'1px solid #86efac',borderRadius:'8px',padding:'10px 14px',display:'flex',gap:'12px',alignItems:'center',minWidth:'240px'}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:'13px',color:'#166534',textTransform:'uppercase'}}>{c.full_name}</div>
+                    <div style={{fontSize:'11px',color:'#15803d'}}>{c.designation||'—'} · {c.supplier_emp_no||'—'}</div>
+                    <div style={{display:'flex',gap:'3px',marginTop:'4px',flexWrap:'wrap'}}>
+                      {(c._pr?.checks||[]).map((chk,i)=>(
+                        <span key={i} style={{fontSize:'9px',fontWeight:700,padding:'1px 5px',borderRadius:3,background:'#dcfce7',color:'#166534'}}>✓ {chk.label}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <button style={{...S.btnSm,background:'#166534',color:'#fff',border:'none',padding:'6px 14px',fontSize:'12px',fontWeight:700,flexShrink:0}} onClick={()=>onMobilise(c)}>+ Mobilise →</button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* YELLOW: needs action */}
+          <div style={{background:'#fffbeb',border:'2px solid #fde68a',borderRadius:'10px',padding:'14px 16px'}}>
+            <div style={{fontWeight:800,fontSize:'14px',color:'#92400e',marginBottom:'10px'}}>⚠ {yellowCands.length} Need Action</div>
+            {yellowCands.length===0&&<div style={{color:'#b45309',fontSize:'13px'}}>All candidates are ready!</div>}
+            <div style={{display:'flex',flexDirection:'column',gap:'8px'}}>
+              {yellowCands.map(c=>(
+                <div key={c.id} style={{background:'#fff',border:'1px solid #fde68a',borderRadius:'8px',padding:'10px 14px',display:'flex',gap:'12px',alignItems:'flex-start',flexWrap:'wrap'}}>
+                  <div style={{minWidth:'200px',flexShrink:0}}>
+                    <div style={{fontWeight:700,fontSize:'13px',color:'#92400e',textTransform:'uppercase'}}>{c.full_name}</div>
+                    <div style={{fontSize:'11px',color:'#b45309'}}>{c.designation||'—'} · {c.supplier_emp_no||'—'}</div>
+                    {c.cicpa_status==='confiscated'&&<div style={{fontSize:'10px',fontWeight:700,color:'#dc2626',marginTop:'3px'}}>⚠ CICPA Confiscated</div>}
+                  </div>
+                  <div style={{flex:1}}>
+                    <div style={{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'6px'}}>
+                      {(c._pr?.checks||[]).map((chk,i)=>(
+                        <span key={i} title={!chk.done?('Action: '+chk.action):''}
+                          style={{fontSize:'10px',fontWeight:700,padding:'2px 8px',borderRadius:4,cursor:!chk.done?'help':'default',
+                            background:chk.done?'#dcfce7':'#fee2e2',color:chk.done?'#166534':'#dc2626'}}>
+                          {chk.done?'✓':'✗'} {chk.label}
+                        </span>
+                      ))}
+                    </div>
+                    {c._pr?.missing?.length>0&&(
+                      <div style={{fontSize:'11px',color:'#b45309'}}>
+                        <strong>Next action:</strong> {c._pr.missing[0]?.action}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRefresh, tabSearch, hrMobActive=new Set(), hrMobLocs={}, thresholds=[]}) {
   const [draft,setDraft]   = usePersistentDraft('candidate');
   const [savedDraft, setSavedDraft] = useState(() => { try { const v=localStorage.getItem('satco_mob_draft_candidate'); return v?JSON.parse(v):null; } catch{return null;} });
   const [search,setSearch] = useState(tabSearch||'');
   const [suppF,setSuppF]   = useState('');
   const [readyF,setReadyF] = useState('');
   const [desigF,setDesigF] = useState('');
-  const [cicpaLocF,setCicpaLocF] = useState(''); // ''|'ready'|'not_ready'
+  const [cicpaLocF,setCicpaLocF] = useState('');
   const [histPerson, setHistPerson] = useState(null);
   const [docPanel,  setDocPanel]   = useState(null);
   const [satcoEmps, setSatcoEmps]  = useState([]);
   const clickTimer  = useRef(null);
+
 
   // Mandatory fields for a candidate to be mobilisation-ready
   // CICPA and Work Permit are NOT checked here — those are done at mobilisation time
@@ -1294,7 +1570,7 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
   const designations  = useMemo(()=>[...new Set(candidates.map(c=>c.designation).filter(Boolean))].sort(),[candidates]);
   const cicpaLocations= useMemo(()=>[...new Set(candidates.map(c=>c.cicpa_location).filter(Boolean))].sort(),[candidates]);
 
-  const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',passport_expiry:'',emirates_id:'',eid_expiry:'',visa_no:'',visa_type:'',visa_location:'',visa_expiry:'',phone:'',email:'',security_pass_no:'',security_pass_expiry:'',adnoc_medical_status:'',adnoc_medical_date:'',cicpa_location:'',remarks:'',active:true}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
+  const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',passport_expiry:'',emirates_id:'',eid_expiry:'',visa_no:'',visa_type:'',visa_location:'',visa_expiry:'',phone:'',email:'',security_pass_no:'',security_pass_expiry:'',adnoc_medical_status:'',adnoc_medical_date:'',cicpa_location:'',cicpa_status:'not_issued',cicpa_remarks:'',remarks:'',active:true}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
 
   const personHistory = (cand) => {
     const hist = mobList.filter(m => m.candidate_id === cand.id || m.full_name === cand.full_name);
@@ -1318,22 +1594,73 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
     setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);
   };
 
-  // Apply AI-scanned data back to a candidate record
+  // Apply AI-scanned data back to a candidate record — handles all doc types
   const applyAiData = async (aiData, docType) => {
     if (!docPanel) return;
-    const fieldMap = {
-      full_name: 'full_name', passport_no: 'passport_no', nationality: 'nationality',
-      date_of_birth: 'date_of_birth', expiry_date: docType==='passport'?'passport_expiry':docType==='eid'?'eid_expiry':docType==='visa'?'visa_expiry':null,
-      emirates_id: 'emirates_id', visa_no: 'visa_no', visa_type: 'visa_type',
-    };
+    const dt = (aiData.doc_type || docType || '').toLowerCase();
     const updates = {};
-    Object.entries(aiData).forEach(([k,v]) => { if (fieldMap[k] && v) updates[fieldMap[k]] = v; });
-    if (!Object.keys(updates).length) return;
+
+    // Passport
+    if (dt.includes('passport') || aiData.passport_no) {
+      if (aiData.full_name)       updates.full_name       = aiData.full_name;
+      if (aiData.passport_no)     updates.passport_no     = aiData.passport_no;
+      if (aiData.passport_expiry) updates.passport_expiry = aiData.passport_expiry;
+      if (aiData.nationality)     updates.nationality     = aiData.nationality;
+      if (aiData.date_of_birth)   updates.date_of_birth   = aiData.date_of_birth;
+      if (aiData.designation)     updates.designation     = aiData.designation;
+    }
+    // Emirates ID
+    else if (dt.includes('emirates') || aiData.emirates_id) {
+      if (aiData.emirates_id)  updates.emirates_id = aiData.emirates_id;
+      if (aiData.eid_expiry)   updates.eid_expiry  = aiData.eid_expiry;
+      if (aiData.full_name)    updates.full_name   = aiData.full_name;
+    }
+    // UAE Visa
+    else if (dt.includes('visa') || aiData.visa_no) {
+      if (aiData.visa_no)      updates.visa_no      = aiData.visa_no;
+      if (aiData.visa_type)    updates.visa_type    = aiData.visa_type;
+      if (aiData.visa_expiry)  updates.visa_expiry  = aiData.visa_expiry;
+      if (aiData.issue_date)   updates.visa_expiry  = aiData.issue_date; // fallback
+    }
+    // CICPA gate pass / security pass
+    else if (dt.includes('cicpa') || aiData.cicpa_pass_no) {
+      if (aiData.cicpa_pass_no)  updates.security_pass_no     = aiData.cicpa_pass_no;
+      if (aiData.pass_expiry)    updates.security_pass_expiry = aiData.pass_expiry;
+      if (aiData.cicpa_expiry)   updates.security_pass_expiry = aiData.cicpa_expiry;
+      if (aiData.training_expiry)updates.security_pass_expiry = aiData.training_expiry;
+      if (aiData.site_location)  updates.cicpa_location       = aiData.site_location;
+      if (aiData.designation)    updates.designation          = aiData.designation;
+    }
+    // Medical / ADNOC Medical
+    else if (dt.includes('medical') || aiData.medical_result || aiData.medical_date) {
+      if (aiData.medical_result) updates.adnoc_medical_status = aiData.medical_result;
+      if (aiData.medical_date)   updates.adnoc_medical_date   = aiData.medical_date;
+      if (aiData.issue_date && !aiData.medical_date) updates.adnoc_medical_date = aiData.issue_date;
+    }
+    // Fallback: fill whatever recognised fields exist
+    else {
+      if (aiData.full_name)       updates.full_name       = aiData.full_name;
+      if (aiData.passport_no)     updates.passport_no     = aiData.passport_no;
+      if (aiData.passport_expiry) updates.passport_expiry = aiData.passport_expiry;
+      if (aiData.emirates_id)     updates.emirates_id     = aiData.emirates_id;
+      if (aiData.eid_expiry)      updates.eid_expiry      = aiData.eid_expiry;
+      if (aiData.visa_no)         updates.visa_no         = aiData.visa_no;
+      if (aiData.nationality)     updates.nationality     = aiData.nationality;
+      if (aiData.date_of_birth)   updates.date_of_birth   = aiData.date_of_birth;
+      if (aiData.designation)     updates.designation     = aiData.designation;
+      if (aiData.cicpa_pass_no)   updates.security_pass_no = aiData.cicpa_pass_no;
+      if (aiData.site_location)   updates.cicpa_location  = aiData.site_location;
+      if (aiData.pass_expiry)     updates.security_pass_expiry = aiData.pass_expiry;
+    }
+
+    if (!Object.keys(updates).length) { alert('No recognised fields found in this document.'); return; }
+
     const { error } = await db.from('mob_candidates').update({...updates, updated_at: new Date().toISOString()}).eq('id', docPanel.entity.id);
     if (error) { alert(error.message); return; }
-    await onSave('candidates', {...docPanel.entity, ...updates}, ()=>{});
+    await onRefresh?.();
     setDocPanel(d => d ? {...d, entity:{...d.entity,...updates}} : d);
-    alert('Record updated from AI scan ✓');
+    const filled = Object.keys(updates).join(', ');
+    alert(`✓ Updated: ${filled}`);
   };
 
   const exportCols = [
@@ -1349,7 +1676,7 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
 
   return (
     <div>
-      {!draft && savedDraft && (
+            {!draft && savedDraft && (
         <DraftBanner draft={savedDraft}
           onRestore={()=>{ setDraft(savedDraft); setSavedDraft(null); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); }}
           onDiscard={()=>{ localStorage.removeItem('satco_mob_draft_candidate'); setSavedDraft(null); }}
@@ -1426,22 +1753,36 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
                     if(n.includes('permit')||n.includes('wp')) return 'work_permit';
                     return 'passport'; // default — passport most common
                   };
-                  // Unified field map — covers all document types including medical & training
+                  // Unified field map — covers all document types
                   const directMap = {
                     full_name:'full_name', passport_no:'passport_no', nationality:'nationality',
                     date_of_birth:'date_of_birth', passport_expiry:'passport_expiry',
                     emirates_id:'emirates_id', eid_expiry:'eid_expiry',
                     visa_no:'visa_no', visa_type:'visa_type', visa_expiry:'visa_expiry',
-                    designation:'designation',
+                    designation:'designation', phone:'phone',
                   };
                   try {
                     for (const file of files) {
                       const result = await aiScanDocument(file, 'other');
-                      const detectedType = result.doc_type || 'unknown';
+                      const detectedType = (result.doc_type || 'unknown').toLowerCase();
                       // Map standard document fields
                       Object.entries(result).forEach(([k,v]) => {
                         if(directMap[k] && v && !allUpdates[directMap[k]]) allUpdates[directMap[k]] = v;
                       });
+                      // CICPA gate pass / security pass
+                      if (detectedType.includes('cicpa') || result.cicpa_pass_no) {
+                        if (result.cicpa_pass_no && !allUpdates.security_pass_no)
+                          allUpdates.security_pass_no = result.cicpa_pass_no;
+                        const exp = result.pass_expiry || result.cicpa_expiry || result.training_expiry;
+                        if (exp && !allUpdates.security_pass_expiry) allUpdates.security_pass_expiry = exp;
+                        if (result.site_location && !allUpdates.cicpa_location) allUpdates.cicpa_location = result.site_location;
+                      }
+                      // ADNOC Medical / medical certificate
+                      if (detectedType.includes('medical') || result.medical_result || result.medical_date) {
+                        if (result.medical_result && !allUpdates.adnoc_medical_status) allUpdates.adnoc_medical_status = result.medical_result;
+                        const md = result.medical_date || result.issue_date;
+                        if (md && !allUpdates.adnoc_medical_date) allUpdates.adnoc_medical_date = md;
+                      }
                       allResults.push({file:file.name, docType:detectedType, result});
                     }
                     setDraft(d=>({...d,...allUpdates,_scanning:false,_scanResult:allResults}));
@@ -1545,11 +1886,40 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
             <Field label="Visa Expiry"><input type="date" value={draft.visa_expiry||''} onChange={e=>setDraft(d=>({...d,visa_expiry:e.target.value}))} style={S.input}/></Field>
           </Grid>
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Security Pass & CICPA</div>
+          {/* Confiscated warning banner */}
+          {draft.cicpa_status==='confiscated' && (
+            <div style={{background:'#fef3c7',border:'2px solid #f59e0b',borderRadius:'8px',padding:'10px 14px',marginBottom:'10px',display:'flex',gap:'10px',alignItems:'flex-start'}}>
+              <span style={{fontSize:'20px',flexShrink:0}}>⚠</span>
+              <div>
+                <div style={{fontWeight:800,fontSize:'13px',color:'#92400e'}}>CICPA GATE PASS CONFISCATED</div>
+                <div style={{fontSize:'12px',color:'#78350f',marginTop:'2px'}}>{draft.cicpa_remarks||'No details entered'}</div>
+                <div style={{fontSize:'11px',color:'#b45309',marginTop:'4px',fontWeight:600}}>This person cannot enter CICPA-controlled sites. They can still be mobilised to non-CICPA sites (e.g. Habshan, office).</div>
+              </div>
+            </div>
+          )}
           <Grid cols={3}>
+            <Field label="CICPA Status">
+              <select value={draft.cicpa_status||'not_issued'} onChange={e=>setDraft(d=>({...d,cicpa_status:e.target.value}))}
+                style={{...S.input,borderColor:draft.cicpa_status==='confiscated'?'#dc2626':draft.cicpa_status==='active'?'#166534':undefined,
+                  fontWeight:['confiscated','active'].includes(draft.cicpa_status)?700:400,
+                  color:draft.cicpa_status==='confiscated'?'#dc2626':draft.cicpa_status==='active'?'#166534':'inherit'}}>
+                <option value="not_issued">— Not Issued</option>
+                <option value="active">✓ Active</option>
+                <option value="confiscated">🚫 Confiscated</option>
+                <option value="expired">⚠ Expired</option>
+              </select>
+            </Field>
             <Field label="Security Pass No"><input value={draft.security_pass_no||''} onChange={e=>setDraft(d=>({...d,security_pass_no:e.target.value}))} style={S.input}/></Field>
             <Field label="Security Pass Expiry"><input type="date" value={draft.security_pass_expiry||''} onChange={e=>setDraft(d=>({...d,security_pass_expiry:e.target.value}))} style={S.input}/></Field>
+          </Grid>
+          <Grid cols={2}>
             <Field label="CICPA Location (O&G Field)">
               <input value={draft.cicpa_location||''} onChange={e=>setDraft(d=>({...d,cicpa_location:e.target.value}))} placeholder="e.g. TAZIZ, ADNOC Ruwais, GASCO…" style={S.input}/>
+            </Field>
+            <Field label={<span style={{color:draft.cicpa_status==='confiscated'?'#dc2626':'inherit'}}>CICPA Remarks {draft.cicpa_status==='confiscated'&&'⚠ REQUIRED'}</span>}>
+              <input value={draft.cicpa_remarks||''} onChange={e=>setDraft(d=>({...d,cicpa_remarks:e.target.value}))}
+                placeholder={draft.cicpa_status==='confiscated'?'Enter confiscation details, date, reason…':'Any notes about CICPA gate pass…'}
+                style={{...S.input,borderColor:draft.cicpa_status==='confiscated'&&!draft.cicpa_remarks?'#dc2626':undefined}}/>
             </Field>
           </Grid>
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>ADNOC Medical</div>
@@ -1626,28 +1996,21 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
             {['Status','Current Site','Designation','Supplier','Emp No','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa / Emirate','Visa Expiry','Sec Pass','Sec Exp','ADNOC Med','CICPA Location','Work Permit','Medical','HSE','H2S','CICPA','Ready?','Phone','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>{h}</th>)}
           </tr></thead>
           <tbody>
-            {filtered.length===0&&<tr><td colSpan={15} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
+            {filtered.length===0&&<tr><td colSpan={25} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
             {filtered.map((c,idx)=>{
               const isOnSite = isOnSiteFn(c);
               const currentSite = hrMobLocs[c.supplier_emp_no] || '';
               const rowBg = docPanel?.entity?.id===c.id ? '#eff6ff' : idx%2===0 ? '#fff' : '#fafafa';
               // color helpers per doc type
-              const ppCol  = docColor('passport',      c.passport_expiry,  thresholds);
-              const eidCol = docColor('eid',            c.eid_expiry,       thresholds);
-              const visCol = docColor('visa',           c.visa_expiry,      thresholds);
-              const secCol = docColor('security_pass',  c.security_pass_expiry, thresholds);
+              const ppCol  = docColor('passport',      c.passport_expiry,      thresholds);
+              const eidCol = docColor('eid',           c.eid_expiry,           thresholds);
+              const visCol = docColor('visa',          c.visa_expiry,          thresholds);
+              const secCol = docColor('security_pass', c.security_pass_expiry, thresholds);
               const adnCol = c.adnoc_medical_status==='Fit'
                 ? {bg:'#dcfce7',color:'#166534',icon:'✓'}
                 : c.adnoc_medical_status==='Unfit'
                   ? {bg:'#fee2e2',color:'#dc2626',icon:'✗'}
                   : {bg:'#fee2e2',color:'#991b1b',icon:'✗'};
-              const Cell = ({col,text,title}) => (
-                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'3px',paddingBottom:'3px'}} title={title}>
-                  <span style={{background:col.bg,color:col.color,fontWeight:700,fontSize:'11px',padding:'2px 7px',borderRadius:4,display:'inline-block'}}>
-                    {col.icon} {text}
-                  </span>
-                </td>
-              );
               return <tr key={c.id} className="hr-row"
                 style={{cursor:'pointer',background:rowBg,height:'36px'}}
                 onClick={e=>handleRowClick(c,e)}
@@ -1692,22 +2055,19 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
                 <Cell col={adnCol} text={c.adnoc_medical_status||'Not done'} title={`ADNOC Medical: ${fmtDate(c.adnoc_medical_date)}`}/>
                 {/* CICPA Location — which O&G field CICPA this candidate holds */}
                 <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
-                  {c.cicpa_location
-                    ? <span style={{background:'#f0f4ff',color:'#3730a3',fontWeight:700,fontSize:'10px',padding:'2px 7px',borderRadius:4}}>{c.cicpa_location}</span>
-                    : <span style={{color:'#94a3b8',fontSize:'10px'}}>—</span>}
+                  {c.cicpa_status==='confiscated'
+                    ? <span style={{background:'#fef3c7',color:'#92400e',fontWeight:800,fontSize:'10px',padding:'2px 7px',borderRadius:4}} title={c.cicpa_remarks||'Confiscated'}>⚠ CONFISCATED</span>
+                    : c.cicpa_status==='active' && c.cicpa_location
+                      ? <span style={{background:'#f0f4ff',color:'#3730a3',fontWeight:700,fontSize:'10px',padding:'2px 7px',borderRadius:4}}>✓ {c.cicpa_location}</span>
+                      : c.cicpa_status==='expired'
+                        ? <span style={{background:'#fef3c7',color:'#b45309',fontWeight:700,fontSize:'10px',padding:'2px 7px',borderRadius:4}}>⚠ Expired</span>
+                        : <span style={{color:'#94a3b8',fontSize:'10px'}}>—</span>}
                 </td>
                 {/* ── Mob status from latest mob_register record ── */}
                 {(()=>{
                   const mob = mobList.filter(m=>m.candidate_id===c.id||m.full_name===c.full_name).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
                   const isSatco = c.source==='satco_own';
-                  const T = ({done,label,date,optional}) => {
-                    const col = done
-                      ? {bg:'#dcfce7',color:'#166534',icon:'✓'}
-                      : optional
-                        ? {bg:'#f1f5f9',color:'#94a3b8',icon:'—'}
-                        : {bg:'#fee2e2',color:'#dc2626',icon:'✗'};
-                    return <Cell col={col} text={done?(label+(date?' '+fmtDate(date):'')):(optional?'—':'✗ '+label)} title={label}/>;
-                  };
+                  const T = MobTick;
                   const wpDone  = !!mob?.wp_approved_date;
                   const medDone = !!mob?.medical_done && mob?.medical_result!=='Unfit';
                   const hseDone = !!mob?.hse_passport_done;
@@ -1717,11 +2077,13 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
                   const docOk = !!c.passport_no && !!c.emirates_id && !!c.visa_no;
                   const mobOk = medDone && hseDone && h2sDone && cicpa && (isSatco || wpDone);
                   const allGreen = docOk && mobOk && !!c.adnoc_medical_status && c.adnoc_medical_status!=='Unfit';
-                  const readyCol = allGreen
-                    ? {bg:'#dcfce7',color:'#166534',icon:'✅'}
-                    : docOk
-                      ? {bg:'#fef3c7',color:'#b45309',icon:'⚠'}
-                      : {bg:'#fee2e2',color:'#dc2626',icon:'✗'};
+                  const readyCol = c.cicpa_status==='confiscated'
+                    ? {bg:'#fef3c7',color:'#b45309',icon:'⚠'}
+                    : allGreen
+                      ? {bg:'#dcfce7',color:'#166534',icon:'✅'}
+                      : docOk
+                        ? {bg:'#fef3c7',color:'#b45309',icon:'⚠'}
+                        : {bg:'#fee2e2',color:'#dc2626',icon:'✗'};
                   return <>
                     {isSatco
                       ? <td style={{...S.td,paddingTop:'3px',paddingBottom:'3px'}}><span style={{background:'#f1f5f9',color:'#94a3b8',fontSize:'10px',padding:'2px 6px',borderRadius:4}}>N/A</span></td>
@@ -1733,7 +2095,7 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
                     <td style={{...S.td,paddingTop:'3px',paddingBottom:'3px'}}>
                       <span style={{background:readyCol.bg,color:readyCol.color,fontWeight:800,fontSize:'11px',padding:'2px 8px',borderRadius:4,cursor:'pointer',display:'inline-block'}}
                         onClick={e=>{e.stopPropagation();if(allGreen)onMobilise(c);}}>
-                        {allGreen?'✅ MOB':docOk?'⚠ Pend':'✗ Docs'}
+                        {c.cicpa_status==='confiscated'?'⚠ No CICPA':allGreen?'✅ MOB':docOk?'⚠ Pend':'✗ Docs'}
                       </span>
                     </td>
                   </>;
@@ -1743,7 +2105,15 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
                   <div style={{display:'flex',gap:'3px',alignItems:'center'}}>
                     <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px'}} onClick={e=>{e.stopPropagation();personHistory(c);}}>History</button>
                     <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px'}} onClick={e=>{e.stopPropagation();setDraft({...c});setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);}}>Edit</button>
-                    <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px',background:'#7c3aed',color:'#fff',border:'none'}} onClick={e=>{e.stopPropagation();onMobilise(c);}}>+Mob</button>
+                    <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px',background:'#7c3aed',color:'#fff',border:'none'}}
+                      onClick={e=>{
+                        e.stopPropagation();
+                        if(c.cicpa_status==='confiscated'){
+                          const proceed = window.confirm(`⚠ CICPA Gate Pass CONFISCATED\n\n${c.full_name}\n${c.cicpa_remarks||'No details entered.'}\n\nThis person cannot enter CICPA-controlled sites.\nYou can still mobilise them to non-CICPA sites (e.g. Habshan).\n\nProceed with mobilisation?`);
+                          if(!proceed) return;
+                        }
+                        onMobilise(c);
+                      }}>+Mob</button>
                     <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px',color:'#dc2626',border:'1px solid #fecaca'}} onClick={e=>{e.stopPropagation();onDelete('candidates',c);}}>Del</button>
                   </div>
                 </td>
@@ -3317,7 +3687,8 @@ function App() {
           {loading&&tableReady===null&&<div style={{padding:'40px',textAlign:'center',color:'#94a3b8'}}>Loading…</div>}
           {!loading&&tableReady&&<>
             {tab==='dashboard'    &&<Dashboard data={data} loaUsed={loaUsed} setTab={t=>{setTab(t);}} setFilterStatus={setFilterStatus} hrMobActive={hrMobActive}/>}
-            {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} tabSearch={tabSearch} hrMobActive={hrMobActive} hrMobLocs={hrMobLocs} thresholds={data.thresholds}/>}
+            {tab==='planning'     &&<PlanningTab candidates={data.candidates} mobList={data.mobList} onMobilise={c=>{handleMobilise(c);setTab('mobilisation');}}/>}
+            {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} onRefresh={loadAll} tabSearch={tabSearch} hrMobActive={hrMobActive} hrMobLocs={hrMobLocs} thresholds={data.thresholds}/>}
             {tab==='requirements' &&<RequirementsTab requirements={data.requirements} onSave={onSave}/>}
             {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
             {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} requirements={data.requirements} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} onRefresh={loadAll} initialStatus={filterStatus} tabSearch={tabSearch}/>}
