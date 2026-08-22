@@ -551,13 +551,13 @@ function GlobalSearch({value, onChange, results, onSelect, onClear}) {
 function TopNav({tab, setTab, onSignOut, globalSearch, setGlobalSearch, searchResults, onSearchSelect}) {
   const navRef = useStkPublish('--stk-1');
   const tabs = [
-    {k:'config',      l:'⚙️ Setup'},
+    {k:'dashboard',   l:'📊 Dashboard'},
     {k:'requirements',l:'📋 Requirements'},
     {k:'loa',         l:'📄 LOA'},
     {k:'candidates',  l:'👥 Candidates'},
     {k:'mobilisation',l:'🏗️ Mobilisation'},
     {k:'letters',     l:'✉️ Letters'},
-    {k:'dashboard',   l:'📊 Dashboard'},
+    {k:'config',      l:'⚙️ Setup'},
   ];
   return (
     <div ref={navRef} style={{background:'#0f172a',color:'#fff',position:'sticky',top:0,zIndex:100,boxShadow:'0 2px 8px rgba(0,0,0,0.3)'}}>
@@ -2894,7 +2894,7 @@ function App() {
   useDragScroll(); // global drag-to-scroll for all .drag-scroll and .tbl-box elements
   const [session,      setSession]      = useState(null);
   const [authReady,    setAuthReady]    = useState(false);
-  const [tab,          setTab]          = useState('config');
+  const [tab,          setTab]          = useState('dashboard');
   const [tableReady,   setTableReady]   = useState(null);
   const [loading,      setLoading]      = useState(true);
   const [filterStatus, setFilterStatus] = useState('');
