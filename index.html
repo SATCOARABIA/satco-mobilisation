@@ -1191,12 +1191,14 @@ function Dashboard({data, loaUsed, setTab, setFilterStatus, hrMobActive=new Set(
 }
 
 // ── Candidates Tab ────────────────────────────────────────────────────────────
-function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSearch, hrMobActive=new Set(), thresholds=[]}) {
+function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSearch, hrMobActive=new Set(), hrMobLocs={}, thresholds=[]}) {
   const [draft,setDraft]   = usePersistentDraft('candidate');
   const [savedDraft, setSavedDraft] = useState(() => { try { const v=localStorage.getItem('satco_mob_draft_candidate'); return v?JSON.parse(v):null; } catch{return null;} });
   const [search,setSearch] = useState(tabSearch||'');
   const [suppF,setSuppF]   = useState('');
-  const [readyF,setReadyF] = useState(''); // ''|'ready'|'not_ready'
+  const [readyF,setReadyF] = useState('');
+  const [desigF,setDesigF] = useState('');
+  const [cicpaLocF,setCicpaLocF] = useState(''); // ''|'ready'|'not_ready'
   const [histPerson, setHistPerson] = useState(null);
   const [docPanel,  setDocPanel]   = useState(null);
   const [satcoEmps, setSatcoEmps]  = useState([]);
@@ -1274,6 +1276,8 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
 
   const filtered = useMemo(()=> candidates.filter(c=>{
     if (suppF && c.supplier_name !== suppF) return false;
+    if (desigF && (c.designation||'').toLowerCase() !== desigF.toLowerCase()) return false;
+    if (cicpaLocF && (c.cicpa_location||'') !== cicpaLocF) return false;
     if (readyF) {
       const docOk = !!c.passport_no && !!c.emirates_id && !!c.visa_no;
       const mob = mobList.filter(m=>m.candidate_id===c.id||m.full_name===c.full_name).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
@@ -1283,9 +1287,13 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
       if (readyF==='not_ready' && allGreen)  return false;
     }
     return matchSearch(c, search);
-  }), [candidates, mobList, search, suppF, readyF]);
+  }), [candidates, mobList, search, suppF, readyF, desigF, cicpaLocF]);
 
-  const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',passport_expiry:'',emirates_id:'',eid_expiry:'',visa_no:'',visa_type:'',visa_location:'',visa_expiry:'',phone:'',email:'',security_pass_no:'',security_pass_expiry:'',adnoc_medical_status:'',adnoc_medical_date:'',remarks:'',active:true}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
+  // Unique values for filter dropdowns
+  const designations  = useMemo(()=>[...new Set(candidates.map(c=>c.designation).filter(Boolean))].sort(),[candidates]);
+  const cicpaLocations= useMemo(()=>[...new Set(candidates.map(c=>c.cicpa_location).filter(Boolean))].sort(),[candidates]);
+
+  const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',passport_expiry:'',emirates_id:'',eid_expiry:'',visa_no:'',visa_type:'',visa_location:'',visa_expiry:'',phone:'',email:'',security_pass_no:'',security_pass_expiry:'',adnoc_medical_status:'',adnoc_medical_date:'',cicpa_location:'',remarks:'',active:true}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
 
   const personHistory = (cand) => {
     const hist = mobList.filter(m => m.candidate_id === cand.id || m.full_name === cand.full_name);
@@ -1363,10 +1371,18 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
 
       <div ref={measureToStk2} className="sticky-toolbar" style={{padding:'8px 14px',display:'flex',gap:'8px',justifyContent:'space-between',flexWrap:'wrap',alignItems:'center'}}>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}}>
-          <input placeholder="Search name, EID, passport, designation, supplier…" value={search} onChange={e=>setSearch(e.target.value)} style={{...S.input,width:'280px'}}/>
-          <select value={suppF} onChange={e=>setSuppF(e.target.value)} style={{...S.input,width:'160px'}}>
+          <input placeholder="Search name, EID, passport…" value={search} onChange={e=>setSearch(e.target.value)} style={{...S.input,width:'200px'}}/>
+          <select value={suppF} onChange={e=>setSuppF(e.target.value)} style={{...S.input,width:'130px'}}>
             <option value="">All suppliers</option>
             {supplierList.map(s=><option key={s} value={s}>{s}</option>)}
+          </select>
+          <select value={desigF} onChange={e=>setDesigF(e.target.value)} style={{...S.input,width:'150px',borderColor:desigF?'#0369a1':undefined,fontWeight:desigF?700:400}}>
+            <option value="">All designations</option>
+            {designations.map(d=><option key={d} value={d}>{d}</option>)}
+          </select>
+          <select value={cicpaLocF} onChange={e=>setCicpaLocF(e.target.value)} style={{...S.input,width:'150px',borderColor:cicpaLocF?'#7c3aed':undefined,fontWeight:cicpaLocF?700:400}}>
+            <option value="">All CICPA locations</option>
+            {cicpaLocations.map(l=><option key={l} value={l}>{l}</option>)}
           </select>
           <select value={readyF} onChange={e=>setReadyF(e.target.value)} style={{...S.input,width:'160px',borderColor:readyF?'#166534':undefined,fontWeight:readyF?700:400}}>
             <option value="">All candidates</option>
@@ -1525,10 +1541,13 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
             </Field>
             <Field label="Visa Expiry"><input type="date" value={draft.visa_expiry||''} onChange={e=>setDraft(d=>({...d,visa_expiry:e.target.value}))} style={S.input}/></Field>
           </Grid>
-          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Security Pass</div>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Security Pass & CICPA</div>
           <Grid cols={3}>
             <Field label="Security Pass No"><input value={draft.security_pass_no||''} onChange={e=>setDraft(d=>({...d,security_pass_no:e.target.value}))} style={S.input}/></Field>
             <Field label="Security Pass Expiry"><input type="date" value={draft.security_pass_expiry||''} onChange={e=>setDraft(d=>({...d,security_pass_expiry:e.target.value}))} style={S.input}/></Field>
+            <Field label="CICPA Location (O&G Field)">
+              <input value={draft.cicpa_location||''} onChange={e=>setDraft(d=>({...d,cicpa_location:e.target.value}))} placeholder="e.g. TAZIZ, ADNOC Ruwais, GASCO…" style={S.input}/>
+            </Field>
           </Grid>
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>ADNOC Medical</div>
           <Grid cols={3}>
@@ -1574,6 +1593,8 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
         <table style={{width:'max-content',minWidth:'100%',borderCollapse:'collapse',tableLayout:'fixed'}}>
           <colgroup>
             <col style={{width:'240px'}}/>{/* Name */}
+            <col style={{width:'80px'}}/>{/* Status */}
+            <col style={{width:'110px'}}/>{/* Current Site */}
             <col style={{width:'130px'}}/>{/* Designation */}
             <col style={{width:'110px'}}/>{/* Supplier */}
             <col style={{width:'75px'}}/>{/* EmpNo */}
@@ -1587,23 +1608,25 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
             <col style={{width:'110px'}}/>{/* Sec Pass No */}
             <col style={{width:'90px'}}/>{/* Sec Pass Exp */}
             <col style={{width:'90px'}}/>{/* ADNOC Med */}
+            <col style={{width:'120px'}}/>{/* CICPA Location */}
             <col style={{width:'100px'}}/>{/* WP */}
             <col style={{width:'110px'}}/>{/* Medical */}
             <col style={{width:'70px'}}/>{/* HSE */}
             <col style={{width:'70px'}}/>{/* H2S */}
-            <col style={{width:'60px'}}/>{/* CICPA */}
+            <col style={{width:'70px'}}/>{/* CICPA */}
             <col style={{width:'100px'}}/>{/* Readiness */}
             <col style={{width:'130px'}}/>{/* Phone */}
             <col style={{width:'170px'}}/>{/* Actions */}
           </colgroup>
           <thead><tr style={{background:'#f8fafc'}}>
             <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,background:'#f8fafc',borderRight:'2px solid #e2e8f0'}}>Name</th>
-            {['Designation','Supplier','Emp No','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa / Emirate','Visa Expiry','Sec Pass','Sec Exp','ADNOC Med','Work Permit','Medical','HSE','H2S','CICPA','Ready?','Phone','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>{h}</th>)}
+            {['Status','Current Site','Designation','Supplier','Emp No','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa / Emirate','Visa Expiry','Sec Pass','Sec Exp','ADNOC Med','CICPA Location','Work Permit','Medical','HSE','H2S','CICPA','Ready?','Phone','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>{h}</th>)}
           </tr></thead>
           <tbody>
             {filtered.length===0&&<tr><td colSpan={15} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
             {filtered.map((c,idx)=>{
               const isOnSite = isOnSiteFn(c);
+              const currentSite = hrMobLocs[c.supplier_emp_no] || '';
               const rowBg = docPanel?.entity?.id===c.id ? '#eff6ff' : idx%2===0 ? '#fff' : '#fafafa';
               // color helpers per doc type
               const ppCol  = docColor('passport',      c.passport_expiry,  thresholds);
@@ -1629,10 +1652,17 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
                 title="Click to view documents · Double-click to edit">
                 {/* Name — frozen */}
                 <td className="frozen-col" style={{...S.td,fontWeight:700,borderLeft:docPanel?.entity?.id===c.id?'3px solid #2563eb':'3px solid transparent',borderRight:'2px solid #e2e8f0',background:rowBg,paddingTop:'4px',paddingBottom:'4px',whiteSpace:'nowrap'}}>
-                  <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
-                    <span style={{color:'#2563eb',cursor:'pointer',textTransform:'uppercase',letterSpacing:'0.2px'}} onClick={e=>{e.stopPropagation();personHistory(c);}}>{c.full_name}</span>
-                    <span style={{flexShrink:0,background:isOnSite?'#dcfce7':'#eff6ff',color:isOnSite?'#166534':'#2563eb',fontSize:'9px',fontWeight:800,padding:'1px 5px',borderRadius:6}}>{isOnSite?'ON SITE':'FREE'}</span>
-                  </div>
+                  <span style={{color:'#2563eb',cursor:'pointer',textTransform:'uppercase',letterSpacing:'0.2px'}} onClick={e=>{e.stopPropagation();personHistory(c);}}>{c.full_name}</span>
+                </td>
+                {/* Status */}
+                <td style={{...S.td,paddingTop:'3px',paddingBottom:'3px',whiteSpace:'nowrap'}}>
+                  <span style={{background:isOnSite?'#dcfce7':'#eff6ff',color:isOnSite?'#166534':'#2563eb',fontSize:'10px',fontWeight:800,padding:'2px 7px',borderRadius:4,display:'inline-block'}}>
+                    {isOnSite?'ON SITE':'FREE'}
+                  </span>
+                </td>
+                {/* Current Site — from HR portal mob_demob */}
+                <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px',color:currentSite?'#0369a1':'#94a3b8',fontWeight:currentSite?600:400}}>
+                  {currentSite||'—'}
                 </td>
                 <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px'}}>{c.designation||'—'}</td>
                 <td style={{...S.td,whiteSpace:'nowrap',fontSize:'12px',fontWeight:c.source==='satco_own'?700:400,color:c.source==='satco_own'?'#2563eb':'inherit',paddingTop:'4px',paddingBottom:'4px'}}>{c.source==='satco_own'?'SATCO Arabia':c.supplier_name||'—'}</td>
@@ -1657,6 +1687,12 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
                 <Cell col={c.security_pass_expiry?secCol:{bg:'#f1f5f9',color:'#94a3b8',icon:'—'}} text={c.security_pass_expiry?fmtDate(c.security_pass_expiry):'—'} title="Security Pass Expiry"/>
                 {/* ADNOC Medical */}
                 <Cell col={adnCol} text={c.adnoc_medical_status||'Not done'} title={`ADNOC Medical: ${fmtDate(c.adnoc_medical_date)}`}/>
+                {/* CICPA Location — which O&G field CICPA this candidate holds */}
+                <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
+                  {c.cicpa_location
+                    ? <span style={{background:'#f0f4ff',color:'#3730a3',fontWeight:700,fontSize:'10px',padding:'2px 7px',borderRadius:4}}>{c.cicpa_location}</span>
+                    : <span style={{color:'#94a3b8',fontSize:'10px'}}>—</span>}
+                </td>
                 {/* ── Mob status from latest mob_register record ── */}
                 {(()=>{
                   const mob = mobList.filter(m=>m.candidate_id===c.id||m.full_name===c.full_name).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
@@ -3113,15 +3149,20 @@ function App() {
 
   const [data, setData] = useState({candidates:[],suppliers:[],requirements:[],loaList:[],mobList:[],locConfigs:[],thresholds:[]});
   const [hrMobActive, setHrMobActive] = useState(new Set()); // SATCO employee IDs currently on site per HR portal
+  const [hrMobLocs,   setHrMobLocs]   = useState({});        // employee_id → current site location
 
   // Load HR portal mob_demob active records at app level
   // mob_demob.employee_id is the HR employee_number (e.g. "SA1015") stored as supplier_emp_no in mob_candidates
   useEffect(()=>{
-    db.from('mob_demob').select('employee_id').is('demobilization_date',null).is('deleted_at',null)
+    db.from('mob_demob').select('employee_id,full_name,location,mobilization_date,demobilization_date').is('demobilization_date',null).is('deleted_at',null)
       .then(({data:rows})=>{
         const ids = new Set();
-        (rows||[]).forEach(r=>{ if(r.employee_id) ids.add(String(r.employee_id)); });
+        const locs = {};
+        (rows||[]).forEach(r=>{
+          if(r.employee_id){ ids.add(String(r.employee_id)); locs[String(r.employee_id)]=r.location||''; }
+        });
         setHrMobActive(ids);
+        setHrMobLocs(locs);
       });
   },[]);
 
@@ -3263,7 +3304,7 @@ function App() {
           {loading&&tableReady===null&&<div style={{padding:'40px',textAlign:'center',color:'#94a3b8'}}>Loading…</div>}
           {!loading&&tableReady&&<>
             {tab==='dashboard'    &&<Dashboard data={data} loaUsed={loaUsed} setTab={t=>{setTab(t);}} setFilterStatus={setFilterStatus} hrMobActive={hrMobActive}/>}
-            {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} tabSearch={tabSearch} hrMobActive={hrMobActive} thresholds={data.thresholds}/>}
+            {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} tabSearch={tabSearch} hrMobActive={hrMobActive} hrMobLocs={hrMobLocs} thresholds={data.thresholds}/>}
             {tab==='requirements' &&<RequirementsTab requirements={data.requirements} onSave={onSave}/>}
             {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
             {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} requirements={data.requirements} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} onRefresh={loadAll} initialStatus={filterStatus} tabSearch={tabSearch}/>}
