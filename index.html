@@ -538,6 +538,16 @@ function exportCSV(rows, filename, cols) {
 }
 
 // ── Draft persistence — survives tab switching ────────────────────────────────
+// Strips _ prefixed UI state (scan progress, errors) before saving so they
+// don't trigger beforeunload or get restored incorrectly on page load.
+function stripUIState(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const clean = {};
+  for (const k of Object.keys(obj)) {
+    if (!k.startsWith('_')) clean[k] = obj[k];
+  }
+  return clean;
+}
 function usePersistentDraft(key) {
   const stored = React.useMemo(() => {
     try { const v = localStorage.getItem('satco_mob_draft_' + key); return v ? JSON.parse(v) : null; } catch { return null; }
@@ -547,9 +557,15 @@ function usePersistentDraft(key) {
     setDraftRaw(prev => {
       const next = typeof valOrFn === 'function' ? valOrFn(prev) : valOrFn;
       try {
-        if (next === null) localStorage.removeItem('satco_mob_draft_' + key);
-        else if (!next.id) localStorage.setItem('satco_mob_draft_' + key, JSON.stringify(next));
-        else localStorage.removeItem('satco_mob_draft_' + key);
+        if (next === null) {
+          localStorage.removeItem('satco_mob_draft_' + key);
+        } else if (!next.id) {
+          // Strip scan/UI state before persisting — prevents beforeunload false triggers
+          const toSave = stripUIState(next);
+          localStorage.setItem('satco_mob_draft_' + key, JSON.stringify(toSave));
+        } else {
+          localStorage.removeItem('satco_mob_draft_' + key);
+        }
       } catch {}
       return next;
     });
@@ -579,35 +595,102 @@ const fileToBase64 = file => new Promise((res,rej)=>{
 });
 
 // Robust MIME detection: checks magic bytes first, then extension, then file.type
-// Solves: browser reporting empty/wrong type for PDFs on Windows/Android
 async function detectMimeType(file) {
-  // Read first 8 bytes for magic number check
   const header = await new Promise(res => {
     const r = new FileReader();
     r.onload = e => res(new Uint8Array(e.target.result));
     r.readAsArrayBuffer(file.slice(0, 8));
   });
-  // PDF magic: %PDF
-  if (header[0]===0x25 && header[1]===0x50 && header[2]===0x44 && header[3]===0x46)
-    return 'application/pdf';
-  // JPEG magic: FF D8 FF
-  if (header[0]===0xFF && header[1]===0xD8 && header[2]===0xFF)
-    return 'image/jpeg';
-  // PNG magic: 89 50 4E 47
-  if (header[0]===0x89 && header[1]===0x50 && header[2]===0x4E && header[3]===0x47)
-    return 'image/png';
-  // WebP: RIFF....WEBP
-  if (header[0]===0x52 && header[1]===0x49 && header[2]===0x46 && header[3]===0x46)
-    return 'image/webp';
-  // Fallback: check extension
+  if (header[0]===0x25 && header[1]===0x50 && header[2]===0x44 && header[3]===0x46) return 'application/pdf';
+  if (header[0]===0xFF && header[1]===0xD8 && header[2]===0xFF) return 'image/jpeg';
+  if (header[0]===0x89 && header[1]===0x50 && header[2]===0x4E && header[3]===0x47) return 'image/png';
+  if (header[0]===0x52 && header[1]===0x49 && header[2]===0x46 && header[3]===0x46) return 'image/webp';
   const ext = (file.name||'').split('.').pop().toLowerCase();
   if (ext==='pdf')  return 'application/pdf';
   if (ext==='jpg'||ext==='jpeg') return 'image/jpeg';
   if (ext==='png')  return 'image/png';
   if (ext==='webp') return 'image/webp';
   if (ext==='gif')  return 'image/gif';
-  // Fallback: use browser-reported type, or jpeg
   return file.type || 'image/jpeg';
+}
+
+// ── Image compressor ──────────────────────────────────────────────────────────
+// Resizes to max 1500px and re-encodes as JPEG 0.78 quality.
+// Keeps payload under ~800KB base64 to avoid proxy 413 errors.
+function compressImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const MAX = 1500, QUALITY = 0.78;
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (w > MAX || h > MAX) {
+        if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+        else       { w = Math.round(w * MAX / h); h = MAX; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      canvas.toBlob(blob => {
+        if (!blob) { resolve(file); return; } // fallback: send original
+        resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' }));
+      }, 'image/jpeg', QUALITY);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); }; // fallback
+    img.src = url;
+  });
+}
+
+// ── PDF → JPEG rasterizer (PDF.js CDN) ───────────────────────────────────────
+// Renders page 1 of a PDF to a canvas and returns it as a compressed JPEG File.
+// This avoids sending large raw PDF bytes through the proxy (413 errors).
+async function pdfToJpeg(file) {
+  // Lazy-load PDF.js from CDN if not already loaded
+  if (!window.pdfjsLib) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+  const ab = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: ab }).promise;
+  const page = await pdf.getPage(1);
+  // Scale so longest side ≈ 1500px
+  const vp0 = page.getViewport({ scale: 1 });
+  const scale = Math.min(1500 / Math.max(vp0.width, vp0.height), 2);
+  const vp = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(vp.width); canvas.height = Math.round(vp.height);
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (!blob) { reject(new Error('PDF rasterization failed')); return; }
+      resolve(new File([blob], file.name.replace(/\.pdf$/i, '_p1.jpg'), { type: 'image/jpeg' }));
+    }, 'image/jpeg', 0.82);
+  });
+}
+
+// ── Prepare file for AI: compress images, rasterize PDFs ─────────────────────
+// Returns { b64, mimeType } ready to send to Claude API
+async function prepareFileForAI(file) {
+  const mime = await detectMimeType(file);
+  if (mime === 'application/pdf') {
+    // Rasterize page 1 → JPEG (avoids large PDF payload)
+    const jpeg = await pdfToJpeg(file);
+    const b64 = await fileToBase64(jpeg);
+    return { b64, mimeType: 'image/jpeg', contentType: 'image' };
+  } else {
+    // Compress image to stay under proxy limit
+    const compressed = await compressImageFile(file);
+    const b64 = await fileToBase64(compressed);
+    const safeType = ['image/jpeg','image/png','image/gif','image/webp'].includes(mime) ? mime : 'image/jpeg';
+    return { b64, mimeType: safeType, contentType: 'image' };
+  }
 }
 
 // Upload a file to Supabase Storage and record in mob_documents
@@ -634,11 +717,8 @@ async function getSignedUrl(filePath) {
 }
 
 // AI scan a document image/PDF for passport/EID/visa data
+// Automatically compresses images and rasterizes PDFs to avoid 413 proxy errors
 async function aiScanDocument(file, docType) {
-  // Detect true MIME type (fixes PDFs reporting as empty or wrong type on some browsers)
-  const mimeType = await detectMimeType(file);
-  const isPDF = mimeType === 'application/pdf';
-
   const prompt = `You are reading an official document image from the oil & gas / construction industry in UAE. Identify the document type and extract ALL visible information.
 
 Return ONLY a valid JSON object with these fields (include only what is visible):
@@ -675,18 +755,9 @@ Return ONLY a valid JSON object with these fields (include only what is visible)
 
 Return ONLY the JSON. No explanation, no markdown, no backticks.`;
 
-  // Build content block — PDFs use type:'document', images use type:'image'
-  let contentBlock;
-  if (isPDF) {
-    // PDF: send as base64 document — Claude reads all pages automatically
-    const b64 = await fileToBase64(file);
-    contentBlock = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } };
-  } else {
-    // Image (JPEG, PNG, WebP, GIF)
-    const b64 = await fileToBase64(file);
-    const safeType = ['image/jpeg','image/png','image/gif','image/webp'].includes(mimeType) ? mimeType : 'image/jpeg';
-    contentBlock = { type: 'image', source: { type: 'base64', media_type: safeType, data: b64 } };
-  }
+  // Compress/rasterize — keeps payload small, fixes 413 errors
+  const { b64, mimeType, contentType } = await prepareFileForAI(file);
+  const contentBlock = { type: contentType, source: { type: 'base64', media_type: mimeType, data: b64 } };
 
   const res = await fetch(CLAUDE_PROXY, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -703,7 +774,6 @@ Return ONLY the JSON. No explanation, no markdown, no backticks.`;
   }
 
   const data = await res.json();
-  // Handle API-level errors returned in the body (e.g. overloaded, invalid request)
   if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
   const text = (data.content||[]).map(c=>c.text||'').join('').trim();
   const match = text.match(/\{[\s\S]*\}/);
@@ -1971,8 +2041,10 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
     if (readyF.size) {
       const docOk = !!c.passport_no && !!c.emirates_id && !!c.visa_no;
       const mob = mobList.filter(m=>m.candidate_id===c.id||m.full_name===c.full_name).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
-      const mobOk = !!mob?.medical_done && !!mob?.hse_passport_done && !!mob?.h2s_done && !!mob?.cicpa_pass_no && (c.source==='satco_own' || !!mob?.wp_approved_date);
-      const allGreen = docOk && mobOk && !!c.adnoc_medical_status && c.adnoc_medical_status!=='Unfit';
+      const cicpaCandOk = c.cicpa_status==='active' && !!c.security_pass_no;
+      const adnocCandOk = !!c.adnoc_medical_status && c.adnoc_medical_status!=='Unfit';
+      const mobOk = !!mob?.hse_passport_done && !!mob?.h2s_done && cicpaCandOk && adnocCandOk && (c.source==='satco_own' || !!mob?.wp_approved_date);
+      const allGreen = docOk && mobOk;
       if (readyF.has('ready')     && !allGreen) return false;
       if (readyF.has('not_ready') && allGreen)  return false;
     }
@@ -2203,7 +2275,7 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
             <div style={{fontWeight:800,fontSize:'13px',color:'#b8972a',marginBottom:'4px'}}>✨ Scan All Documents — AI fills the form automatically</div>
             <div style={{fontSize:'11px',color:'#64748b',marginBottom:'10px'}}>Upload passport, Emirates ID, visa, medical — all at once. AI reads each and fills the matching fields.</div>
             <label style={{display:'inline-flex',alignItems:'center',gap:'10px',padding:'10px 20px',background:'#b8972a',color:'#fff',borderRadius:'6px',cursor:'pointer',fontWeight:700,fontSize:'13px',whiteSpace:'nowrap'}}>
-              {draft._scanning ? '⏳ Reading documents…' : '📂 Upload Documents (select multiple)'}
+              {draft._scanning ? (draft._scanStatus||'⏳ Reading documents…') : '📂 Upload Documents (select multiple)'}
               <input type="file" accept="image/*,application/pdf" multiple style={{display:'none'}}
                 onChange={async e=>{
                   const files=Array.from(e.target.files||[]); if(!files.length)return;
@@ -2232,6 +2304,8 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
                   };
                   try {
                     for (const file of files) {
+                      const isPdf = (await detectMimeType(file))==='application/pdf';
+                      setDraft(d=>({...d,_scanStatus:`${isPdf?'🔄 Processing PDF':'📷 Reading'}: ${file.name}…`}));
                       const result = await aiScanDocument(file, 'other');
                       const detectedType = (result.doc_type || 'unknown').toLowerCase();
                       // Map standard document fields — never overwrite existing values
@@ -2467,7 +2541,6 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
             <col style={{width:'90px'}}/>{/* ADNOC Med */}
             <col style={{width:'120px'}}/>{/* CICPA Location */}
             <col style={{width:'100px'}}/>{/* WP */}
-            <col style={{width:'110px'}}/>{/* Medical */}
             <col style={{width:'70px'}}/>{/* HSE */}
             <col style={{width:'70px'}}/>{/* H2S */}
             <col style={{width:'70px'}}/>{/* CICPA */}
@@ -2477,10 +2550,10 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
           </colgroup>
           <thead><tr style={{background:'#f8fafc'}}>
             <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,background:'#f8fafc',borderRight:'2px solid #e2e8f0'}}>Name</th>
-            {['Status','Current Site','Designation','Supplier','Emp No','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa Emirate','Sec Pass','Sec Exp','ADNOC Med','CICPA Location','Work Permit','Medical','HSE','H2S','CICPA','Ready?','Phone','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>{h}</th>)}
+            {['Status','Current Site','Designation','Supplier','Emp No','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa Emirate','Sec Pass','Sec Exp','ADNOC Med','CICPA Location','Work Permit','HSE','H2S','CICPA','Ready?','Phone','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>{h}</th>)}
           </tr></thead>
           <tbody>
-            {filtered.length===0&&<tr><td colSpan={24} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
+            {filtered.length===0&&<tr><td colSpan={23} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
             {filtered.map((c,idx)=>{
               const isOnSite = isOnSiteFn(c);
               const currentSite = hrMobLocs[c.supplier_emp_no] || '';
@@ -2550,14 +2623,16 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
                   const isSatco = c.source==='satco_own';
                   const T = MobTick;
                   const wpDone  = !!mob?.wp_approved_date;
-                  const medDone = !!mob?.medical_done && mob?.medical_result!=='Unfit';
                   const hseDone = !!mob?.hse_passport_done;
                   const h2sDone = !!mob?.h2s_done;
-                  const cicpa   = !!mob?.cicpa_pass_no;
+                  // CICPA: use candidate's own record (security_pass_no + cicpa_status)
+                  // This shows correctly even before a mob_register record exists
+                  const cicpaDone = c.cicpa_status==='active' && !!c.security_pass_no;
+                  const adnocOk   = !!c.adnoc_medical_status && c.adnoc_medical_status!=='Unfit';
                   // overall readiness
                   const docOk = !!c.passport_no && !!c.emirates_id && !!c.visa_no;
-                  const mobOk = medDone && hseDone && h2sDone && cicpa && (isSatco || wpDone);
-                  const allGreen = docOk && mobOk && !!c.adnoc_medical_status && c.adnoc_medical_status!=='Unfit';
+                  const mobOk = hseDone && h2sDone && cicpaDone && adnocOk && (isSatco || wpDone);
+                  const allGreen = docOk && mobOk;
                   const readyCol = c.cicpa_status==='confiscated'
                     ? {bg:'#fef3c7',color:'#b45309',icon:'⚠'}
                     : allGreen
@@ -2569,10 +2644,9 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
                     {isSatco
                       ? <td style={{...S.td,paddingTop:'3px',paddingBottom:'3px'}}><span style={{background:'#f1f5f9',color:'#94a3b8',fontSize:'10px',padding:'2px 6px',borderRadius:4}}>N/A</span></td>
                       : <T done={wpDone} label="WP" date={mob?.wp_approved_date}/>}
-                    <T done={medDone} label={mob?.medical_result||'Med'} date={mob?.medical_date}/>
                     <T done={hseDone} label="HSE" optional={!mob}/>
                     <T done={h2sDone} label="H2S" optional={!mob}/>
-                    <T done={cicpa}   label="CICPA" optional={!mob}/>
+                    <T done={cicpaDone} label="CICPA" date={cicpaDone&&c.security_pass_expiry?c.security_pass_expiry:undefined} optional={false}/>
                     <td style={{...S.td,paddingTop:'3px',paddingBottom:'3px'}}>
                       <span style={{background:readyCol.bg,color:readyCol.color,fontWeight:800,fontSize:'11px',padding:'2px 8px',borderRadius:4,cursor:'pointer',display:'inline-block'}}
                         onClick={e=>{e.stopPropagation();if(allGreen)onMobilise(c);}}>
@@ -2672,12 +2746,8 @@ function RequirementsTab({requirements, onSave}) {
                     const file=e.target.files?.[0];if(!file)return;
                     setDraft(d=>({...d,_poScanning:true,_poScanErr:''}));
                     try{
-                      const mime=await detectMimeType(file);
-                      const b64=await fileToBase64(file);
-                      const isPDF=mime==='application/pdf';
-                      const contentBlock=isPDF
-                        ?{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}}
-                        :{type:'image',source:{type:'base64',media_type:(['image/jpeg','image/png','image/gif','image/webp'].includes(mime)?mime:'image/jpeg'),data:b64}};
+                      const {b64,mimeType,contentType}=await prepareFileForAI(file);
+                      const contentBlock={type:contentType,source:{type:'base64',media_type:mimeType,data:b64}};
                       const res=await fetch(CLAUDE_PROXY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,messages:[{role:'user',content:[contentBlock,{type:'text',text:'Extract from this Purchase Order. Return ONLY valid JSON: {"customer_name":"","po_no":"","po_date":"YYYY-MM-DD","location":"","positions":[{"designation":"","qty":0}],"notes":""}'}]}]})});
                       if(!res.ok){let m=`API error ${res.status}`;try{const e=await res.json();m+=': '+(e?.error?.message||JSON.stringify(e));}catch{}throw new Error(m);}
                       const data=await res.json();
@@ -4061,10 +4131,16 @@ function App() {
       });
   },[]);
 
-  // Warn browser tab close if unsaved draft exists
+  // Warn browser tab close if unsaved draft with real data exists
+  // Only fires if draft has full_name filled — avoids false trigger during scan
   useEffect(()=>{
     const handler = e => {
-      if (localStorage.getItem('satco_mob_draft_candidate') || localStorage.getItem('satco_mob_draft_mobilisation')) {
+      const candRaw = localStorage.getItem('satco_mob_draft_candidate');
+      const mobRaw  = localStorage.getItem('satco_mob_draft_mobilisation');
+      let hasDraft = false;
+      try { if (candRaw) { const d=JSON.parse(candRaw); if(d.full_name) hasDraft=true; } } catch{}
+      try { if (mobRaw)  { const d=JSON.parse(mobRaw);  if(d.full_name) hasDraft=true; } } catch{}
+      if (hasDraft) {
         e.preventDefault(); e.returnValue = 'You have an unsaved form. Are you sure you want to leave?';
       }
     };
