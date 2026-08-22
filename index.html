@@ -67,6 +67,47 @@
   @media (max-width: 768px) {
     .drag-scroll::before { content: '← Swipe to scroll →'; }
   }
+
+  /* ── Multi-select dropdown (Excel-style) ─────────────────────────────────── */
+  .ms-wrap { position: relative; display: inline-block; }
+  .ms-btn {
+    display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
+    height: 32px; padding: 0 10px; border: 1px solid #cbd5e1; border-radius: 6px;
+    background: #fff; font-size: 13px; color: #0f172a; white-space: nowrap;
+    transition: border-color .15s;
+  }
+  .ms-btn:hover { border-color: #94a3b8; }
+  .ms-btn.active { border-color: #0369a1; font-weight: 700; background: #eff6ff; }
+  .ms-btn .ms-caret { margin-left: auto; font-size: 10px; color: #94a3b8; }
+  .ms-dropdown {
+    position: absolute; top: calc(100% + 4px); left: 0; min-width: 200px; max-width: 280px;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.12); z-index: 200; overflow: hidden;
+  }
+  .ms-search {
+    width: 100%; padding: 7px 10px; border: none; border-bottom: 1px solid #f1f5f9;
+    font-size: 12px; outline: none; background: #f8fafc;
+  }
+  .ms-search:focus { background: #fff; border-bottom-color: #b8972a; }
+  .ms-list { max-height: 240px; overflow-y: auto; }
+  .ms-item {
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    font-size: 13px; cursor: pointer; transition: background .1s;
+  }
+  .ms-item:hover { background: #f8fafc; }
+  .ms-item input[type=checkbox] { accent-color: #0369a1; width: 14px; height: 14px; cursor: pointer; flex-shrink: 0; }
+  .ms-item label { cursor: pointer; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ms-footer {
+    display: flex; gap: 6px; padding: 6px 10px; border-top: 1px solid #f1f5f9;
+    background: #f8fafc;
+  }
+  .ms-footer button {
+    flex: 1; padding: 4px 0; font-size: 11px; font-weight: 700; border: 1px solid #cbd5e1;
+    border-radius: 4px; background: #fff; cursor: pointer; color: #374151;
+  }
+  .ms-footer button:hover { background: #f1f5f9; }
+  .ms-footer button.ms-apply { background: #0369a1; color: #fff; border-color: #0369a1; }
+  .ms-footer button.ms-apply:hover { background: #0284c7; }
 </style>
 </head>
 <body>
@@ -332,6 +373,154 @@ const matchSearch = (obj, q) => {
   const lq = q.toLowerCase();
   return SEARCH_FIELDS.some(f => (obj[f]||'').toLowerCase().includes(lq));
 };
+
+// ── Normalise designation for grouping (case-insensitive, trim) ───────────────
+function normalizeDesig(d) { return (d||'').trim().toLowerCase(); }
+function canonicalDesig(d) {
+  // Return a clean Title Case version for display in the filter
+  return (d||'').trim().replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// ── Canonical English for CICPA location (strips Arabic / mixed values) ───────
+function canonicalCicpa(val) {
+  if (!val) return '';
+  // If string contains Arabic characters, map known values to English
+  const arabicRe = /[\u0600-\u06FF]/;
+  if (!arabicRe.test(val)) return val; // already English
+  const map = {
+    'ماروك الرويس الصناعية': 'Mabroug Al Ruwais Industrial',
+    'م.بروج الرويس الصناعية': 'Mabroug Al Ruwais Industrial',
+    'مبروج الرويس الصناعية': 'Mabroug Al Ruwais Industrial',
+  };
+  // Try direct map lookup
+  const trimmed = val.trim();
+  for (const [ar, en] of Object.entries(map)) {
+    if (trimmed.includes(ar) || ar.includes(trimmed)) return en;
+  }
+  // Fallback: extract any Latin portions
+  const latin = val.match(/[A-Za-z][A-Za-z0-9 \-]*/g);
+  if (latin && latin.join('').trim().length > 3) return latin.join(' ').trim();
+  return 'Mabroug Al Ruwais Industrial'; // last resort for known site
+}
+
+// ── Excel-style multi-select dropdown ────────────────────────────────────────
+// options: [{value, label, count?}]
+// selected: Set of values
+// onChange: (newSet) => void
+// placeholder: string shown when nothing selected
+function MultiSelect({ options, selected, onChange, placeholder, accentColor='#0369a1', width='150px' }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [pending, setPending] = useState(null); // working copy while open
+  const wrapRef = useRef(null);
+
+  // Open: snapshot current selection into pending
+  const openDropdown = () => {
+    setPending(new Set(selected));
+    setSearch('');
+    setOpen(true);
+  };
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = e => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+        setOpen(false);
+        setPending(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const cur = pending || selected;
+  const filtered = options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()));
+  const allChecked = filtered.length > 0 && filtered.every(o => cur.has(o.value));
+
+  const toggle = (val) => {
+    const next = new Set(cur);
+    if (next.has(val)) next.delete(val); else next.add(val);
+    setPending(next);
+  };
+
+  const toggleAll = () => {
+    if (allChecked) {
+      // Deselect all filtered
+      const next = new Set(cur);
+      filtered.forEach(o => next.delete(o.value));
+      setPending(next);
+    } else {
+      // Select all filtered
+      const next = new Set(cur);
+      filtered.forEach(o => next.add(o.value));
+      setPending(next);
+    }
+  };
+
+  const apply = () => {
+    onChange(pending || new Set());
+    setOpen(false);
+    setPending(null);
+  };
+
+  const clear = () => {
+    setPending(new Set());
+  };
+
+  const isActive = selected.size > 0;
+  const label = isActive
+    ? (selected.size === 1
+        ? [...selected][0]
+        : `${placeholder} (${selected.size})`)
+    : placeholder;
+
+  return (
+    <div className="ms-wrap" ref={wrapRef} style={{width}}>
+      <div
+        className={`ms-btn${isActive?' active':''}`}
+        style={{width:'100%', borderColor: isActive ? accentColor : undefined, color: isActive ? accentColor : undefined}}
+        onClick={openDropdown}
+      >
+        <span style={{overflow:'hidden',textOverflow:'ellipsis',flex:1}}>{label}</span>
+        <span className="ms-caret">▼</span>
+      </div>
+      {open && (
+        <div className="ms-dropdown" style={{minWidth: width}}>
+          <input
+            className="ms-search"
+            placeholder="Search…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            autoFocus
+          />
+          <div className="ms-list">
+            {/* Select All row */}
+            {filtered.length > 1 && (
+              <div className="ms-item" onClick={toggleAll} style={{borderBottom:'1px solid #f1f5f9',fontWeight:700}}>
+                <input type="checkbox" readOnly checked={allChecked} />
+                <label>(Select All)</label>
+              </div>
+            )}
+            {filtered.length === 0 && (
+              <div style={{padding:'10px',fontSize:'12px',color:'#94a3b8',textAlign:'center'}}>No matches</div>
+            )}
+            {filtered.map(o => (
+              <div key={o.value} className="ms-item" onClick={() => toggle(o.value)}>
+                <input type="checkbox" readOnly checked={cur.has(o.value)} />
+                <label title={o.label}>{o.label}{o.count!=null?<span style={{color:'#94a3b8',fontSize:'11px',marginLeft:'4px'}}>({o.count})</span>:null}</label>
+              </div>
+            ))}
+          </div>
+          <div className="ms-footer">
+            <button onClick={clear}>Clear</button>
+            <button className="ms-apply" onClick={apply}>Apply</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function exportCSV(rows, filename, cols) {
   const hdr = cols.map(c => c.label);
@@ -1336,7 +1525,7 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
         'Passport No':c.passport_no||'', 'Passport Expiry':c.passport_expiry||'',
         'Emirates ID':c.emirates_id||'', 'EID Expiry':c.eid_expiry||'',
         'ADNOC Medical':c.adnoc_medical_status||'', 'CICPA Status':c.cicpa_status||'',
-        'CICPA Location':c.cicpa_location||'', 'Plan Status':status, 'Missing':missing,
+        'CICPA Location':canonicalCicpa(c.cicpa_location)||'', 'Plan Status':status, 'Missing':missing,
       };
     });
     const ws = XLSX.utils.json_to_sheet(toExport);
@@ -1642,10 +1831,10 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
   const [draft,setDraft]   = usePersistentDraft('candidate');
   const [savedDraft, setSavedDraft] = useState(() => { try { const v=localStorage.getItem('satco_mob_draft_candidate'); return v?JSON.parse(v):null; } catch{return null;} });
   const [search,setSearch] = useState(tabSearch||'');
-  const [suppF,setSuppF]   = useState('');
-  const [readyF,setReadyF] = useState('');
-  const [desigF,setDesigF] = useState('');
-  const [cicpaLocF,setCicpaLocF] = useState('');
+  const [suppF,setSuppF]   = useState(new Set());
+  const [readyF,setReadyF] = useState(new Set());
+  const [desigF,setDesigF] = useState(new Set());
+  const [cicpaLocF,setCicpaLocF] = useState(new Set());
   const [histPerson, setHistPerson] = useState(null);
   const [docPanel,  setDocPanel]   = useState(null);
   const [satcoEmps, setSatcoEmps]  = useState([]);
@@ -1723,23 +1912,55 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
   const supplierList  = useMemo(()=>[...new Set(candidates.map(c=>c.supplier_name).filter(Boolean))].sort(),[candidates]);
 
   const filtered = useMemo(()=> candidates.filter(c=>{
-    if (suppF && c.supplier_name !== suppF) return false;
-    if (desigF && (c.designation||'').toLowerCase() !== desigF.toLowerCase()) return false;
-    if (cicpaLocF && (c.cicpa_location||'') !== cicpaLocF) return false;
-    if (readyF) {
+    if (suppF.size && !suppF.has(c.supplier_name||'')) return false;
+    if (desigF.size && !desigF.has(normalizeDesig(c.designation))) return false;
+    if (cicpaLocF.size && !cicpaLocF.has(canonicalCicpa(c.cicpa_location))) return false;
+    if (readyF.size) {
       const docOk = !!c.passport_no && !!c.emirates_id && !!c.visa_no;
       const mob = mobList.filter(m=>m.candidate_id===c.id||m.full_name===c.full_name).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
       const mobOk = !!mob?.medical_done && !!mob?.hse_passport_done && !!mob?.h2s_done && !!mob?.cicpa_pass_no && (c.source==='satco_own' || !!mob?.wp_approved_date);
       const allGreen = docOk && mobOk && !!c.adnoc_medical_status && c.adnoc_medical_status!=='Unfit';
-      if (readyF==='ready'     && !allGreen) return false;
-      if (readyF==='not_ready' && allGreen)  return false;
+      if (readyF.has('ready')     && !allGreen) return false;
+      if (readyF.has('not_ready') && allGreen)  return false;
     }
     return matchSearch(c, search);
   }), [candidates, mobList, search, suppF, readyF, desigF, cicpaLocF]);
 
-  // Unique values for filter dropdowns
-  const designations  = useMemo(()=>[...new Set(candidates.map(c=>c.designation).filter(Boolean))].sort(),[candidates]);
-  const cicpaLocations= useMemo(()=>[...new Set(candidates.map(c=>c.cicpa_location).filter(Boolean))].sort(),[candidates]);
+  // Unique values for filter dropdowns — normalized & deduplicated
+  const designationOpts = useMemo(() => {
+    // Group by normalized key, keep best canonical label (longest/most capitalized)
+    const map = new Map(); // normalizedKey -> {label, count}
+    candidates.forEach(c => {
+      if (!c.designation) return;
+      const key = normalizeDesig(c.designation);
+      if (!map.has(key)) map.set(key, { label: canonicalDesig(c.designation), count: 0 });
+      map.get(key).count++;
+    });
+    return [...map.entries()]
+      .sort((a, b) => a[1].label.localeCompare(b[1].label))
+      .map(([value, { label, count }]) => ({ value, label, count }));
+  }, [candidates]);
+
+  const cicpaLocationOpts = useMemo(() => {
+    const map = new Map(); // canonicalEnglish -> count
+    candidates.forEach(c => {
+      if (!c.cicpa_location) return;
+      const key = canonicalCicpa(c.cicpa_location);
+      map.set(key, (map.get(key) || 0) + 1);
+    });
+    return [...map.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([value, count]) => ({ value, label: value, count }));
+  }, [candidates]);
+
+  const supplierOpts = useMemo(() => {
+    const map = new Map();
+    candidates.forEach(c => {
+      if (!c.supplier_name) return;
+      map.set(c.supplier_name, (map.get(c.supplier_name)||0)+1);
+    });
+    return [...map.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([v,cnt])=>({value:v,label:v,count:cnt}));
+  }, [candidates]);
 
   const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',passport_expiry:'',emirates_id:'',eid_expiry:'',visa_no:'',visa_type:'',visa_location:'',visa_expiry:'',phone:'',email:'',security_pass_no:'',security_pass_expiry:'',adnoc_medical_status:'',adnoc_medical_date:'',cicpa_location:'',cicpa_status:'not_issued',cicpa_remarks:'',remarks:'',active:true}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
 
@@ -1877,23 +2098,41 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
       <div ref={measureToStk2} className="sticky-toolbar" style={{padding:'8px 14px',display:'flex',gap:'8px',justifyContent:'space-between',flexWrap:'wrap',alignItems:'center'}}>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}}>
           <input placeholder="Search name, EID, passport…" value={search} onChange={e=>setSearch(e.target.value)} style={{...S.input,width:'200px'}}/>
-          <select value={suppF} onChange={e=>setSuppF(e.target.value)} style={{...S.input,width:'130px'}}>
-            <option value="">All suppliers</option>
-            {supplierList.map(s=><option key={s} value={s}>{s}</option>)}
-          </select>
-          <select value={desigF} onChange={e=>setDesigF(e.target.value)} style={{...S.input,width:'150px',borderColor:desigF?'#0369a1':undefined,fontWeight:desigF?700:400}}>
-            <option value="">All designations</option>
-            {designations.map(d=><option key={d} value={d}>{d}</option>)}
-          </select>
-          <select value={cicpaLocF} onChange={e=>setCicpaLocF(e.target.value)} style={{...S.input,width:'150px',borderColor:cicpaLocF?'#7c3aed':undefined,fontWeight:cicpaLocF?700:400}}>
-            <option value="">All CICPA locations</option>
-            {cicpaLocations.map(l=><option key={l} value={l}>{l}</option>)}
-          </select>
-          <select value={readyF} onChange={e=>setReadyF(e.target.value)} style={{...S.input,width:'160px',borderColor:readyF?'#166534':undefined,fontWeight:readyF?700:400}}>
-            <option value="">All candidates</option>
-            <option value="ready">✅ All green — ready to mob</option>
-            <option value="not_ready">⚠ Not yet ready</option>
-          </select>
+          <MultiSelect
+            options={supplierOpts}
+            selected={suppF}
+            onChange={setSuppF}
+            placeholder="All suppliers"
+            accentColor="#64748b"
+            width="140px"
+          />
+          <MultiSelect
+            options={designationOpts}
+            selected={desigF}
+            onChange={setDesigF}
+            placeholder="All designations"
+            accentColor="#0369a1"
+            width="155px"
+          />
+          <MultiSelect
+            options={cicpaLocationOpts}
+            selected={cicpaLocF}
+            onChange={setCicpaLocF}
+            placeholder="All CICPA locations"
+            accentColor="#7c3aed"
+            width="165px"
+          />
+          <MultiSelect
+            options={[
+              {value:'ready',     label:'✅ Ready to mobilise'},
+              {value:'not_ready', label:'⚠ Not yet ready'},
+            ]}
+            selected={readyF}
+            onChange={setReadyF}
+            placeholder="All candidates"
+            accentColor="#166534"
+            width="155px"
+          />
           <span style={{fontSize:'12px',color:'#64748b'}}>{filtered.length} people</span>
         </div>
         <div style={{display:'flex',gap:'8px'}}>
@@ -2247,7 +2486,7 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
                   {c.cicpa_status==='confiscated'
                     ? <span style={{background:'#fef3c7',color:'#92400e',fontWeight:800,fontSize:'10px',padding:'2px 7px',borderRadius:4}} title={c.cicpa_remarks||'Confiscated'}>⚠ CONFISCATED</span>
                     : c.cicpa_status==='active' && c.cicpa_location
-                      ? <span style={{background:'#f0f4ff',color:'#3730a3',fontWeight:700,fontSize:'10px',padding:'2px 7px',borderRadius:4}}>✓ {c.cicpa_location}</span>
+                      ? <span style={{background:'#f0f4ff',color:'#3730a3',fontWeight:700,fontSize:'10px',padding:'2px 7px',borderRadius:4}}>✓ {canonicalCicpa(c.cicpa_location)}</span>
                       : c.cicpa_status==='expired'
                         ? <span style={{background:'#fef3c7',color:'#b45309',fontWeight:700,fontSize:'10px',padding:'2px 7px',borderRadius:4}}>⚠ Expired</span>
                         : <span style={{color:'#94a3b8',fontSize:'10px'}}>—</span>}
@@ -2642,12 +2881,12 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
   const [readinessRow, setReadinessRow] = useState(null);
   const clickTimer = useRef(null);
   const [search,setSearch]   = useState(tabSearch||'');
-  const [fCust,setFCust]     = useState('');
-  const [fLoc,setFLoc]       = useState('');
-  const [fStatus,setFStatus] = useState(initialStatus||'');
-  const [fReady,setFReady]   = useState(''); // 'ready'|'not_ready'|''
+  const [fCust,setFCust]     = useState(new Set());
+  const [fLoc,setFLoc]       = useState(new Set());
+  const [fStatus,setFStatus] = useState(()=>initialStatus?new Set([initialStatus]):new Set());
+  const [fReady,setFReady]   = useState(new Set());
 
-  useEffect(()=>{ if(initialStatus) setFStatus(initialStatus); },[initialStatus]);
+  useEffect(()=>{ if(initialStatus) setFStatus(new Set([initialStatus])); },[initialStatus]);
   useEffect(()=>{ if(tabSearch) setSearch(tabSearch); },[tabSearch]);
 
   // ── Compute readiness for one mobilisation record ────────────────────────
@@ -2747,14 +2986,17 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
   const customers = useMemo(()=>[...new Set(mobList.map(m=>m.customer_name).filter(Boolean))].sort(),[mobList]);
   const locations = useMemo(()=>[...new Set(mobList.map(m=>m.location).filter(Boolean))].sort(),[mobList]);
 
+  const customerOpts = useMemo(()=>customers.map(c=>({value:c,label:c})),[customers]);
+  const locationOpts  = useMemo(()=>locations.map(l=>({value:l,label:l})),[locations]);
+
   const filtered = useMemo(()=> mobList.filter(m=>{
-    if (fCust && m.customer_name!==fCust) return false;
-    if (fLoc  && m.location!==fLoc)      return false;
-    if (fStatus && m.status!==fStatus)   return false;
-    if (fReady) {
+    if (fCust.size   && !fCust.has(m.customer_name||''))  return false;
+    if (fLoc.size    && !fLoc.has(m.location||''))         return false;
+    if (fStatus.size && !fStatus.has(m.status||''))        return false;
+    if (fReady.size) {
       const rd = computeReadiness(m);
-      if (fReady==='ready'     && !rd.readyForSubmission) return false;
-      if (fReady==='not_ready' && rd.readyForSubmission)  return false;
+      if (fReady.has('ready')     && !rd.readyForSubmission) return false;
+      if (fReady.has('not_ready') && rd.readyForSubmission)  return false;
     }
     return matchSearch(m, search);
   }), [mobList, search, fCust, fLoc, fStatus, fReady, computeReadiness]);
@@ -2937,35 +3179,55 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
       <div ref={measureToStk2} className="sticky-toolbar" style={{padding:'8px 14px',display:'flex',gap:'8px',justifyContent:'space-between',flexWrap:'wrap',alignItems:'center'}}>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}}>
           <input placeholder="Search name, EID, passport, CICPA…" value={search} onChange={e=>setSearch(e.target.value)} style={{...S.input,width:'200px'}}/>
-          <select value={fCust} onChange={e=>setFCust(e.target.value)} style={{...S.input,width:'130px'}}>
-            <option value="">All customers</option>
-            {customers.map(c=><option key={c} value={c}>{c}</option>)}
-          </select>
-          <select value={fLoc} onChange={e=>setFLoc(e.target.value)} style={{...S.input,width:'120px'}}>
-            <option value="">All locations</option>
-            {locations.map(l=><option key={l} value={l}>{l}</option>)}
-          </select>
-          <select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={{...S.input,width:'115px'}}>
-            <option value="">All statuses</option>
-            <option value="pending">Pending</option>
-            <option value="mobilised">Mobilised</option>
-            <option value="demobilised">Demobilised</option>
-            <option value="rejected">Rejected</option>
-          </select>
-          <select value={fReady} onChange={e=>setFReady(e.target.value)} style={{...S.input,width:'130px',borderColor:fReady?'#b8972a':undefined,fontWeight:fReady?700:400}}>
-            <option value="">All readiness</option>
-            <option value="ready">✅ Ready only</option>
-            <option value="not_ready">❌ Not ready</option>
-          </select>
+          <MultiSelect
+            options={customerOpts}
+            selected={fCust}
+            onChange={setFCust}
+            placeholder="All customers"
+            accentColor="#64748b"
+            width="135px"
+          />
+          <MultiSelect
+            options={locationOpts}
+            selected={fLoc}
+            onChange={setFLoc}
+            placeholder="All locations"
+            accentColor="#0369a1"
+            width="125px"
+          />
+          <MultiSelect
+            options={[
+              {value:'pending',      label:'Pending'},
+              {value:'mobilised',    label:'Mobilised'},
+              {value:'demobilised',  label:'Demobilised'},
+              {value:'rejected',     label:'Rejected'},
+            ]}
+            selected={fStatus}
+            onChange={setFStatus}
+            placeholder="All statuses"
+            accentColor="#b45309"
+            width="120px"
+          />
+          <MultiSelect
+            options={[
+              {value:'ready',     label:'✅ Ready only'},
+              {value:'not_ready', label:'❌ Not ready'},
+            ]}
+            selected={fReady}
+            onChange={setFReady}
+            placeholder="All readiness"
+            accentColor="#b8972a"
+            width="135px"
+          />
           <span style={{fontSize:'12px',color:'#64748b',whiteSpace:'nowrap'}}>{filtered.length} records</span>
         </div>
         <div style={{display:'flex',gap:'8px'}}>
           <button style={{...S.btnGold,background:'#166534'}} onClick={()=>{
             const readyOnly=filtered.filter(r=>computeReadiness(r).readyForSubmission);
             if(!readyOnly.length)return alert('No ready personnel in current filter. Check location config for required certs.');
-            exportCSV(readyOnly,`SATCO_Ready_${fCust||'All'}_${fLoc||'AllLoc'}`,exportCols);
+            exportCSV(readyOnly,`SATCO_Ready_${fCust.size?[...fCust].join('-'):'All'}_${fLoc.size?[...fLoc].join('-'):'AllLoc'}`,exportCols);
           }}>✅ Export Ready</button>
-          <button style={S.btnGold} onClick={()=>exportCSV(filtered,`SATCO_Mob_${fCust||'All'}_${fLoc||'AllLoc'}`,exportCols)}>⬇ Export All</button>
+          <button style={S.btnGold} onClick={()=>exportCSV(filtered,`SATCO_Mob_${fCust.size?[...fCust].join('-'):'All'}_${fLoc.size?[...fLoc].join('-'):'AllLoc'}`,exportCols)}>⬇ Export All</button>
           <button style={{...S.btnGold,background:'#0f172a',color:'#c49a28',fontWeight:700,fontSize:'12px'}} onClick={()=>{
             const XLSX=window.XLSX;
             if(!XLSX)return alert('SheetJS not loaded — refresh page.');
@@ -2985,7 +3247,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
             ws['!cols']=[{wch:6},{wch:22},{wch:14},{wch:26},{wch:16},{wch:12},{wch:14},{wch:22},{wch:18},{wch:14},{wch:14},{wch:28},{wch:16},{wch:16},{wch:16},{wch:18}];
             const wb2=XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb2,ws,'Mob Submission List');
-            XLSX.writeFile(wb2,`SATCO_ClientList_${(fCust||'All').replace(/\s+/g,'_')}_${todayStr()}.xlsx`);
+            XLSX.writeFile(wb2,`SATCO_ClientList_${fCust.size?[...fCust].join('-').replace(/\s+/g,'_'):'All'}_${todayStr()}.xlsx`);
           }}>📊 Client Excel</button>
           <button style={S.btnPri} onClick={blank}>+ Add Person</button>
         </div>
@@ -3312,8 +3574,8 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
 // ── Letters Tab ───────────────────────────────────────────────────────────────
 function LettersTab({mobList}) {
   const [letterType,setLetterType] = useState('client');
-  const [fCust,setFCust]   = useState('');
-  const [fLoc,setFLoc]     = useState('');
+  const [fCust,setFCust]   = useState(new Set());
+  const [fLoc,setFLoc]     = useState(new Set());
   const [search,setSearch] = useState('');
   const [selected,setSelected] = useState(new Set());
   const [subject,setSubject]   = useState('');
@@ -3322,14 +3584,16 @@ function LettersTab({mobList}) {
 
   const customers=[...new Set(mobList.map(m=>m.customer_name).filter(Boolean))].sort();
   const locations=[...new Set(mobList.map(m=>m.location).filter(Boolean))].sort();
+  const customerOptsL = useMemo(()=>customers.map(c=>({value:c,label:c})),[customers]);
+  const locationOptsL = useMemo(()=>locations.map(l=>({value:l,label:l})),[locations]);
 
   const pool = useMemo(()=>{
     const base = letterType==='client'
       ? mobList.filter(m=>m.wp_approved_date&&m.status!=='rejected'&&m.status!=='demobilised')
       : mobList.filter(m=>['mobilised','pending'].includes(m.status));
     return base.filter(m=>{
-      if(fCust&&m.customer_name!==fCust)return false;
-      if(fLoc&&m.location!==fLoc)return false;
+      if(fCust.size&&!fCust.has(m.customer_name||''))return false;
+      if(fLoc.size&&!fLoc.has(m.location||''))return false;
       return matchSearch(m,search);
     });
   },[mobList,letterType,fCust,fLoc,search]);
@@ -3401,8 +3665,8 @@ function LettersTab({mobList}) {
     }
 
     // ── File name: SATCO_MobList_<Customer>_<Date>.xlsx ─────────────────────
-    const custTag = (fCust||'All').replace(/\s+/g,'_');
-    const locTag  = (fLoc||'').replace(/\s+/g,'_');
+    const custTag = (fCust.size?[...fCust].join('-'):'All').replace(/\s+/g,'_');
+    const locTag  = (fLoc.size?[...fLoc].join('-'):'').replace(/\s+/g,'_');
     const fname   = `SATCO_MobList_${custTag}${locTag?'_'+locTag:''}_${todayStr()}.xlsx`;
     XLSX.writeFile(wb, fname);
   };
@@ -3423,7 +3687,7 @@ function LettersTab({mobList}) {
     const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>body{font-family:'Times New Roman',serif;margin:60px;color:#00008B;font-size:14px;line-height:1.7;}table{color:#000;}th,td{padding:8px 10px;}@media print{body{margin:30px;}}</style></head><body>
       <p style="text-align:right">${dateStr}</p><br/>
       <p><strong>To:</strong> ${subject||'The Concerned Authority'}</p>
-      <p><strong>Ref:</strong> ${fCust||''} ${fLoc?'— '+fLoc:''}</p><br/>
+      <p><strong>Ref:</strong> ${fCust.size?[...fCust].join(', '):''} ${fLoc.size?'— '+[...fLoc].join(', '):''}</p><br/>
       ${body}
       <div style="margin-top:60px"><p>Yours faithfully,</p><br/><br/><p><strong>Shaik Zaheerudeen, PMP</strong></p><p>CEO &amp; Founder</p><p>${COMPANY_NAME}</p></div>
     </body></html>`;
@@ -3449,8 +3713,8 @@ function LettersTab({mobList}) {
           <Field label="Letter Date"><input type="date" value={date} onChange={e=>setDate(e.target.value)} style={S.input}/></Field>
           <Field label="To (addressee / department)"><input value={subject} onChange={e=>setSubject(e.target.value)} placeholder="e.g. ADNOC HSE Department" style={S.input}/></Field>
           {letterType==='camp'&&<Field label="Arrival Wording"><input value={arrival} onChange={e=>setArrival(e.target.value)} placeholder="tomorrow / on 25 Aug 2025" style={S.input}/></Field>}
-          <Field label="Filter Customer"><select value={fCust} onChange={e=>setFCust(e.target.value)} style={S.input}><option value="">All</option>{customers.map(c=><option key={c} value={c}>{c}</option>)}</select></Field>
-          <Field label="Filter Location"><select value={fLoc} onChange={e=>setFLoc(e.target.value)} style={S.input}><option value="">All</option>{locations.map(l=><option key={l} value={l}>{l}</option>)}</select></Field>
+          <Field label="Filter Customer"><MultiSelect options={customerOptsL} selected={fCust} onChange={setFCust} placeholder="All customers" accentColor="#64748b" width="100%"/></Field>
+          <Field label="Filter Location"><MultiSelect options={locationOptsL} selected={fLoc} onChange={setFLoc} placeholder="All locations" accentColor="#0369a1" width="100%"/></Field>
         </Grid>
         <div style={{marginBottom:'8px'}}>
           <input placeholder="Search within list…" value={search} onChange={e=>setSearch(e.target.value)} style={{...S.input,width:'260px',marginBottom:'10px'}}/>
