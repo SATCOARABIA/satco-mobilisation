@@ -1275,12 +1275,15 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
   const filtered = useMemo(()=> candidates.filter(c=>{
     if (suppF && c.supplier_name !== suppF) return false;
     if (readyF) {
-      const rd = candidateReadiness(c);
-      if (readyF==='ready'     && !rd.coreReady) return false;
-      if (readyF==='not_ready' && rd.coreReady)  return false;
+      const docOk = !!c.passport_no && !!c.emirates_id && !!c.visa_no;
+      const mob = mobList.filter(m=>m.candidate_id===c.id||m.full_name===c.full_name).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
+      const mobOk = !!mob?.medical_done && !!mob?.hse_passport_done && !!mob?.h2s_done && !!mob?.cicpa_pass_no && (c.source==='satco_own' || !!mob?.wp_approved_date);
+      const allGreen = docOk && mobOk && !!c.adnoc_medical_status && c.adnoc_medical_status!=='Unfit';
+      if (readyF==='ready'     && !allGreen) return false;
+      if (readyF==='not_ready' && allGreen)  return false;
     }
     return matchSearch(c, search);
-  }), [candidates, search, suppF, readyF, candidateReadiness]);
+  }), [candidates, mobList, search, suppF, readyF]);
 
   const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',passport_expiry:'',emirates_id:'',eid_expiry:'',visa_no:'',visa_type:'',visa_location:'',visa_expiry:'',phone:'',email:'',security_pass_no:'',security_pass_expiry:'',adnoc_medical_status:'',adnoc_medical_date:'',remarks:'',active:true}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
 
@@ -1367,8 +1370,8 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
           </select>
           <select value={readyF} onChange={e=>setReadyF(e.target.value)} style={{...S.input,width:'160px',borderColor:readyF?'#166534':undefined,fontWeight:readyF?700:400}}>
             <option value="">All candidates</option>
-            <option value="ready">✅ Docs complete</option>
-            <option value="not_ready">❌ Docs incomplete</option>
+            <option value="ready">✅ All green — ready to mob</option>
+            <option value="not_ready">⚠ Not yet ready</option>
           </select>
           <span style={{fontSize:'12px',color:'#64748b'}}>{filtered.length} people</span>
         </div>
@@ -1584,12 +1587,18 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
             <col style={{width:'110px'}}/>{/* Sec Pass No */}
             <col style={{width:'90px'}}/>{/* Sec Pass Exp */}
             <col style={{width:'90px'}}/>{/* ADNOC Med */}
+            <col style={{width:'100px'}}/>{/* WP */}
+            <col style={{width:'110px'}}/>{/* Medical */}
+            <col style={{width:'70px'}}/>{/* HSE */}
+            <col style={{width:'70px'}}/>{/* H2S */}
+            <col style={{width:'60px'}}/>{/* CICPA */}
+            <col style={{width:'100px'}}/>{/* Readiness */}
             <col style={{width:'130px'}}/>{/* Phone */}
             <col style={{width:'170px'}}/>{/* Actions */}
           </colgroup>
           <thead><tr style={{background:'#f8fafc'}}>
             <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,background:'#f8fafc',borderRight:'2px solid #e2e8f0'}}>Name</th>
-            {['Designation','Supplier','Emp No','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa / Emirate','Visa Expiry','Sec Pass No','Sec Pass Exp','ADNOC Medical','Phone','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
+            {['Designation','Supplier','Emp No','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa / Emirate','Visa Expiry','Sec Pass','Sec Exp','ADNOC Med','Work Permit','Medical','HSE','H2S','CICPA','Ready?','Phone','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>{h}</th>)}
           </tr></thead>
           <tbody>
             {filtered.length===0&&<tr><td colSpan={15} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
@@ -1648,6 +1657,48 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
                 <Cell col={c.security_pass_expiry?secCol:{bg:'#f1f5f9',color:'#94a3b8',icon:'—'}} text={c.security_pass_expiry?fmtDate(c.security_pass_expiry):'—'} title="Security Pass Expiry"/>
                 {/* ADNOC Medical */}
                 <Cell col={adnCol} text={c.adnoc_medical_status||'Not done'} title={`ADNOC Medical: ${fmtDate(c.adnoc_medical_date)}`}/>
+                {/* ── Mob status from latest mob_register record ── */}
+                {(()=>{
+                  const mob = mobList.filter(m=>m.candidate_id===c.id||m.full_name===c.full_name).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
+                  const isSatco = c.source==='satco_own';
+                  const T = ({done,label,date,optional}) => {
+                    const col = done
+                      ? {bg:'#dcfce7',color:'#166534',icon:'✓'}
+                      : optional
+                        ? {bg:'#f1f5f9',color:'#94a3b8',icon:'—'}
+                        : {bg:'#fee2e2',color:'#dc2626',icon:'✗'};
+                    return <Cell col={col} text={done?(label+(date?' '+fmtDate(date):'')):(optional?'—':'✗ '+label)} title={label}/>;
+                  };
+                  const wpDone  = !!mob?.wp_approved_date;
+                  const medDone = !!mob?.medical_done && mob?.medical_result!=='Unfit';
+                  const hseDone = !!mob?.hse_passport_done;
+                  const h2sDone = !!mob?.h2s_done;
+                  const cicpa   = !!mob?.cicpa_pass_no;
+                  // overall readiness
+                  const docOk = !!c.passport_no && !!c.emirates_id && !!c.visa_no;
+                  const mobOk = medDone && hseDone && h2sDone && cicpa && (isSatco || wpDone);
+                  const allGreen = docOk && mobOk && !!c.adnoc_medical_status && c.adnoc_medical_status!=='Unfit';
+                  const readyCol = allGreen
+                    ? {bg:'#dcfce7',color:'#166534',icon:'✅'}
+                    : docOk
+                      ? {bg:'#fef3c7',color:'#b45309',icon:'⚠'}
+                      : {bg:'#fee2e2',color:'#dc2626',icon:'✗'};
+                  return <>
+                    {isSatco
+                      ? <td style={{...S.td,paddingTop:'3px',paddingBottom:'3px'}}><span style={{background:'#f1f5f9',color:'#94a3b8',fontSize:'10px',padding:'2px 6px',borderRadius:4}}>N/A</span></td>
+                      : <T done={wpDone} label="WP" date={mob?.wp_approved_date}/>}
+                    <T done={medDone} label={mob?.medical_result||'Med'} date={mob?.medical_date}/>
+                    <T done={hseDone} label="HSE" optional={!mob}/>
+                    <T done={h2sDone} label="H2S" optional={!mob}/>
+                    <T done={cicpa}   label="CICPA" optional={!mob}/>
+                    <td style={{...S.td,paddingTop:'3px',paddingBottom:'3px'}}>
+                      <span style={{background:readyCol.bg,color:readyCol.color,fontWeight:800,fontSize:'11px',padding:'2px 8px',borderRadius:4,cursor:'pointer',display:'inline-block'}}
+                        onClick={e=>{e.stopPropagation();if(allGreen)onMobilise(c);}}>
+                        {allGreen?'✅ MOB':docOk?'⚠ Pend':'✗ Docs'}
+                      </span>
+                    </td>
+                  </>;
+                })()}
                 <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.phone||'—'}</td>
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'2px',paddingBottom:'2px'}}>
                   <div style={{display:'flex',gap:'3px',alignItems:'center'}}>
