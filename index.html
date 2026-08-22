@@ -1911,7 +1911,10 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
     required.push({ name:'Passport',      done: !!r.passport_no,           label:'Passport No',        critical:true });
     required.push({ name:'Emirates ID',   done: !!r.emirates_id,           label:'Emirates ID',        critical:true });
     required.push({ name:'Visa',          done: !!r.visa_no,               label:'Visa No',            critical:true });
-    required.push({ name:'Work Permit',   done: !!r.wp_approved_date,      label:'WP Approved',        critical:true });
+    // Work Permit only required for supplier/subcontractor personnel — SATCO Own employees are on SATCO visa
+    if (r.source !== 'satco_own') {
+      required.push({ name:'Work Permit', done: !!r.wp_approved_date,      label:'WP Approved',        critical:true });
+    }
     required.push({ name:'Medical',       done: !!r.medical_done && r.medical_result!=='Unfit', label:'Medical Fit', critical:true });
     required.push({ name:'HSE Passport',  done: !!r.hse_passport_done,     label:'HSE Passport',       critical:false });
     required.push({ name:'H2S Training',  done: !!r.h2s_done,             label:'H2S',                critical:false });
@@ -2369,6 +2372,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
               </div>
             );
           })()}
+          {draft.source !== 'satco_own' && <>
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Work Permit (under SATCO)</div>
           <Grid cols={4}>
             <Field label="WP Applied Date"><input type="date" value={draft.wp_applied_date||''} onChange={e=>setDraft(d=>({...d,wp_applied_date:e.target.value}))} style={S.input}/></Field>
@@ -2376,6 +2380,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
             <Field label="WP Number"><input value={draft.wp_no||''} onChange={e=>setDraft(d=>({...d,wp_no:e.target.value}))} style={S.input}/></Field>
             <Field label="WP Expiry"><input type="date" value={draft.wp_expiry||''} onChange={e=>setDraft(d=>({...d,wp_expiry:e.target.value}))} style={S.input}/></Field>
           </Grid>
+          </>}
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Medical</div>
           <div style={{display:'flex',gap:'20px',flexWrap:'wrap',marginBottom:'12px',alignItems:'center'}}>
             <label style={{display:'flex',gap:'6px',alignItems:'center',cursor:'pointer',fontWeight:600,fontSize:'13px'}}>
@@ -2979,8 +2984,10 @@ function App() {
     const hasUpdatedAt = ['mob_candidates','mob_register','mob_location_config'].includes(table);
     const clean={...draft};
     if(hasUpdatedAt) clean.updated_at=new Date().toISOString();
-    // Strip all internal UI state fields (anything starting with _)
+    // Strip internal UI state fields (anything starting with _)
     Object.keys(clean).forEach(k=>{ if(k.startsWith('_')) delete clean[k]; });
+    // Convert empty strings to null — Postgres rejects "" for date/uuid/numeric columns
+    Object.keys(clean).forEach(k=>{ if(clean[k]==='') clean[k]=null; });
     const{error}=draft.id
       ?await db.from(table).update(clean).eq('id',draft.id)
       :await db.from(table).insert(clean);
