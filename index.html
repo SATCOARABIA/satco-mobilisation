@@ -1733,17 +1733,17 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
         borderRadius:'8px',padding:'8px 12px',display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap',cursor:'pointer'}}
         onClick={()=>toggleSelect(c.id)}>
         {showCheck&&<input type="checkbox" checked={isSel} readOnly style={{width:15,height:15,flexShrink:0,accentColor:'#2563eb'}}/>}
-        <div style={{minWidth:'190px',flexShrink:0}}>
-          <div style={{fontWeight:700,fontSize:'12px',color:'#0f172a',textTransform:'uppercase'}}>{c.full_name}</div>
-          <div style={{fontSize:'10px',color:'#64748b'}}>{c.designation||'—'} · {c.supplier_emp_no||'—'}</div>
-          {conflicted&&<div style={{fontSize:'9px',color:'#b45309',fontWeight:700}}>⚠ Planned: {assigned.planName}</div>}
-          {isAssigned&&<div style={{fontSize:'9px',color:'#166534',fontWeight:700}}>✓ Assigned to this plan</div>}
+        <div style={{minWidth:'180px',maxWidth:'220px',flexShrink:0,overflow:'hidden'}}>
+          <div style={{fontWeight:700,fontSize:'11px',color:'#0f172a',textTransform:'uppercase',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c.full_name}</div>
+          <div style={{fontSize:'9px',color:'#64748b',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c.designation||'—'} · {c.supplier_emp_no||'—'}</div>
+          {conflicted&&<div style={{fontSize:'9px',color:'#b45309',fontWeight:700,whiteSpace:'nowrap'}}>⚠ {assigned.planName}</div>}
+          {isAssigned&&<div style={{fontSize:'9px',color:'#166534',fontWeight:700,whiteSpace:'nowrap'}}>✓ This plan</div>}
         </div>
-        <div style={{display:'flex',gap:'3px',flexWrap:'wrap',flex:1}}>
+        <div style={{display:'flex',gap:'3px',flexWrap:'nowrap',flex:1,overflowX:'auto',alignItems:'center'}}>
           {(c._pr?.checks||[]).map((chk,i)=><ReqBadge key={i} chk={chk}/>)}
         </div>
         {c._pr?.missing?.length>0&&(
-          <div style={{fontSize:'10px',color:'#b45309',flexShrink:0,maxWidth:'160px'}}>→ {c._pr.missing[0]?.action}</div>
+          <div style={{fontSize:'10px',color:'#b45309',flexShrink:0,maxWidth:'200px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>→ {c._pr.missing[0]?.action}</div>
         )}
       </div>
     );
@@ -1915,6 +1915,15 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
             ))}
           </div>
           <Field label="Additional Trainings (comma-separated)">
+            {planDraft.cicpa_required&&(
+              <Field label="CICPA Site Name (exact match for this deployment)">
+                <input value={planDraft.cicpa_site_name||''}
+                  onChange={e=>setPlanDraft(d=>({...d,cicpa_site_name:e.target.value}))}
+                  placeholder="e.g. TAZIZ, Mabroug Al Ruwais Industrial, Ruwais Al-Sinaiya…"
+                  style={S.input}/>
+                <div style={{fontSize:'10px',color:'#64748b',marginTop:'3px'}}>Enter the exact CICPA site name. Candidates whose CICPA is for a <em>different</em> location will show ⚠ amber — not ✅ green.</div>
+              </Field>
+            )}
             <input value={(planDraft.extra_trainings||[]).join(', ')} onChange={e=>setPlanDraft(d=>({...d,extra_trainings:e.target.value.split(',').map(x=>x.trim()).filter(Boolean)}))}
               placeholder="First Aid, BOSIET, Fire Warden..." style={S.input}/>
           </Field>
@@ -1979,6 +1988,16 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
             ))}
           </div>
 
+          {/* CICPA site name display bar */}
+          {plan.cicpa_required&&(
+            <div style={{marginBottom:'10px',padding:'8px 14px',background:'#eff6ff',borderRadius:'8px',border:'1px solid #bfdbfe',display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}}>
+              <span style={{fontSize:'11px',fontWeight:700,color:'#1e40af',whiteSpace:'nowrap'}}>🔒 CICPA Site:</span>
+              <span style={{fontSize:'12px',fontWeight:700,color:'#1d4ed8',background:'#dbeafe',padding:'2px 10px',borderRadius:6,border:'1px solid #93c5fd'}}>
+                {plan.cicpa_site_name||<span style={{color:'#94a3b8',fontStyle:'italic'}}>Not specified — edit plan to add</span>}
+              </span>
+              <span style={{fontSize:'10px',color:'#64748b'}}>CICPA for this site = ✅ &nbsp;|&nbsp; CICPA for another site = ⚠ amber</span>
+            </div>
+          )}
           {/* Scrollable candidate list — Excel style one line per row */}
           <div style={{...S.card,overflow:'hidden'}}>
             {/* GREEN section header */}
