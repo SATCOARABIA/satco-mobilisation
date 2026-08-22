@@ -578,6 +578,38 @@ const fileToBase64 = file => new Promise((res,rej)=>{
   r.readAsDataURL(file);
 });
 
+// Robust MIME detection: checks magic bytes first, then extension, then file.type
+// Solves: browser reporting empty/wrong type for PDFs on Windows/Android
+async function detectMimeType(file) {
+  // Read first 8 bytes for magic number check
+  const header = await new Promise(res => {
+    const r = new FileReader();
+    r.onload = e => res(new Uint8Array(e.target.result));
+    r.readAsArrayBuffer(file.slice(0, 8));
+  });
+  // PDF magic: %PDF
+  if (header[0]===0x25 && header[1]===0x50 && header[2]===0x44 && header[3]===0x46)
+    return 'application/pdf';
+  // JPEG magic: FF D8 FF
+  if (header[0]===0xFF && header[1]===0xD8 && header[2]===0xFF)
+    return 'image/jpeg';
+  // PNG magic: 89 50 4E 47
+  if (header[0]===0x89 && header[1]===0x50 && header[2]===0x4E && header[3]===0x47)
+    return 'image/png';
+  // WebP: RIFF....WEBP
+  if (header[0]===0x52 && header[1]===0x49 && header[2]===0x46 && header[3]===0x46)
+    return 'image/webp';
+  // Fallback: check extension
+  const ext = (file.name||'').split('.').pop().toLowerCase();
+  if (ext==='pdf')  return 'application/pdf';
+  if (ext==='jpg'||ext==='jpeg') return 'image/jpeg';
+  if (ext==='png')  return 'image/png';
+  if (ext==='webp') return 'image/webp';
+  if (ext==='gif')  return 'image/gif';
+  // Fallback: use browser-reported type, or jpeg
+  return file.type || 'image/jpeg';
+}
+
 // Upload a file to Supabase Storage and record in mob_documents
 async function uploadDocument(file, entityType, entityId, docType, docLabel) {
   const ext   = file.name.split('.').pop().toLowerCase();
@@ -603,8 +635,10 @@ async function getSignedUrl(filePath) {
 
 // AI scan a document image/PDF for passport/EID/visa data
 async function aiScanDocument(file, docType) {
-  const b64      = await fileToBase64(file);
-  const mimeType = file.type || 'image/jpeg';
+  // Detect true MIME type (fixes PDFs reporting as empty or wrong type on some browsers)
+  const mimeType = await detectMimeType(file);
+  const isPDF = mimeType === 'application/pdf';
+
   const prompt = `You are reading an official document image from the oil & gas / construction industry in UAE. Identify the document type and extract ALL visible information.
 
 Return ONLY a valid JSON object with these fields (include only what is visible):
@@ -641,19 +675,36 @@ Return ONLY a valid JSON object with these fields (include only what is visible)
 
 Return ONLY the JSON. No explanation, no markdown, no backticks.`;
 
-  const contentType = mimeType.startsWith('image/') ? 'image' : 'document';
+  // Build content block — PDFs use type:'document', images use type:'image'
+  let contentBlock;
+  if (isPDF) {
+    // PDF: send as base64 document — Claude reads all pages automatically
+    const b64 = await fileToBase64(file);
+    contentBlock = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } };
+  } else {
+    // Image (JPEG, PNG, WebP, GIF)
+    const b64 = await fileToBase64(file);
+    const safeType = ['image/jpeg','image/png','image/gif','image/webp'].includes(mimeType) ? mimeType : 'image/jpeg';
+    contentBlock = { type: 'image', source: { type: 'base64', media_type: safeType, data: b64 } };
+  }
+
   const res = await fetch(CLAUDE_PROXY, {
-    method:'POST', headers:{'Content-Type':'application/json'},
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model:'claude-sonnet-4-6', max_tokens:1000,
-      messages:[{ role:'user', content:[
-        { type: contentType, source:{ type:'base64', media_type:mimeType, data:b64 } },
-        { type:'text', text: prompt },
-      ]}]
+      model: 'claude-sonnet-4-6', max_tokens: 1000,
+      messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }]
     })
   });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
+
+  if (!res.ok) {
+    let errMsg = `API error ${res.status}`;
+    try { const errData = await res.json(); errMsg += ': ' + (errData?.error?.message || JSON.stringify(errData)); } catch {}
+    throw new Error(errMsg);
+  }
+
   const data = await res.json();
+  // Handle API-level errors returned in the body (e.g. overloaded, invalid request)
+  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
   const text = (data.content||[]).map(c=>c.text||'').join('').trim();
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('AI did not return JSON. Response: ' + text.slice(0,200));
@@ -873,7 +924,9 @@ function DocumentPanel({entity, entityType, onClose, onApplyAiData}) {
     try {
       // Download file content for scanning
       const { data: blob } = await db.storage.from(DOC_BUCKET).download(doc.file_path);
-      const file = new File([blob], doc.file_name || 'doc', { type: doc.mime_type || 'image/jpeg' });
+      // Use stored mime_type; if missing, let detectMimeType() read magic bytes from the blob
+      const storedType = doc.mime_type || '';
+      const file = new File([blob], doc.file_name || 'doc', { type: storedType });
       const result = await aiScanDocument(file, doc.doc_type || 'other');
       setScanResult({ docId: doc.id, data: result, docType: doc.doc_type });
       // Mark as scanned in DB
@@ -2619,13 +2672,19 @@ function RequirementsTab({requirements, onSave}) {
                     const file=e.target.files?.[0];if(!file)return;
                     setDraft(d=>({...d,_poScanning:true,_poScanErr:''}));
                     try{
+                      const mime=await detectMimeType(file);
                       const b64=await fileToBase64(file);
-                      const mime=file.type||'application/pdf';
-                      const res=await fetch(CLAUDE_PROXY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,messages:[{role:'user',content:[{type:mime.startsWith('image/')?'image':'document',source:{type:'base64',media_type:mime,data:b64}},{type:'text',text:'Extract from this Purchase Order. Return ONLY valid JSON: {"customer_name":"","po_no":"","po_date":"YYYY-MM-DD","location":"","positions":[{"designation":"","qty":0}],"notes":""}'}]}]})});
+                      const isPDF=mime==='application/pdf';
+                      const contentBlock=isPDF
+                        ?{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}}
+                        :{type:'image',source:{type:'base64',media_type:(['image/jpeg','image/png','image/gif','image/webp'].includes(mime)?mime:'image/jpeg'),data:b64}};
+                      const res=await fetch(CLAUDE_PROXY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,messages:[{role:'user',content:[contentBlock,{type:'text',text:'Extract from this Purchase Order. Return ONLY valid JSON: {"customer_name":"","po_no":"","po_date":"YYYY-MM-DD","location":"","positions":[{"designation":"","qty":0}],"notes":""}'}]}]})});
+                      if(!res.ok){let m=`API error ${res.status}`;try{const e=await res.json();m+=': '+(e?.error?.message||JSON.stringify(e));}catch{}throw new Error(m);}
                       const data=await res.json();
+                      if(data.error)throw new Error(data.error.message||JSON.stringify(data.error));
                       const text=(data.content||[]).map(c=>c.text||'').join('').trim();
                       const match=text.match(/\{[\s\S]*\}/);
-                      if(!match)throw new Error('AI did not return JSON');
+                      if(!match)throw new Error('AI did not return JSON. Response: '+text.slice(0,200));
                       const r=JSON.parse(match[0]);
                       setDraft(d=>({...d,customer_name:r.customer_name||d.customer_name,po_reference:r.po_no||d.po_reference,requirement_date:r.po_date||d.requirement_date||todayStr(),location:r.location||d.location,_lines:r.positions?.length?r.positions.map(p=>`${p.designation}: ${p.qty}`).join('\n'):(d._lines||''),notes:r.notes||d.notes||'',_poScanning:false,_poScanResult:r}));
                     }catch(ex){setDraft(d=>({...d,_poScanning:false,_poScanErr:ex.message}));}
