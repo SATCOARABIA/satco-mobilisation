@@ -1616,24 +1616,77 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
       }).join('\n');
       const proceed = window.confirm(`⚠ Conflict — already planned for another site:\n\n${names}\n\nProceed? They will be removed from the other plan and assigned here.`);
       if(!proceed) return;
-      // Remove from other plans
       for(const c of conflicts){
         await db.from('mob_plan_assignments').delete().eq('candidate_id',c.cid).eq('plan_id',c.planId);
       }
     }
-    // Upsert assignments
     const rows = [...selected].map(cid=>({plan_id:activePlan, candidate_id:cid}));
     await db.from('mob_plan_assignments').upsert(rows,{onConflict:'candidate_id,plan_id'});
     await loadAssignments();
     alert(`✓ ${selected.size} candidate${selected.size>1?'s':''} assigned to this plan.`);
   };
 
-  // Move selected to mobilisation
+  // Unassign selected from this plan
+  const unassignSelected = async() => {
+    if(!activePlan || selected.size===0) return;
+    const toUnassign = [...selected].filter(cid => assignments[cid]?.planId === activePlan);
+    if(toUnassign.length===0){ alert('None of the selected candidates are assigned to this plan.'); return; }
+    const names = toUnassign.map(cid=>candidates.find(c=>c.id===cid)?.full_name).filter(Boolean).join(', ');
+    if(!window.confirm(`Remove assignment for:\n${names}\n\nThey will remain in the candidate pool — this only removes their plan assignment.`)) return;
+    for(const cid of toUnassign){
+      await db.from('mob_plan_assignments').delete().eq('candidate_id',cid).eq('plan_id',activePlan);
+    }
+    await loadAssignments();
+    setSelected(new Set());
+    alert(`✓ ${toUnassign.length} candidate${toUnassign.length>1?'s':''} unassigned.`);
+  };
+
+  // Move selected directly to mobilisation — pre-fills customer/location/LOA from plan
   const mobiliseSelected = () => {
     const toMob = candidates.filter(c=>selected.has(c.id));
     if(toMob.length===0){alert('Select at least one candidate.');return;}
-    // Mobilise one at a time — open first, user can repeat
-    onMobilise(toMob[0]);
+    // Find the LOA id matching plan's LOA reference
+    const loaRef = plan?.notes || '';
+    const matchedLoa = loaList.find(l=>l.loa_reference===loaRef);
+    // Pass plan context so Mobilisation tab is pre-filled — no manual re-entry needed
+    const planContext = {
+      customer_name: plan?.customer_name || '',
+      location:      plan?.location      || '',
+      loa_id:        matchedLoa?.id      || '',
+      designation:   plan?.designation   || '',
+    };
+    if(toMob.length===1){
+      onMobilise(toMob[0], planContext);
+    } else {
+      // Multiple selected: create mob records for all, prefill from plan
+      // Each call opens the form pre-filled — user saves each in turn
+      // For bulk: set all and navigate once (first one opens, rest queued)
+      toMob.forEach((c,i) => {
+        const key = i===0 ? 'satco_mob_prefill' : `satco_mob_prefill_q${i}`;
+        const mobData = {
+          candidate_id:c.id, full_name:c.full_name,
+          designation: planContext.designation||c.designation,
+          source:c.source||'supplier',
+          supplier_name:c.supplier_name, supplier_emp_no:c.supplier_emp_no,
+          nationality:c.nationality, date_of_birth:c.date_of_birth,
+          passport_no:c.passport_no, passport_expiry:c.passport_expiry||'',
+          emirates_id:c.emirates_id, eid_expiry:c.eid_expiry||'',
+          visa_no:c.visa_no, visa_type:c.visa_type||'',
+          visa_location:c.visa_location, visa_expiry:c.visa_expiry||'',
+          phone:c.phone||'',
+          customer_name:planContext.customer_name||'',
+          location:planContext.location||'',
+          loa_id:planContext.loa_id||'',
+          medical_done:false,hse_passport_done:false,h2s_done:false,extra_trainings:[],status:'pending',notes:'',
+        };
+        sessionStorage.setItem(key, JSON.stringify(mobData));
+      });
+      setTab('mobilisation');
+      setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),150);
+      if(toMob.length>1){
+        alert(`${toMob.length} candidates queued for mobilisation.\n\nThe first is pre-filled — save it, then the next will load automatically.`);
+      }
+    }
   };
 
   // Export selected (or all) to Excel
@@ -1700,8 +1753,11 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
     <div style={{maxWidth:'1400px',margin:'0 auto',padding:'16px'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'16px',flexWrap:'wrap',gap:'8px'}}>
         <div>
-          <div style={{fontWeight:800,fontSize:'18px',color:'#0f172a'}}>🎯 Mobilisation Planning</div>
-          <div style={{fontSize:'12px',color:'#64748b',marginTop:'2px'}}>Define requirements · Select candidates · Export or move to Mobilisation</div>
+          <div style={{fontWeight:800,fontSize:'18px',color:'#0f172a'}}>🎯 Planning — Shortlist &amp; Assign</div>
+          <div style={{fontSize:'12px',color:'#64748b',marginTop:'2px'}}>
+            <strong>Planning</strong> = define what you need (headcount, trade, site), shortlist candidates, assign them to a project slot.<br/>
+            <strong>Mobilisation</strong> = the official record — work permit, medical, CICPA, LOA. Click <em>🚀 Mobilise → Fill MOB</em> to create it instantly from Plan, no re-entry needed.
+          </div>
         </div>
         <button style={S.btnPri} onClick={()=>setPlanDraft({...blankPlan})}>+ New Plan</button>
       </div>
@@ -1898,8 +1954,9 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
               <button style={S.btnSm} onClick={()=>selectAll([...sorted.green,...sorted.yellow])}>Select All</button>
               <button style={S.btnSm} onClick={()=>selectAll(sorted.green)}>Select Ready</button>
               <button style={S.btnSm} onClick={deselectAll}>Clear</button>
-              <button style={{...S.btnSm,background:'#166534',color:'#fff',border:'none',fontWeight:700}} onClick={()=>assignSelected()}>✓ Assign Selected</button>
-              <button style={{...S.btnSm,background:'#7c3aed',color:'#fff',border:'none',fontWeight:700}} onClick={mobiliseSelected}>+ Mobilise Selected</button>
+              <button style={{...S.btnSm,background:'#166534',color:'#fff',border:'none',fontWeight:700}} onClick={()=>assignSelected()}>✓ Assign</button>
+              <button style={{...S.btnSm,background:'#dc2626',color:'#fff',border:'none',fontWeight:700}} onClick={()=>unassignSelected()}>✕ Unassign</button>
+              <button style={{...S.btnSm,background:'#7c3aed',color:'#fff',border:'none',fontWeight:700}} onClick={mobiliseSelected}>🚀 Mobilise → Fill MOB</button>
               <button style={{...S.btnSm,background:'#b8972a',color:'#fff',border:'none'}} onClick={exportPlan}>⬇ Export Excel</button>
             </div>
           </div>
@@ -3271,10 +3328,23 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
     alert('✓ Updated: ' + changed.join(', '));
   };
 
-  // Read prefill from candidates tab
+  // Read prefill from Planning/Candidates tab
   useEffect(()=>{
+    // New record prefill (from Planning "Mobilise" or Candidates "+Mob")
     const pf = sessionStorage.getItem('satco_mob_prefill');
-    if (pf) { try { setDraft(JSON.parse(pf)); } catch(e){} sessionStorage.removeItem('satco_mob_prefill'); }
+    if (pf) {
+      try { setDraft(JSON.parse(pf)); } catch(e){}
+      sessionStorage.removeItem('satco_mob_prefill');
+      setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),150);
+      return;
+    }
+    // Edit existing record (from Planning when mob record already exists)
+    const editId = sessionStorage.getItem('satco_mob_edit');
+    if (editId) {
+      sessionStorage.removeItem('satco_mob_edit');
+      const rec = mobList.find(m=>m.id===editId);
+      if (rec) { setDraft({...rec}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),150); }
+    }
   },[]);
 
   const exportCols = [
@@ -3586,7 +3656,17 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
           </Grid>
           <Field label="Notes"><input value={draft.notes||''} onChange={e=>setDraft(d=>({...d,notes:e.target.value}))} style={{...S.input,marginBottom:'14px'}}/></Field>
           <div style={{display:'flex',gap:'8px'}}>
-            <button style={S.btnGrn} onClick={()=>onSave('mob',draft,()=>setDraft(null))}>Save</button>
+            <button style={S.btnGrn} onClick={()=>onSave('mob',draft,()=>{
+              setDraft(null);
+              // Auto-load next queued candidate from Planning bulk-mobilise
+              const qKeys = Object.keys(sessionStorage).filter(k=>k.startsWith('satco_mob_prefill_q')).sort();
+              if(qKeys.length>0){
+                const next=qKeys[0];
+                try{ setDraft(JSON.parse(sessionStorage.getItem(next))); }catch{}
+                sessionStorage.removeItem(next);
+                setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),150);
+              }
+            })}>Save</button>
             <button style={S.btnSec} onClick={()=>setDraft(null)}>Cancel</button>
           </div>
         </div>
@@ -4245,18 +4325,46 @@ function App() {
     await loadAll();
   };
 
-  const handleMobilise = candidate => {
+  // planContext is optional — passed from Planning tab to pre-fill customer/location/LOA
+  const handleMobilise = (candidate, planContext={}) => {
+    // Check if a mob record already exists for this candidate at this customer+location
+    // If so, open that record for editing instead of creating a duplicate
+    const existing = planContext.customer_name && planContext.location
+      ? data.mobList.find(m =>
+          (m.candidate_id===candidate.id || m.full_name===candidate.full_name) &&
+          m.customer_name===planContext.customer_name &&
+          m.location===planContext.location &&
+          m.status!=='demobilised'
+        )
+      : null;
+
+    if (existing) {
+      // Jump to Mobilisation tab with this record highlighted / open for edit
+      sessionStorage.setItem('satco_mob_edit', existing.id);
+      setTab('mobilisation');
+      setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),150);
+      return;
+    }
+
     sessionStorage.setItem('satco_mob_prefill', JSON.stringify({
-      candidate_id:candidate.id, full_name:candidate.full_name,
-      designation:candidate.designation, source:candidate.source||'supplier',
-      supplier_name:candidate.supplier_name, supplier_emp_no:candidate.supplier_emp_no,
-      nationality:candidate.nationality, date_of_birth:candidate.date_of_birth,
-      passport_no:candidate.passport_no, passport_expiry:candidate.passport_expiry||'',
-      emirates_id:candidate.emirates_id, eid_expiry:candidate.eid_expiry||'',
-      visa_no:candidate.visa_no, visa_type:candidate.visa_type||'', visa_location:candidate.visa_location, visa_expiry:candidate.visa_expiry||'',
-      phone:candidate.phone||'',
-      customer_name:'',location:'',loa_id:'',
-      medical_done:false,hse_passport_done:false,h2s_done:false,extra_trainings:[],status:'pending',notes:'',
+      candidate_id:   candidate.id,
+      full_name:      candidate.full_name,
+      designation:    planContext.designation || candidate.designation,
+      source:         candidate.source||'supplier',
+      supplier_name:  candidate.supplier_name,
+      supplier_emp_no:candidate.supplier_emp_no,
+      nationality:    candidate.nationality,
+      date_of_birth:  candidate.date_of_birth,
+      passport_no:    candidate.passport_no,    passport_expiry: candidate.passport_expiry||'',
+      emirates_id:    candidate.emirates_id,    eid_expiry:      candidate.eid_expiry||'',
+      visa_no:        candidate.visa_no,        visa_type:       candidate.visa_type||'',
+      visa_location:  candidate.visa_location,  visa_expiry:     candidate.visa_expiry||'',
+      phone:          candidate.phone||'',
+      // Pre-fill from plan — user sees these already filled
+      customer_name:  planContext.customer_name || '',
+      location:       planContext.location       || '',
+      loa_id:         planContext.loa_id         || '',
+      medical_done:false, hse_passport_done:false, h2s_done:false, extra_trainings:[], status:'pending', notes:'',
     }));
     setTab('mobilisation');
     setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),150);
@@ -4275,7 +4383,7 @@ function App() {
           {loading&&tableReady===null&&<div style={{padding:'40px',textAlign:'center',color:'#94a3b8'}}>Loading…</div>}
           {!loading&&tableReady&&<>
             {tab==='dashboard'    &&<Dashboard data={data} loaUsed={loaUsed} setTab={t=>{setTab(t);}} setFilterStatus={setFilterStatus} hrMobActive={hrMobActive}/>}
-            {tab==='planning'     &&<PlanningTab candidates={data.candidates} mobList={data.mobList} requirements={data.requirements} loaList={data.loaList} onMobilise={c=>{handleMobilise(c);setTab('mobilisation');}}/>}
+            {tab==='planning'     &&<PlanningTab candidates={data.candidates} mobList={data.mobList} requirements={data.requirements} loaList={data.loaList} onMobilise={(c,ctx)=>{handleMobilise(c,ctx||{});}}/>}
             {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} onRefresh={loadAll} tabSearch={tabSearch} hrMobActive={hrMobActive} hrMobLocs={hrMobLocs} thresholds={data.thresholds}/>}
             {tab==='requirements' &&<RequirementsTab requirements={data.requirements} onSave={onSave}/>}
             {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
