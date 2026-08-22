@@ -1598,6 +1598,7 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
 
   // Keep a window cache of mobList for bulk insert duplicate check
   useEffect(()=>{ window._mobListCache = mobList; },[mobList]);
+  const planCandSiteMap = useMemo(()=>{ const m={}; mobList.filter(r=>r.status==='mobilised'&&r.candidate_id).forEach(r=>{ m[r.candidate_id]=r.location||'On Site'; }); return m; },[mobList]);
 
   // Toggle select
   const toggleSelect = (id) => setSelected(s=>{ const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
@@ -1762,6 +1763,7 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
         <div style={{minWidth:'180px',maxWidth:'220px',flexShrink:0,overflow:'hidden'}}>
           <div style={{fontWeight:700,fontSize:'11px',color:'#0f172a',textTransform:'uppercase',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c.full_name}</div>
           <div style={{fontSize:'9px',color:'#64748b',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c.designation||'—'} · {c.supplier_emp_no||'—'}</div>
+          {planCandSiteMap[c.id]&&<div style={{fontSize:'9px',fontWeight:800,color:'#166534',background:'#dcfce7',padding:'1px 5px',borderRadius:3,display:'inline-block',marginTop:'1px',whiteSpace:'nowrap'}}>🏗 {(planCandSiteMap[c.id]||'').split(/[-–]/)[0].trim().substring(0,20)}</div>}
           {conflicted&&<div style={{fontSize:'9px',color:'#b45309',fontWeight:700,whiteSpace:'nowrap'}}>⚠ {assigned.planName}</div>}
           {isAssigned&&<div style={{fontSize:'9px',color:'#166534',fontWeight:700,whiteSpace:'nowrap'}}>✓ This plan</div>}
         </div>
@@ -2160,6 +2162,8 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
 
   const activeCandIds   = useMemo(()=>new Set(mobList.filter(m=>m.status==='mobilised').map(m=>m.candidate_id).filter(Boolean)),[mobList]);
   const activeNames     = useMemo(()=>new Set(mobList.filter(m=>m.status==='mobilised'&&!m.candidate_id).map(m=>(m.full_name||'').toLowerCase().trim())),[mobList]);
+  const candSiteMap     = useMemo(()=>{ const m={}; mobList.filter(r=>r.status==='mobilised'&&r.candidate_id).forEach(r=>{ m[r.candidate_id]=r.location||'On Site'; }); return m; },[mobList]);
+  const [excludeOnSite, setExcludeOnSite] = useState(false);
   // isOnSite: check mob_register, name fallback, AND HR portal mob_demob for SATCO employees
   const isOnSiteFn = useCallback(c => {
     if (activeCandIds.has(c.id)) return true;
@@ -2170,6 +2174,7 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
   const supplierList  = useMemo(()=>[...new Set(candidates.map(c=>c.supplier_name).filter(Boolean))].sort(),[candidates]);
 
   const filtered = useMemo(()=> candidates.filter(c=>{
+    if (excludeOnSite && (activeCandIds.has(c.id)||activeNames.has((c.full_name||'').toLowerCase().trim()))) return false;
     if (suppF.size && !suppF.has(c.supplier_name||'')) return false;
     if (desigF.size && !desigF.has(normalizeDesig(c.designation))) return false;
     if (cicpaLocF.size && !cicpaLocF.has(canonicalCicpa(c.cicpa_location))) return false;
@@ -2395,7 +2400,12 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
           />
           <span style={{fontSize:'12px',color:'#64748b'}}>{filtered.length} people</span>
         </div>
-        <div style={{display:'flex',gap:'8px'}}>
+        <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
+          <button style={{...S.btnSm,background:excludeOnSite?'#0369a1':'#f1f5f9',color:excludeOnSite?'#fff':'#475569',fontWeight:700,border:'1px solid',borderColor:excludeOnSite?'#0369a1':'#e2e8f0'}}
+            onClick={()=>setExcludeOnSite(v=>!v)}
+            title={excludeOnSite?'Click to show all candidates':'Click to hide candidates currently on site'}>
+            {excludeOnSite?'👁 All candidates':'🏗 Available only'}
+          </button>
           <button style={S.btnGold} onClick={()=>exportCSV(filtered,'SATCO_Candidates',exportCols)}>⬇ Export</button>
           <button style={S.btnPri} onClick={blank}>+ Add Person</button>
         </div>
@@ -2718,10 +2728,12 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
                     {isOnSite?'ON SITE':'FREE'}
                   </span>
                 </td>
-                {/* Current Site — from HR portal mob_demob */}
-                <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px',color:currentSite?'#0369a1':'#94a3b8',fontWeight:currentSite?600:400}}>
-                  {currentSite||'—'}
-                </td>
+                {/* Current Site — portal mob_register first, then HR portal */}
+                {(()=>{ const site=candSiteMap[c.id]||currentSite||''; const label=site?site.split(/[-–]/)[0].trim().substring(0,20)+(site.length>22?'…':''):'—'; return (
+                  <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
+                    {site?<span title={site} style={{background:'#dcfce7',color:'#166534',padding:'1px 7px',borderRadius:4,fontSize:'10px',fontWeight:800}}>🏗 {label}</span>:<span style={{color:'#94a3b8'}}>—</span>}
+                  </td>
+                );})()}
                 <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px'}}>{c.designation||'—'}</td>
                 <td style={{...S.td,whiteSpace:'nowrap',fontSize:'12px',fontWeight:c.source==='satco_own'?700:400,color:c.source==='satco_own'?'#2563eb':'inherit',paddingTop:'4px',paddingBottom:'4px'}}>{c.source==='satco_own'?'SATCO Arabia':c.supplier_name||'—'}</td>
                 <td style={{...S.td,fontFamily:'monospace',fontSize:'12px',fontWeight:700,color:'#0369a1',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.supplier_emp_no||'—'}</td>
@@ -3150,8 +3162,10 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
   const [fLoc,setFLoc]       = useState(new Set());
   const [fStatus,setFStatus] = useState(()=>initialStatus?new Set([initialStatus]):new Set());
   const [fReady,setFReady]   = useState(new Set());
+  const [mobSel, setMobSel] = useState(new Set());
 
   useEffect(()=>{ if(initialStatus) setFStatus(new Set([initialStatus])); },[initialStatus]);
+  useEffect(()=>{ setMobSel(new Set()); },[fCust,fLoc,fStatus,fReady,search]);
   useEffect(()=>{ if(tabSearch) setSearch(tabSearch); },[tabSearch]);
   useEffect(()=>{
     if(!bulkMobFilter) return;
@@ -3162,6 +3176,22 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
     onClearBulkFilter();
     setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),200);
   },[bulkMobFilter]);
+
+  const bulkDeleteMob = async () => {
+    const rows = filtered.filter(r => mobSel.has(r.id));
+    if (rows.length === 0) { alert('Select at least one record.'); return; }
+    const onSite = rows.filter(r => r.status === 'mobilised');
+    if (onSite.length > 0) {
+      alert(`Cannot delete ${onSite.length} record(s) with status "Mobilised" (currently on site).\nDemobilise them first.\n\n${onSite.map(r=>r.full_name).join('\n')}`);
+      return;
+    }
+    if (!window.confirm(`Delete ${rows.length} mobilisation record${rows.length>1?'s':''}?\n\n${rows.map(r=>r.full_name).join('\n')}\n\nThis only removes from this portal.`)) return;
+    for (const r of rows) {
+      await db.from('mob_register').delete().eq('id', r.id);
+    }
+    setMobSel(new Set());
+    onRefresh();
+  };
 
   // ── Compute readiness for one mobilisation record ────────────────────────
   const computeReadiness = useCallback((r) => {
@@ -3753,10 +3783,36 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
         </div>
       )}
 
-      <div style={{...S.card,overflow:'hidden'}}>
+      {/* ── Bulk-select toolbar ── */}
+      <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'8px 14px',
+          background:'#f8fafc',border:'1px solid #e2e8f0',borderBottom:'none',
+          borderRadius:'10px 10px 0 0',marginTop:'6px',flexWrap:'wrap'}}>
+        <label style={{display:'flex',alignItems:'center',gap:'7px',cursor:'pointer',
+            fontSize:'12px',fontWeight:700,color:'#374151',userSelect:'none'}}>
+          <input type="checkbox"
+            style={{width:16,height:16,accentColor:'#dc2626',cursor:'pointer'}}
+            checked={filtered.length>0 && mobSel.size===filtered.length}
+            ref={el=>{ if(el) el.indeterminate = mobSel.size>0 && mobSel.size<filtered.length; }}
+            onChange={()=> mobSel.size===filtered.length
+              ? setMobSel(new Set())
+              : setMobSel(new Set(filtered.map(r=>r.id)))}
+          />
+          {mobSel.size>0 ? `${mobSel.size} of ${filtered.length} selected` : `Select all (${filtered.length})`}
+        </label>
+        {mobSel.size>0 && (
+          <button
+            style={{...S.btnSm,background:'#dc2626',color:'#fff',border:'none',fontWeight:700,fontSize:'12px',padding:'5px 14px'}}
+            onClick={bulkDeleteMob}>
+            🗑 Delete {mobSel.size} record{mobSel.size>1?'s':''}
+          </button>
+        )}
+      </div>
+
+      <div style={{...S.card,overflow:'hidden',borderRadius:'0 0 10px 10px',marginTop:0}}>
         <div className="tbl-box drag-scroll" style={{maxHeight:'calc(100vh - var(--stk-2) - 32px)',overflowX:'auto',overflowY:'auto'}}>
         <table style={{width:'max-content',minWidth:'100%',borderCollapse:'collapse',tableLayout:'fixed'}}>
           <colgroup>
+            <col style={{width:'38px'}}/>{/* ☑ */}
             <col style={{width:'170px'}}/>{/* Name */}
             <col style={{width:'130px'}}/>{/* Designation */}
             <col style={{width:'120px'}}/>{/* Supplier/EmpNo */}
@@ -3775,6 +3831,13 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
             <col style={{width:'170px'}}/>{/* Actions */}
           </colgroup>
           <thead><tr style={{background:'#f8fafc'}}>
+            <th style={{...S.th,position:'sticky',top:0,zIndex:15,background:'#f8fafc',width:'38px',padding:'4px 8px',textAlign:'center'}}>
+              <input type="checkbox" style={{width:14,height:14,accentColor:'#dc2626',cursor:'pointer'}}
+                checked={filtered.length>0 && mobSel.size===filtered.length}
+                ref={el=>{ if(el) el.indeterminate = mobSel.size>0 && mobSel.size<filtered.length; }}
+                onChange={()=> mobSel.size===filtered.length ? setMobSel(new Set()) : setMobSel(new Set(filtered.map(r=>r.id)))}
+              />
+            </th>
             <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,background:'#f8fafc',borderRight:'2px solid #e2e8f0'}}>Name</th>
             {['Designation','Supplier / EmpNo','Customer','Location','Work Permit','Medical','HSE','H2S','Extra','CICPA','Mob Date','Demob Date','Status','Readiness','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
           </tr></thead>
@@ -3783,15 +3846,21 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
             {filtered.map((r,idx)=>{
               const ex=(r.extra_trainings||[]), exDone=ex.filter(t=>t.done).length;
               const cicpaExpiring = r.cicpa_expiry_date&&daysUntil(r.cicpa_expiry_date)<=30&&daysUntil(r.cicpa_expiry_date)>=0;
-              const rowBg = docPanel?.entity?.id===r.id ? '#eff6ff' : idx%2===0 ? '#fff' : '#fafafa';
+              const rowBg = mobSel.has(r.id) ? '#fff1f2' : docPanel?.entity?.id===r.id ? '#eff6ff' : idx%2===0 ? '#fff' : '#fafafa';
               const rd = computeReadiness(r);
               return <tr key={r.id} className="hr-row"
                 style={{cursor:'pointer',background:rowBg,height:'36px'}}
                 onClick={e=>handleRowClick(r,e)}
                 onDoubleClick={e=>handleRowDblClick(r,e)}
                 title="Click to view documents · Double-click to edit">
+                {/* ☑ Checkbox */}
+                <td style={{...S.td,width:'38px',padding:'4px 8px',textAlign:'center',background:rowBg}}
+                  onClick={e=>{e.stopPropagation();const s=new Set(mobSel);s.has(r.id)?s.delete(r.id):s.add(r.id);setMobSel(s);}}>
+                  <input type="checkbox" checked={mobSel.has(r.id)} readOnly
+                    style={{width:14,height:14,accentColor:'#dc2626',cursor:'pointer'}}/>
+                </td>
                 {/* Name — frozen */}
-                <td className="frozen-col" style={{...S.td,fontWeight:700,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',borderLeft:docPanel?.entity?.id===r.id?'3px solid #2563eb':'3px solid transparent',borderRight:'2px solid #e2e8f0',background:rowBg,paddingTop:'4px',paddingBottom:'4px'}}>
+                <td className="frozen-col" style={{...S.td,fontWeight:700,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',borderLeft:mobSel.has(r.id)?'3px solid #dc2626':docPanel?.entity?.id===r.id?'3px solid #2563eb':'3px solid transparent',borderRight:'2px solid #e2e8f0',background:rowBg,paddingTop:'4px',paddingBottom:'4px'}}>
                   <div style={{display:'flex',alignItems:'center',gap:'5px',overflow:'hidden'}}>
                     <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.full_name}</span>
                     <span style={{flexShrink:0,fontFamily:'monospace',fontSize:'9px',color:'#94a3b8'}}>{r.supplier_emp_no||''}</span>
