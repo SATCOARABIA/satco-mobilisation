@@ -313,6 +313,18 @@ const fmtDOB   = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'2-digit',
 const todayStr = () => new Date().toISOString().slice(0,10);
 const isExpired = d => d && new Date(d) < new Date();
 const daysUntil = d => d ? Math.ceil((new Date(d) - new Date()) / 86400000) : null;
+// Returns {bg, color, icon} based on thresholds for a given doc_type and expiry date
+const docColor = (docType, expiryDate, thresholds=[]) => {
+  if (!expiryDate) return {bg:'#fee2e2',color:'#991b1b',icon:'✗'}; // no date = red X
+  const days = daysUntil(expiryDate);
+  const rule = thresholds.find(t=>t.doc_type===docType);
+  const alertDays = rule?.alert_days ?? 30;
+  const warnDays  = rule?.warn_days  ?? 90;
+  if (days < 0)          return {bg:'#fee2e2',color:'#991b1b',icon:'✗'}; // expired
+  if (days <= alertDays) return {bg:'#fee2e2',color:'#dc2626',icon:'⚠'}; // red alert
+  if (days <= warnDays)  return {bg:'#fef3c7',color:'#b45309',icon:'⚠'}; // yellow warn
+  return {bg:'#dcfce7',color:'#166534',icon:'✓'}; // green OK
+};
 
 const SEARCH_FIELDS = ['full_name','designation','supplier_name','supplier_emp_no','nationality','passport_no','emirates_id','visa_no','visa_location','customer_name','location','cicpa_pass_no','wp_no','phone','remarks','notes'];
 const matchSearch = (obj, q) => {
@@ -1179,7 +1191,7 @@ function Dashboard({data, loaUsed, setTab, setFilterStatus, hrMobActive=new Set(
 }
 
 // ── Candidates Tab ────────────────────────────────────────────────────────────
-function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSearch, hrMobActive=new Set()}) {
+function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSearch, hrMobActive=new Set(), thresholds=[]}) {
   const [draft,setDraft]   = usePersistentDraft('candidate');
   const [savedDraft, setSavedDraft] = useState(() => { try { const v=localStorage.getItem('satco_mob_draft_candidate'); return v?JSON.parse(v):null; } catch{return null;} });
   const [search,setSearch] = useState(tabSearch||'');
@@ -1534,7 +1546,21 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
           </Grid>
           <Field label="Remarks"><input value={draft.remarks||''} onChange={e=>setDraft(d=>({...d,remarks:e.target.value}))} style={{...S.input,marginBottom:'14px'}}/></Field>
           <div style={{display:'flex',gap:'8px'}}>
-            <button style={S.btnPri} onClick={()=>onSave('candidates',draft,()=>setDraft(null))}>Save</button>
+            <button style={S.btnPri} onClick={()=>{
+              // Check for near-expiry dates and warn before saving
+              const warnings = [];
+              const pp = docColor('passport', draft.passport_expiry, thresholds);
+              const ei = docColor('eid', draft.eid_expiry, thresholds);
+              const ad = draft.adnoc_medical_date ? docColor('adnoc_medical', draft.adnoc_medical_date, thresholds) : null;
+              if (draft.passport_expiry  && pp.icon==='⚠') warnings.push(`Passport expiry ${fmtDate(draft.passport_expiry)} — ${daysUntil(draft.passport_expiry)} days left`);
+              if (draft.eid_expiry       && ei.icon==='⚠') warnings.push(`Emirates ID expiry ${fmtDate(draft.eid_expiry)} — ${daysUntil(draft.eid_expiry)} days left`);
+              if (draft.adnoc_medical_date && ad?.icon==='⚠') warnings.push(`ADNOC Medical ${fmtDate(draft.adnoc_medical_date)} — ${daysUntil(draft.adnoc_medical_date)} days left`);
+              if (warnings.length > 0) {
+                const proceed = window.confirm(`⚠ Expiry Alert:\n\n${warnings.join('\n')}\n\nSave anyway?`);
+                if (!proceed) return;
+              }
+              onSave('candidates',draft,()=>setDraft(null));
+            }}>Save</button>
             <button style={S.btnSec} onClick={()=>setDraft(null)}>Cancel</button>
           </div>
         </div>
@@ -1560,47 +1586,68 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
             <col style={{width:'90px'}}/>{/* ADNOC Med */}
             <col style={{width:'130px'}}/>{/* Phone */}
             <col style={{width:'170px'}}/>{/* Actions */}
-            <col style={{width:'160px'}}/>{/* Readiness */}
           </colgroup>
           <thead><tr style={{background:'#f8fafc'}}>
             <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,background:'#f8fafc',borderRight:'2px solid #e2e8f0'}}>Name</th>
-            {['Designation','Supplier','Emp No','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa / Emirate','Visa Expiry','Sec Pass No','Sec Pass Exp','ADNOC Medical','Phone','Actions','Mob Readiness'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
+            {['Designation','Supplier','Emp No','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa / Emirate','Visa Expiry','Sec Pass No','Sec Pass Exp','ADNOC Medical','Phone','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
           </tr></thead>
           <tbody>
-            {filtered.length===0&&<tr><td colSpan={11} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
+            {filtered.length===0&&<tr><td colSpan={15} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
             {filtered.map((c,idx)=>{
               const isOnSite = isOnSiteFn(c);
-              const vExp = c.visa_expiry&&isExpired(c.visa_expiry);
-              const pExp = c.passport_expiry&&isExpired(c.passport_expiry);
               const rowBg = docPanel?.entity?.id===c.id ? '#eff6ff' : idx%2===0 ? '#fff' : '#fafafa';
+              // color helpers per doc type
+              const ppCol  = docColor('passport',      c.passport_expiry,  thresholds);
+              const eidCol = docColor('eid',            c.eid_expiry,       thresholds);
+              const visCol = docColor('visa',           c.visa_expiry,      thresholds);
+              const secCol = docColor('security_pass',  c.security_pass_expiry, thresholds);
+              const adnCol = c.adnoc_medical_status==='Fit'
+                ? {bg:'#dcfce7',color:'#166534',icon:'✓'}
+                : c.adnoc_medical_status==='Unfit'
+                  ? {bg:'#fee2e2',color:'#dc2626',icon:'✗'}
+                  : {bg:'#fee2e2',color:'#991b1b',icon:'✗'};
+              const Cell = ({col,text,title}) => (
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'3px',paddingBottom:'3px'}} title={title}>
+                  <span style={{background:col.bg,color:col.color,fontWeight:700,fontSize:'11px',padding:'2px 7px',borderRadius:4,display:'inline-block'}}>
+                    {col.icon} {text}
+                  </span>
+                </td>
+              );
               return <tr key={c.id} className="hr-row"
                 style={{cursor:'pointer',background:rowBg,height:'36px'}}
                 onClick={e=>handleRowClick(c,e)}
                 onDoubleClick={e=>handleRowDblClick(c,e)}
                 title="Click to view documents · Double-click to edit">
-                {/* Name — frozen left col */}
+                {/* Name — frozen */}
                 <td className="frozen-col" style={{...S.td,fontWeight:700,borderLeft:docPanel?.entity?.id===c.id?'3px solid #2563eb':'3px solid transparent',borderRight:'2px solid #e2e8f0',background:rowBg,paddingTop:'4px',paddingBottom:'4px',whiteSpace:'nowrap'}}>
                   <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
                     <span style={{color:'#2563eb',cursor:'pointer',textTransform:'uppercase',letterSpacing:'0.2px'}} onClick={e=>{e.stopPropagation();personHistory(c);}}>{c.full_name}</span>
-                    <span style={{flexShrink:0,background:isOnSite?'#dcfce7':'#eff6ff',color:isOnSite?'#166534':'#2563eb',fontSize:'9px',fontWeight:800,padding:'1px 5px',borderRadius:6,whiteSpace:'nowrap'}}>
-                      {isOnSite?'ON SITE':'FREE'}
-                    </span>
+                    <span style={{flexShrink:0,background:isOnSite?'#dcfce7':'#eff6ff',color:isOnSite?'#166534':'#2563eb',fontSize:'9px',fontWeight:800,padding:'1px 5px',borderRadius:6}}>{isOnSite?'ON SITE':'FREE'}</span>
                   </div>
                 </td>
-                {/* All other cells — single line, no wrap */}
                 <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px'}}>{c.designation||'—'}</td>
-                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px',fontWeight:c.source==='satco_own'?700:400,color:c.source==='satco_own'?'#2563eb':'inherit',fontSize:'12px'}}>{c.source==='satco_own'?'SATCO Arabia':c.supplier_name||'—'}</td>
+                <td style={{...S.td,whiteSpace:'nowrap',fontSize:'12px',fontWeight:c.source==='satco_own'?700:400,color:c.source==='satco_own'?'#2563eb':'inherit',paddingTop:'4px',paddingBottom:'4px'}}>{c.source==='satco_own'?'SATCO Arabia':c.supplier_name||'—'}</td>
                 <td style={{...S.td,fontFamily:'monospace',fontSize:'12px',fontWeight:700,color:'#0369a1',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.supplier_emp_no||'—'}</td>
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.nationality||'—'}</td>
                 <td style={{...S.td,fontSize:'12px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.date_of_birth?fmtDOB(c.date_of_birth):'—'}</td>
-                <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',color:pExp?'#dc2626':'inherit',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.passport_no||'—'}{pExp&&<span style={{marginLeft:'4px',fontSize:'9px',fontWeight:800,color:'#dc2626'}}>EXP</span>}</td>
-                <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.emirates_id||'—'}</td>
-                <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px',color:(c.eid_expiry&&isExpired(c.eid_expiry))?'#dc2626':'inherit'}}>{fmtDate(c.eid_expiry)||'—'}</td>
-                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.visa_type||'—'} <span style={{color:'#94a3b8',fontSize:'11px'}}>{c.visa_location||''}</span></td>
-                <td style={{...S.td,color:vExp?'#dc2626':'inherit',fontWeight:vExp?700:400,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{fmtDate(c.visa_expiry)}{vExp&&<span style={{marginLeft:'4px',fontSize:'9px',fontWeight:800,color:'#dc2626'}}>EXP</span>}</td>
-                <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.security_pass_no||'—'}</td>
-                <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px',color:(c.security_pass_expiry&&isExpired(c.security_pass_expiry))?'#dc2626':'inherit'}}>{fmtDate(c.security_pass_expiry)||'—'}</td>
-                <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px',color:c.adnoc_medical_status==='Fit'?'#166534':c.adnoc_medical_status==='Unfit'?'#dc2626':'inherit',fontWeight:c.adnoc_medical_status?700:400}}>{c.adnoc_medical_status||'—'}{c.adnoc_medical_date&&<span style={{fontWeight:400,color:'#64748b',marginLeft:'4px'}}>{fmtDate(c.adnoc_medical_date)}</span>}</td>
+                {/* Passport — red X if missing, colored expiry */}
+                <Cell col={c.passport_no?ppCol:{bg:'#fee2e2',color:'#991b1b',icon:'✗'}} text={c.passport_no||'Missing'} title={`Passport expiry: ${fmtDate(c.passport_expiry)}`}/>
+                {/* Emirates ID */}
+                <Cell col={c.emirates_id?eidCol:{bg:'#fee2e2',color:'#991b1b',icon:'✗'}} text={c.emirates_id||'Missing'} title="Emirates ID"/>
+                {/* EID Expiry */}
+                <Cell col={eidCol} text={fmtDate(c.eid_expiry)} title="EID Expiry"/>
+                {/* Visa */}
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'3px',paddingBottom:'3px'}}>
+                  <span style={{fontSize:'11px'}}>{c.visa_type||'—'} <span style={{color:'#94a3b8'}}>{c.visa_location||''}</span></span>
+                </td>
+                {/* Visa Expiry */}
+                <Cell col={c.visa_no?visCol:{bg:'#fee2e2',color:'#991b1b',icon:'✗'}} text={c.visa_no?fmtDate(c.visa_expiry):'No Visa'} title="Visa Expiry"/>
+                {/* Security Pass */}
+                <Cell col={c.security_pass_no?secCol:{bg:'#f1f5f9',color:'#94a3b8',icon:'—'}} text={c.security_pass_no||'—'} title="Security Pass No"/>
+                {/* Security Pass Expiry */}
+                <Cell col={c.security_pass_expiry?secCol:{bg:'#f1f5f9',color:'#94a3b8',icon:'—'}} text={c.security_pass_expiry?fmtDate(c.security_pass_expiry):'—'} title="Security Pass Expiry"/>
+                {/* ADNOC Medical */}
+                <Cell col={adnCol} text={c.adnoc_medical_status||'Not done'} title={`ADNOC Medical: ${fmtDate(c.adnoc_medical_date)}`}/>
                 <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.phone||'—'}</td>
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'2px',paddingBottom:'2px'}}>
                   <div style={{display:'flex',gap:'3px',alignItems:'center'}}>
@@ -1610,29 +1657,6 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
                     <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px',color:'#dc2626',border:'1px solid #fecaca'}} onClick={e=>{e.stopPropagation();onDelete('candidates',c);}}>Del</button>
                   </div>
                 </td>
-                {/* Mob Readiness — ✓/✗ per mandatory field */}
-                {(()=>{
-                  const rd = candidateReadiness(c);
-                  return (
-                    <td style={{...S.td,paddingTop:'4px',paddingBottom:'4px',whiteSpace:'nowrap'}}>
-                      <div style={{display:'flex',gap:'3px',flexWrap:'wrap'}}>
-                        {rd.checks.map(chk=>(
-                          <span key={chk.key} title={chk.label} style={{
-                            display:'inline-flex',alignItems:'center',gap:'2px',
-                            fontSize:'10px',fontWeight:700,padding:'1px 5px',borderRadius:4,
-                            background:chk.done?(chk.critical?'#dcfce7':'#f0fdf4'):(chk.critical?'#fee2e2':'#fef3c7'),
-                            color:chk.done?(chk.critical?'#166534':'#15803d'):(chk.critical?'#dc2626':'#b45309'),
-                          }}>
-                            {chk.done?'✓':'✗'} {chk.label}
-                          </span>
-                        ))}
-                      </div>
-                      <div style={{marginTop:'3px',fontSize:'10px',fontWeight:800,color:rd.coreReady?'#166534':'#dc2626'}}>
-                        {rd.ready?'✅ All complete':rd.coreReady?'⚠ Minor missing':`❌ ${rd.criticalMissing.length} critical missing`}
-                      </div>
-                    </td>
-                  );
-                })()}
               </tr>;
             })}
           </tbody>
@@ -2807,6 +2831,23 @@ function LettersTab({mobList}) {
 function ConfigTab({locConfigs, suppliers, onSave}) {
   const [locDraft,setLocDraft]=useState(null);
   const [suppDraft,setSuppDraft]=useState(null);
+  const [thresholds,setThresholds]=useState([]);
+  const [thDraft,setThDraft]=useState(null);
+
+  useEffect(()=>{
+    db.from('mob_alert_thresholds').select('*').order('label').then(({data})=>setThresholds(data||[]));
+  },[]);
+
+  const saveThreshold = async(row) => {
+    const {error} = row.id
+      ? await db.from('mob_alert_thresholds').update({label:row.label,warn_days:row.warn_days,alert_days:row.alert_days,active:row.active,updated_at:new Date().toISOString()}).eq('id',row.id)
+      : await db.from('mob_alert_thresholds').insert({doc_type:row.doc_type,label:row.label,warn_days:row.warn_days,alert_days:row.alert_days});
+    if(error){alert(error.message);return;}
+    const {data} = await db.from('mob_alert_thresholds').select('*').order('label');
+    setThresholds(data||[]);
+    setThDraft(null);
+  };
+
   return (
     <div>
       <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'12px 16px',marginBottom:'16px',display:'flex',gap:'12px',alignItems:'flex-start'}}>
@@ -2921,6 +2962,44 @@ function ConfigTab({locConfigs, suppliers, onSave}) {
           </tbody>
         </table>
       </div>
+      {/* ── Alert Thresholds ── */}
+      <div style={{...S.card,marginTop:'16px'}}>
+        <div style={{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#f8fafc'}}>
+          <div>
+            <div style={{fontWeight:800,fontSize:'13px'}}>🔔 Document Expiry Alert Thresholds</div>
+            <div style={{fontSize:'11px',color:'#64748b',marginTop:'2px'}}>Controls when cells turn yellow (warning) and red (alert) across Candidates and Mobilisation tabs</div>
+          </div>
+        </div>
+        <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <thead><tr>
+            {['Document','Warn (days)','Alert (days)','Active',''].map(h=><th key={h} style={S.th}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {thresholds.map(t=>(
+              thDraft?.id===t.id ? (
+                <tr key={t.id} style={{background:'#fffbeb'}}>
+                  <td style={S.td}><strong>{t.label}</strong></td>
+                  <td style={S.td}><input type="number" value={thDraft.warn_days} min={1} max={999} onChange={e=>setThDraft(d=>({...d,warn_days:+e.target.value}))} style={{...S.input,width:'80px'}}/> <span style={{fontSize:'11px',color:'#64748b'}}>days before expiry → 🟡</span></td>
+                  <td style={S.td}><input type="number" value={thDraft.alert_days} min={1} max={999} onChange={e=>setThDraft(d=>({...d,alert_days:+e.target.value}))} style={{...S.input,width:'80px'}}/> <span style={{fontSize:'11px',color:'#64748b'}}>days before expiry → 🔴</span></td>
+                  <td style={S.td}><label style={{display:'flex',gap:'6px',alignItems:'center',cursor:'pointer'}}><input type="checkbox" checked={thDraft.active} onChange={e=>setThDraft(d=>({...d,active:e.target.checked}))}/> Active</label></td>
+                  <td style={S.td}><div style={{display:'flex',gap:'4px'}}><button style={S.btnPri} onClick={()=>saveThreshold(thDraft)}>Save</button><button style={S.btnSec} onClick={()=>setThDraft(null)}>Cancel</button></div></td>
+                </tr>
+              ) : (
+                <tr key={t.id} className="hr-row">
+                  <td style={{...S.td,fontWeight:600}}>{t.label}</td>
+                  <td style={S.td}><span style={{background:'#fef3c7',color:'#92400e',fontWeight:700,padding:'2px 10px',borderRadius:6,fontSize:'12px'}}>{t.warn_days} days</span></td>
+                  <td style={S.td}><span style={{background:'#fee2e2',color:'#991b1b',fontWeight:700,padding:'2px 10px',borderRadius:6,fontSize:'12px'}}>{t.alert_days} days</span></td>
+                  <td style={S.td}><span style={{color:t.active?'#166534':'#9ca3af',fontWeight:700,fontSize:'12px'}}>{t.active?'✓ On':'Off'}</span></td>
+                  <td style={S.td}><button style={S.btnSm} onClick={()=>setThDraft({...t})}>Edit</button></td>
+                </tr>
+              )
+            ))}
+          </tbody>
+        </table>
+        <div style={{padding:'10px 16px',background:'#f8fafc',fontSize:'11px',color:'#64748b',borderTop:'1px solid #e2e8f0'}}>
+          Example: Passport warn=180 means yellow when &lt;180 days left; alert=90 means red when &lt;90 days left. Entering a date within the alert window also shows an alert prompt when saving.
+        </div>
+      </div>
     </div>
   );
 }
@@ -2981,7 +3060,7 @@ function App() {
   const [globalSearch, setGlobalSearch] = useState('');
   const [tabSearch,    setTabSearch]    = useState('');
 
-  const [data, setData] = useState({candidates:[],suppliers:[],requirements:[],loaList:[],mobList:[],locConfigs:[]});
+  const [data, setData] = useState({candidates:[],suppliers:[],requirements:[],loaList:[],mobList:[],locConfigs:[],thresholds:[]});
   const [hrMobActive, setHrMobActive] = useState(new Set()); // SATCO employee IDs currently on site per HR portal
 
   // Load HR portal mob_demob active records at app level
@@ -3015,17 +3094,18 @@ function App() {
   const loadAll = useCallback(async()=>{
     setLoading(true);
     try {
-      const[supp,cand,req,loa,mob,loc]=await Promise.all([
+      const[supp,cand,req,loa,mob,loc,thr]=await Promise.all([
         db.from('mob_suppliers').select('*').order('name'),
         db.from('mob_candidates').select('*').order('full_name'),
         db.from('mob_requirements').select('*').order('created_at',{ascending:false}),
         db.from('mob_loa').select('*').order('loa_date',{ascending:false}),
         db.from('mob_register').select('*').order('created_at',{ascending:false}),
         db.from('mob_location_config').select('*').order('location'),
+        db.from('mob_alert_thresholds').select('*').eq('active',true),
       ]);
       if(cand.error?.code==='42P01'){setTableReady(false);setLoading(false);return;}
       setTableReady(true);
-      setData({suppliers:supp.data||[],candidates:cand.data||[],requirements:req.data||[],loaList:loa.data||[],mobList:mob.data||[],locConfigs:loc.data||[]});
+      setData({suppliers:supp.data||[],candidates:cand.data||[],requirements:req.data||[],loaList:loa.data||[],mobList:mob.data||[],locConfigs:loc.data||[],thresholds:thr.data||[]});
     } catch(e){console.error(e);}
     setLoading(false);
   },[]);
@@ -3132,7 +3212,7 @@ function App() {
           {loading&&tableReady===null&&<div style={{padding:'40px',textAlign:'center',color:'#94a3b8'}}>Loading…</div>}
           {!loading&&tableReady&&<>
             {tab==='dashboard'    &&<Dashboard data={data} loaUsed={loaUsed} setTab={t=>{setTab(t);}} setFilterStatus={setFilterStatus} hrMobActive={hrMobActive}/>}
-            {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} tabSearch={tabSearch} hrMobActive={hrMobActive}/>}
+            {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} tabSearch={tabSearch} hrMobActive={hrMobActive} thresholds={data.thresholds}/>}
             {tab==='requirements' &&<RequirementsTab requirements={data.requirements} onSave={onSave}/>}
             {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
             {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} requirements={data.requirements} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} onRefresh={loadAll} initialStatus={filterStatus} tabSearch={tabSearch}/>}
