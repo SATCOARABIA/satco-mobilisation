@@ -1524,7 +1524,7 @@ const MobTick = ({done,label,date,optional}) => {
 };
 
 // ── Planning Tab ──────────────────────────────────────────────────────────────
-function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=[], setTab=()=>{}}) {
+function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=[], setTab=()=>{}, onRefreshAndFilter=async()=>{}, onBulkMobFilter=()=>{}}) {
   const [plans, setPlans]           = useState([]);
   const [activePlan, setActivePlan] = useState(null);
   const [planDraft, setPlanDraft]   = useState(null);
@@ -1596,6 +1596,9 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
     return {green, yellow};
   },[candidates,plan,meetsPlan]);
 
+  // Keep a window cache of mobList for bulk insert duplicate check
+  useEffect(()=>{ window._mobListCache = mobList; },[mobList]);
+
   // Toggle select
   const toggleSelect = (id) => setSelected(s=>{ const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
   const selectAll  = (arr) => setSelected(s=>{ const n=new Set(s); arr.forEach(c=>n.add(c.id)); return n; });
@@ -1642,13 +1645,11 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
   };
 
   // Move selected directly to mobilisation — pre-fills customer/location/LOA from plan
-  const mobiliseSelected = () => {
+  const mobiliseSelected = async() => {
     const toMob = candidates.filter(c=>selected.has(c.id));
     if(toMob.length===0){alert('Select at least one candidate.');return;}
-    // Find the LOA id matching plan's LOA reference
     const loaRef = plan?.notes || '';
     const matchedLoa = loaList.find(l=>l.loa_reference===loaRef);
-    // Pass plan context so Mobilisation tab is pre-filled — no manual re-entry needed
     const planContext = {
       customer_name: plan?.customer_name || '',
       location:      plan?.location      || '',
@@ -1656,37 +1657,62 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
       designation:   plan?.designation   || '',
     };
     if(toMob.length===1){
+      // Single: open form pre-filled as before
       onMobilise(toMob[0], planContext);
-    } else {
-      // Multiple selected: create mob records for all, prefill from plan
-      // Each call opens the form pre-filled — user saves each in turn
-      // For bulk: set all and navigate once (first one opens, rest queued)
-      toMob.forEach((c,i) => {
-        const key = i===0 ? 'satco_mob_prefill' : `satco_mob_prefill_q${i}`;
-        const mobData = {
-          candidate_id:c.id, full_name:c.full_name,
-          designation: planContext.designation||c.designation,
-          source:c.source||'supplier',
-          supplier_name:c.supplier_name, supplier_emp_no:c.supplier_emp_no,
-          nationality:c.nationality, date_of_birth:c.date_of_birth,
-          passport_no:c.passport_no, passport_expiry:c.passport_expiry||'',
-          emirates_id:c.emirates_id, eid_expiry:c.eid_expiry||'',
-          visa_no:c.visa_no, visa_type:c.visa_type||'',
-          visa_location:c.visa_location, visa_expiry:c.visa_expiry||'',
-          phone:c.phone||'',
-          customer_name:planContext.customer_name||'',
-          location:planContext.location||'',
-          loa_id:planContext.loa_id||'',
-          medical_done:false,hse_passport_done:false,h2s_done:false,extra_trainings:[],status:'pending',notes:'',
-        };
-        sessionStorage.setItem(key, JSON.stringify(mobData));
-      });
-      setTab('mobilisation');
-      setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),150);
-      if(toMob.length>1){
-        alert(`${toMob.length} candidates queued for mobilisation.\n\nThe first is pre-filled — save it, then the next will load automatically.`);
-      }
+      return;
     }
+    // Bulk: build rows, skip any already in mob_register for same candidate+customer+location (non-demob)
+    const existingKeys = new Set(
+      (window._mobListCache||[])
+        .filter(m=>m.status!=='demobilised')
+        .map(m=>`${m.candidate_id||''}__${m.customer_name||''}__${m.location||''}`)
+    );
+    const rows = toMob
+      .filter(c=>{
+        const key=`${c.id}__${planContext.customer_name}__${planContext.location}`;
+        return !existingKeys.has(key);
+      })
+      .map(c=>({
+        candidate_id:    c.id,
+        full_name:       c.full_name,
+        designation:     planContext.designation||c.designation,
+        source:          c.source||'supplier',
+        supplier_name:   c.supplier_name||null,
+        supplier_emp_no: c.supplier_emp_no||null,
+        nationality:     c.nationality||null,
+        date_of_birth:   c.date_of_birth||null,
+        passport_no:     c.passport_no||null,
+        passport_expiry: c.passport_expiry||null,
+        emirates_id:     c.emirates_id||null,
+        eid_expiry:      c.eid_expiry||null,
+        visa_no:         c.visa_no||null,
+        visa_type:       c.visa_type||null,
+        visa_location:   c.visa_location||null,
+        visa_expiry:     c.visa_expiry||null,
+        phone:           c.phone||null,
+        customer_name:   planContext.customer_name||null,
+        location:        planContext.location||null,
+        loa_id:          planContext.loa_id||null,
+        medical_done:false, hse_passport_done:false, h2s_done:false,
+        extra_trainings:[], status:'pending', notes:'',
+      }));
+    const skipped = toMob.length - rows.length;
+    if(rows.length===0){
+      alert(`All ${toMob.length} selected candidates are already in Mobilisation for this site.`);
+      setTab('mobilisation');
+      onBulkMobFilter(planContext.customer_name, planContext.location);
+      return;
+    }
+    // Insert all at once
+    const{error}=await db.from('mob_register').insert(rows);
+    if(error){alert('Error: '+error.message);return;}
+    // Refresh data then navigate
+    await onRefreshAndFilter(planContext.customer_name, planContext.location);
+    const msg = skipped>0
+      ? `✓ ${rows.length} candidates added to Mobilisation.\n(${skipped} already existed — skipped)`
+      : `✓ ${rows.length} candidates added to Mobilisation.`;
+    alert(msg);
+    setSelected(new Set());
   };
 
   // Export selected (or all) to Excel
@@ -3111,7 +3137,7 @@ function CandidatePicker({candidates, movedIds, onSelect, selectedId}) {
 }
 
 // ── Mobilisation Tab ──────────────────────────────────────────────────────────
-function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, locConfigs, onSave, onDemob, onRefresh, initialStatus, tabSearch}) {
+function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, locConfigs, onSave, onDemob, onRefresh, initialStatus, tabSearch, bulkMobFilter=null, onClearBulkFilter=()=>{}}) {
   const [draft,setDraft]     = usePersistentDraft('mobilisation');
   const [savedDraft, setSavedDraft] = useState(() => { try { const v=localStorage.getItem('satco_mob_draft_mobilisation'); return v?JSON.parse(v):null; } catch{return null;} });
   const [demobRec,setDemobRec] = useState(null);
@@ -3126,6 +3152,15 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
 
   useEffect(()=>{ if(initialStatus) setFStatus(new Set([initialStatus])); },[initialStatus]);
   useEffect(()=>{ if(tabSearch) setSearch(tabSearch); },[tabSearch]);
+  useEffect(()=>{
+    if(!bulkMobFilter) return;
+    // Auto-filter to show the just-bulk-mobilised candidates
+    if(bulkMobFilter.customer) setFCust(new Set([bulkMobFilter.customer]));
+    if(bulkMobFilter.location) setFLoc(new Set([bulkMobFilter.location]));
+    setFStatus(new Set()); // show all statuses
+    onClearBulkFilter();
+    setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),200);
+  },[bulkMobFilter]);
 
   // ── Compute readiness for one mobilisation record ────────────────────────
   const computeReadiness = useCallback((r) => {
@@ -3710,14 +3745,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
           <div style={{display:'flex',gap:'8px'}}>
             <button style={S.btnGrn} onClick={()=>onSave('mob',draft,()=>{
               setDraft(null);
-              // Auto-load next queued candidate from Planning bulk-mobilise
-              const qKeys = Object.keys(sessionStorage).filter(k=>k.startsWith('satco_mob_prefill_q')).sort();
-              if(qKeys.length>0){
-                const next=qKeys[0];
-                try{ setDraft(JSON.parse(sessionStorage.getItem(next))); }catch{}
-                sessionStorage.removeItem(next);
-                setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),150);
-              }
+              // (bulk mobilise now inserts directly — no queue needed)
             })}>Save</button>
             <button style={S.btnSec} onClick={()=>setDraft(null)}>Cancel</button>
           </div>
@@ -4241,6 +4269,7 @@ function App() {
   const [tableReady,   setTableReady]   = useState(null);
   const [loading,      setLoading]      = useState(true);
   const [filterStatus, setFilterStatus] = useState('');
+  const [bulkMobFilter, setBulkMobFilter] = useState(null);
   const [globalSearch, setGlobalSearch] = useState('');
   const [tabSearch,    setTabSearch]    = useState('');
 
@@ -4435,11 +4464,11 @@ function App() {
           {loading&&tableReady===null&&<div style={{padding:'40px',textAlign:'center',color:'#94a3b8'}}>Loading…</div>}
           {!loading&&tableReady&&<>
             {tab==='dashboard'    &&<Dashboard data={data} loaUsed={loaUsed} setTab={t=>{setTab(t);}} setFilterStatus={setFilterStatus} hrMobActive={hrMobActive}/>}
-            {tab==='planning'     &&<PlanningTab candidates={data.candidates} mobList={data.mobList} requirements={data.requirements} loaList={data.loaList} onMobilise={(c,ctx)=>{handleMobilise(c,ctx||{});}} setTab={t=>{setTab(t);}}/>}
+            {tab==='planning'     &&<PlanningTab candidates={data.candidates} mobList={data.mobList} requirements={data.requirements} loaList={data.loaList} onMobilise={(c,ctx)=>{handleMobilise(c,ctx||{});}} setTab={t=>{setTab(t);}} onRefreshAndFilter={async(cust,loc)=>{await loadAll();setBulkMobFilter({customer:cust,location:loc});setTab('mobilisation');setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),300);}} onBulkMobFilter={(cust,loc)=>{setBulkMobFilter({customer:cust,location:loc});setTab('mobilisation');}}/>}
             {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} onRefresh={loadAll} tabSearch={tabSearch} hrMobActive={hrMobActive} hrMobLocs={hrMobLocs} thresholds={data.thresholds}/>}
             {tab==='requirements' &&<RequirementsTab requirements={data.requirements} onSave={onSave}/>}
             {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
-            {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} requirements={data.requirements} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} onRefresh={loadAll} initialStatus={filterStatus} tabSearch={tabSearch}/>}
+            {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} requirements={data.requirements} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} onRefresh={loadAll} initialStatus={filterStatus} tabSearch={tabSearch} bulkMobFilter={bulkMobFilter} onClearBulkFilter={()=>setBulkMobFilter(null)}/>}
             {tab==='letters'      &&<LettersTab mobList={data.mobList}/>}
             {tab==='config'       &&<ConfigTab locConfigs={data.locConfigs} suppliers={data.suppliers} onSave={onSave}/>}
           </>}
