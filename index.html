@@ -1184,10 +1184,28 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
   const [savedDraft, setSavedDraft] = useState(() => { try { const v=localStorage.getItem('satco_mob_draft_candidate'); return v?JSON.parse(v):null; } catch{return null;} });
   const [search,setSearch] = useState(tabSearch||'');
   const [suppF,setSuppF]   = useState('');
+  const [readyF,setReadyF] = useState(''); // ''|'ready'|'not_ready'
   const [histPerson, setHistPerson] = useState(null);
   const [docPanel,  setDocPanel]   = useState(null);
   const [satcoEmps, setSatcoEmps]  = useState([]);
   const clickTimer  = useRef(null);
+
+  // Mandatory fields for a candidate to be mobilisation-ready
+  // CICPA and Work Permit are NOT checked here — those are done at mobilisation time
+  const candidateReadiness = useCallback((c) => {
+    const checks = [
+      { key:'passport_no',   label:'Passport',    done:!!c.passport_no,    critical:true  },
+      { key:'passport_exp',  label:'PP Expiry',   done:!!c.passport_expiry, critical:false },
+      { key:'emirates_id',   label:'Emirates ID', done:!!c.emirates_id,    critical:true  },
+      { key:'eid_expiry',    label:'EID Expiry',  done:!!c.eid_expiry,     critical:false },
+      { key:'visa_no',       label:'Visa No',     done:!!c.visa_no,        critical:true  },
+      { key:'visa_expiry',   label:'Visa Expiry', done:!!c.visa_expiry,    critical:false },
+      { key:'adnoc_medical', label:'ADNOC Med',   done:!!c.adnoc_medical_status && c.adnoc_medical_status!=='Unfit', critical:false },
+    ];
+    const missing  = checks.filter(x=>!x.done);
+    const critical = missing.filter(x=>x.critical);
+    return { checks, missing, criticalMissing:critical, ready: missing.length===0, coreReady: critical.length===0 };
+  }, []);
 
   useEffect(()=>{ if(tabSearch) setSearch(tabSearch); },[tabSearch]);
 
@@ -1244,10 +1262,15 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
 
   const filtered = useMemo(()=> candidates.filter(c=>{
     if (suppF && c.supplier_name !== suppF) return false;
+    if (readyF) {
+      const rd = candidateReadiness(c);
+      if (readyF==='ready'     && !rd.coreReady) return false;
+      if (readyF==='not_ready' && rd.coreReady)  return false;
+    }
     return matchSearch(c, search);
-  }), [candidates, search, suppF]);
+  }), [candidates, search, suppF, readyF, candidateReadiness]);
 
-  const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',passport_expiry:'',emirates_id:'',eid_expiry:'',visa_no:'',visa_type:'',visa_location:'',visa_expiry:'',phone:'',remarks:'',active:true}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
+  const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',passport_expiry:'',emirates_id:'',eid_expiry:'',visa_no:'',visa_type:'',visa_location:'',visa_expiry:'',phone:'',email:'',security_pass_no:'',security_pass_expiry:'',adnoc_medical_status:'',adnoc_medical_date:'',remarks:'',active:true}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
 
   const personHistory = (cand) => {
     const hist = mobList.filter(m => m.candidate_id === cand.id || m.full_name === cand.full_name);
@@ -1325,10 +1348,15 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
 
       <div ref={measureToStk2} className="sticky-toolbar" style={{padding:'8px 14px',display:'flex',gap:'8px',justifyContent:'space-between',flexWrap:'wrap',alignItems:'center'}}>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}}>
-          <input placeholder="Search name, EID, passport, designation, supplier…" value={search} onChange={e=>setSearch(e.target.value)} style={{...S.input,width:'320px'}}/>
-          <select value={suppF} onChange={e=>setSuppF(e.target.value)} style={{...S.input,width:'180px'}}>
+          <input placeholder="Search name, EID, passport, designation, supplier…" value={search} onChange={e=>setSearch(e.target.value)} style={{...S.input,width:'280px'}}/>
+          <select value={suppF} onChange={e=>setSuppF(e.target.value)} style={{...S.input,width:'160px'}}>
             <option value="">All suppliers</option>
             {supplierList.map(s=><option key={s} value={s}>{s}</option>)}
+          </select>
+          <select value={readyF} onChange={e=>setReadyF(e.target.value)} style={{...S.input,width:'160px',borderColor:readyF?'#166534':undefined,fontWeight:readyF?700:400}}>
+            <option value="">All candidates</option>
+            <option value="ready">✅ Docs complete</option>
+            <option value="not_ready">❌ Docs incomplete</option>
           </select>
           <span style={{fontSize:'12px',color:'#64748b'}}>{filtered.length} people</span>
         </div>
@@ -1482,6 +1510,28 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
             </Field>
             <Field label="Visa Expiry"><input type="date" value={draft.visa_expiry||''} onChange={e=>setDraft(d=>({...d,visa_expiry:e.target.value}))} style={S.input}/></Field>
           </Grid>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Security Pass</div>
+          <Grid cols={3}>
+            <Field label="Security Pass No"><input value={draft.security_pass_no||''} onChange={e=>setDraft(d=>({...d,security_pass_no:e.target.value}))} style={S.input}/></Field>
+            <Field label="Security Pass Expiry"><input type="date" value={draft.security_pass_expiry||''} onChange={e=>setDraft(d=>({...d,security_pass_expiry:e.target.value}))} style={S.input}/></Field>
+          </Grid>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>ADNOC Medical</div>
+          <Grid cols={3}>
+            <Field label="ADNOC Medical Status">
+              <select value={draft.adnoc_medical_status||''} onChange={e=>setDraft(d=>({...d,adnoc_medical_status:e.target.value}))} style={S.input}>
+                <option value="">—</option>
+                <option value="Fit">Fit</option>
+                <option value="Unfit">Unfit</option>
+                <option value="Pending">Pending</option>
+              </select>
+            </Field>
+            <Field label="ADNOC Medical Date"><input type="date" value={draft.adnoc_medical_date||''} onChange={e=>setDraft(d=>({...d,adnoc_medical_date:e.target.value}))} style={S.input}/></Field>
+          </Grid>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Contact</div>
+          <Grid cols={3}>
+            <Field label="Email"><input type="email" value={draft.email||''} onChange={e=>setDraft(d=>({...d,email:e.target.value}))} style={S.input}/></Field>
+            <Field label="Phone"><input value={draft.phone||''} onChange={e=>setDraft(d=>({...d,phone:e.target.value}))} style={S.input}/></Field>
+          </Grid>
           <Field label="Remarks"><input value={draft.remarks||''} onChange={e=>setDraft(d=>({...d,remarks:e.target.value}))} style={{...S.input,marginBottom:'14px'}}/></Field>
           <div style={{display:'flex',gap:'8px'}}>
             <button style={S.btnPri} onClick={()=>onSave('candidates',draft,()=>setDraft(null))}>Save</button>
@@ -1494,30 +1544,27 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
         <div className="tbl-box drag-scroll" style={{maxHeight:'calc(100vh - var(--stk-2) - 32px)',overflowX:'auto',overflowY:'auto'}}>
         <table style={{width:'max-content',minWidth:'100%',borderCollapse:'collapse',tableLayout:'fixed'}}>
           <colgroup>
-            <col style={{width:'200px'}}/>
-            <col style={{width:'140px'}}/>
-            <col style={{width:'110px'}}/>
-            <col style={{width:'80px'}}/>
-            <col style={{width:'90px'}}/>
-            <col style={{width:'95px'}}/>
-            <col style={{width:'105px'}}/>
-            <col style={{width:'155px'}}/>
-            <col style={{width:'130px'}}/>
-            <col style={{width:'95px'}}/>
-            <col style={{width:'185px'}}/>
+            <col style={{width:'240px'}}/>{/* Name */}
+            <col style={{width:'130px'}}/>{/* Designation */}
+            <col style={{width:'110px'}}/>{/* Supplier */}
+            <col style={{width:'75px'}}/>{/* EmpNo */}
+            <col style={{width:'85px'}}/>{/* Nationality */}
+            <col style={{width:'90px'}}/>{/* DOB */}
+            <col style={{width:'100px'}}/>{/* Passport */}
+            <col style={{width:'155px'}}/>{/* EID */}
+            <col style={{width:'90px'}}/>{/* EID Expiry */}
+            <col style={{width:'120px'}}/>{/* Visa/Emirate */}
+            <col style={{width:'90px'}}/>{/* Visa Expiry */}
+            <col style={{width:'110px'}}/>{/* Sec Pass No */}
+            <col style={{width:'90px'}}/>{/* Sec Pass Exp */}
+            <col style={{width:'90px'}}/>{/* ADNOC Med */}
+            <col style={{width:'130px'}}/>{/* Phone */}
+            <col style={{width:'170px'}}/>{/* Actions */}
+            <col style={{width:'160px'}}/>{/* Readiness */}
           </colgroup>
           <thead><tr style={{background:'#f8fafc'}}>
             <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,background:'#f8fafc',borderRight:'2px solid #e2e8f0'}}>Name</th>
-            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Designation</th>
-            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Supplier</th>
-            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Emp No</th>
-            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Nationality</th>
-            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>DOB</th>
-            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Passport</th>
-            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Emirates ID</th>
-            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Visa / Emirate</th>
-            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Expiry</th>
-            <th style={{...S.th,position:'sticky',top:0,zIndex:12}}>Actions</th>
+            {['Designation','Supplier','Emp No','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa / Emirate','Visa Expiry','Sec Pass No','Sec Pass Exp','ADNOC Medical','Phone','Actions','Mob Readiness'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
           </tr></thead>
           <tbody>
             {filtered.length===0&&<tr><td colSpan={11} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
@@ -1532,9 +1579,9 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
                 onDoubleClick={e=>handleRowDblClick(c,e)}
                 title="Click to view documents · Double-click to edit">
                 {/* Name — frozen left col */}
-                <td className="frozen-col" style={{...S.td,fontWeight:700,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'200px',borderLeft:docPanel?.entity?.id===c.id?'3px solid #2563eb':'3px solid transparent',borderRight:'2px solid #e2e8f0',background:rowBg,paddingTop:'4px',paddingBottom:'4px'}}>
-                  <div style={{display:'flex',alignItems:'center',gap:'6px',overflow:'hidden'}}>
-                    <span style={{color:'#2563eb',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}} onClick={e=>{e.stopPropagation();personHistory(c);}}>{c.full_name}</span>
+                <td className="frozen-col" style={{...S.td,fontWeight:700,borderLeft:docPanel?.entity?.id===c.id?'3px solid #2563eb':'3px solid transparent',borderRight:'2px solid #e2e8f0',background:rowBg,paddingTop:'4px',paddingBottom:'4px',whiteSpace:'nowrap'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                    <span style={{color:'#2563eb',cursor:'pointer',textTransform:'uppercase',letterSpacing:'0.2px'}} onClick={e=>{e.stopPropagation();personHistory(c);}}>{c.full_name}</span>
                     <span style={{flexShrink:0,background:isOnSite?'#dcfce7':'#eff6ff',color:isOnSite?'#166534':'#2563eb',fontSize:'9px',fontWeight:800,padding:'1px 5px',borderRadius:6,whiteSpace:'nowrap'}}>
                       {isOnSite?'ON SITE':'FREE'}
                     </span>
@@ -1548,8 +1595,13 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
                 <td style={{...S.td,fontSize:'12px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.date_of_birth?fmtDOB(c.date_of_birth):'—'}</td>
                 <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',color:pExp?'#dc2626':'inherit',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.passport_no||'—'}{pExp&&<span style={{marginLeft:'4px',fontSize:'9px',fontWeight:800,color:'#dc2626'}}>EXP</span>}</td>
                 <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.emirates_id||'—'}</td>
+                <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px',color:(c.eid_expiry&&isExpired(c.eid_expiry))?'#dc2626':'inherit'}}>{fmtDate(c.eid_expiry)||'—'}</td>
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.visa_type||'—'} <span style={{color:'#94a3b8',fontSize:'11px'}}>{c.visa_location||''}</span></td>
                 <td style={{...S.td,color:vExp?'#dc2626':'inherit',fontWeight:vExp?700:400,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{fmtDate(c.visa_expiry)}{vExp&&<span style={{marginLeft:'4px',fontSize:'9px',fontWeight:800,color:'#dc2626'}}>EXP</span>}</td>
+                <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.security_pass_no||'—'}</td>
+                <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px',color:(c.security_pass_expiry&&isExpired(c.security_pass_expiry))?'#dc2626':'inherit'}}>{fmtDate(c.security_pass_expiry)||'—'}</td>
+                <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px',color:c.adnoc_medical_status==='Fit'?'#166534':c.adnoc_medical_status==='Unfit'?'#dc2626':'inherit',fontWeight:c.adnoc_medical_status?700:400}}>{c.adnoc_medical_status||'—'}{c.adnoc_medical_date&&<span style={{fontWeight:400,color:'#64748b',marginLeft:'4px'}}>{fmtDate(c.adnoc_medical_date)}</span>}</td>
+                <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.phone||'—'}</td>
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'2px',paddingBottom:'2px'}}>
                   <div style={{display:'flex',gap:'3px',alignItems:'center'}}>
                     <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px'}} onClick={e=>{e.stopPropagation();personHistory(c);}}>History</button>
@@ -1558,6 +1610,29 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
                     <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px',color:'#dc2626',border:'1px solid #fecaca'}} onClick={e=>{e.stopPropagation();onDelete('candidates',c);}}>Del</button>
                   </div>
                 </td>
+                {/* Mob Readiness — ✓/✗ per mandatory field */}
+                {(()=>{
+                  const rd = candidateReadiness(c);
+                  return (
+                    <td style={{...S.td,paddingTop:'4px',paddingBottom:'4px',whiteSpace:'nowrap'}}>
+                      <div style={{display:'flex',gap:'3px',flexWrap:'wrap'}}>
+                        {rd.checks.map(chk=>(
+                          <span key={chk.key} title={chk.label} style={{
+                            display:'inline-flex',alignItems:'center',gap:'2px',
+                            fontSize:'10px',fontWeight:700,padding:'1px 5px',borderRadius:4,
+                            background:chk.done?(chk.critical?'#dcfce7':'#f0fdf4'):(chk.critical?'#fee2e2':'#fef3c7'),
+                            color:chk.done?(chk.critical?'#166534':'#15803d'):(chk.critical?'#dc2626':'#b45309'),
+                          }}>
+                            {chk.done?'✓':'✗'} {chk.label}
+                          </span>
+                        ))}
+                      </div>
+                      <div style={{marginTop:'3px',fontSize:'10px',fontWeight:800,color:rd.coreReady?'#166534':'#dc2626'}}>
+                        {rd.ready?'✅ All complete':rd.coreReady?'⚠ Minor missing':`❌ ${rd.criticalMissing.length} critical missing`}
+                      </div>
+                    </td>
+                  );
+                })()}
               </tr>;
             })}
           </tbody>
