@@ -1524,7 +1524,7 @@ const MobTick = ({done,label,date,optional}) => {
 };
 
 // ── Planning Tab ──────────────────────────────────────────────────────────────
-function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=[]}) {
+function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=[], setTab=()=>{}}) {
   const [plans, setPlans]           = useState([]);
   const [activePlan, setActivePlan] = useState(null);
   const [planDraft, setPlanDraft]   = useState(null);
@@ -1958,15 +1958,48 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
                 </span>
               )}
             </div>
-            <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
-              <span style={{alignSelf:'center',fontSize:'12px',color:'#64748b'}}>{selected.size} selected</span>
-              <button style={S.btnSm} onClick={()=>selectAll([...sorted.green,...sorted.yellow])}>Select All</button>
-              <button style={S.btnSm} onClick={()=>selectAll(sorted.green)}>Select Ready</button>
-              <button style={S.btnSm} onClick={deselectAll}>Clear</button>
-              <button style={{...S.btnSm,background:'#166534',color:'#fff',border:'none',fontWeight:700}} onClick={()=>assignSelected()}>✓ Assign</button>
-              <button style={{...S.btnSm,background:'#dc2626',color:'#fff',border:'none',fontWeight:700}} onClick={()=>unassignSelected()}>✕ Unassign</button>
-              <button style={{...S.btnSm,background:'#7c3aed',color:'#fff',border:'none',fontWeight:700}} onClick={mobiliseSelected}>🚀 Mobilise → Fill MOB</button>
-              <button style={{...S.btnSm,background:'#b8972a',color:'#fff',border:'none'}} onClick={exportPlan}>⬇ Export Excel</button>
+            <div style={{display:'flex',gap:'5px',flexWrap:'wrap',alignItems:'center'}}>
+              {/* Selection count badge */}
+              <span style={{background:selected.size>0?'#1d4ed8':'#e2e8f0',color:selected.size>0?'#fff':'#64748b',
+                fontSize:'11px',fontWeight:700,padding:'3px 9px',borderRadius:12,minWidth:'28px',textAlign:'center'}}>
+                {selected.size} sel
+              </span>
+              {/* Selection controls */}
+              <button style={S.btnSm} onClick={()=>setSelected(new Set([...sorted.green,...sorted.yellow].map(c=>c.id)))}>
+                Select All
+              </button>
+              <button style={S.btnSm} onClick={()=>setSelected(new Set(sorted.green.map(c=>c.id)))}>
+                Select Ready
+              </button>
+              <button style={{...S.btnSm,color:'#dc2626'}} onClick={()=>setSelected(new Set())}
+                disabled={selected.size===0}>
+                Unselect All
+              </button>
+              {/* Divider */}
+              <span style={{width:'1px',height:'22px',background:'#e2e8f0',margin:'0 2px'}}/>
+              {/* Action buttons */}
+              <button style={{...S.btnSm,background:selected.size>0?'#166534':'#d1fae5',
+                color:selected.size>0?'#fff':'#6ee7b7',border:'none',fontWeight:700,
+                opacity:selected.size>0?1:0.5,cursor:selected.size>0?'pointer':'not-allowed'}}
+                onClick={()=>assignSelected()} disabled={selected.size===0}>
+                ✓ Assign
+              </button>
+              <button style={{...S.btnSm,background:selected.size>0?'#dc2626':'#fee2e2',
+                color:selected.size>0?'#fff':'#fca5a5',border:'none',fontWeight:700,
+                opacity:selected.size>0?1:0.5,cursor:selected.size>0?'pointer':'not-allowed'}}
+                onClick={()=>unassignSelected()} disabled={selected.size===0}>
+                ✕ Unassign
+              </button>
+              <button style={{...S.btnSm,background:selected.size>0?'#7c3aed':'#ede9fe',
+                color:selected.size>0?'#fff':'#c4b5fd',border:'none',fontWeight:700,
+                opacity:selected.size>0?1:0.5,cursor:selected.size>0?'pointer':'not-allowed'}}
+                onClick={mobiliseSelected} disabled={selected.size===0}>
+                🚀 Mobilise → Fill MOB
+              </button>
+              <button style={{...S.btnSm,background:'#b8972a',color:'#fff',border:'none'}}
+                onClick={exportPlan}>
+                ⬇ Export Excel
+              </button>
             </div>
           </div>
 
@@ -2003,7 +2036,7 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
             {/* GREEN section header */}
             <div style={{background:'#f0fdf4',borderBottom:'2px solid #86efac',padding:'8px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <span style={{fontWeight:800,fontSize:'13px',color:'#166534'}}>✅ {sorted.green.length} Ready to Mobilise</span>
-              <button style={{...S.btnSm,fontSize:'11px'}} onClick={()=>selectAll(sorted.green)}>Select all ready</button>
+              <button style={{...S.btnSm,fontSize:'11px'}} onClick={()=>setSelected(new Set(sorted.green.map(c=>c.id)))}>Select all ready</button>
             </div>
             <div style={{maxHeight:'320px',overflowY:'auto',padding:'8px',display:'flex',flexDirection:'column',gap:'5px',background:'#f8fff8'}}>
               {sorted.green.length===0&&<div style={{padding:'16px',textAlign:'center',color:'#64748b',fontSize:'12px'}}>No candidates meet all requirements yet.</div>}
@@ -2012,7 +2045,7 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
             {/* YELLOW section header */}
             <div style={{background:'#fffbeb',borderTop:'2px solid #fde68a',borderBottom:'2px solid #fde68a',padding:'8px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <span style={{fontWeight:800,fontSize:'13px',color:'#92400e'}}>⚠ {sorted.yellow.length} Need Action (can still be selected)</span>
-              <button style={{...S.btnSm,fontSize:'11px'}} onClick={()=>selectAll(sorted.yellow)}>Select all pending</button>
+              <button style={{...S.btnSm,fontSize:'11px'}} onClick={()=>setSelected(new Set(sorted.yellow.map(c=>c.id)))}>Select all pending</button>
             </div>
             <div style={{maxHeight:'400px',overflowY:'auto',padding:'8px',display:'flex',flexDirection:'column',gap:'5px',background:'#fffef5'}}>
               {sorted.yellow.length===0&&<div style={{padding:'16px',textAlign:'center',color:'#64748b',fontSize:'12px'}}>All candidates are ready!</div>}
@@ -4402,7 +4435,7 @@ function App() {
           {loading&&tableReady===null&&<div style={{padding:'40px',textAlign:'center',color:'#94a3b8'}}>Loading…</div>}
           {!loading&&tableReady&&<>
             {tab==='dashboard'    &&<Dashboard data={data} loaUsed={loaUsed} setTab={t=>{setTab(t);}} setFilterStatus={setFilterStatus} hrMobActive={hrMobActive}/>}
-            {tab==='planning'     &&<PlanningTab candidates={data.candidates} mobList={data.mobList} requirements={data.requirements} loaList={data.loaList} onMobilise={(c,ctx)=>{handleMobilise(c,ctx||{});}}/>}
+            {tab==='planning'     &&<PlanningTab candidates={data.candidates} mobList={data.mobList} requirements={data.requirements} loaList={data.loaList} onMobilise={(c,ctx)=>{handleMobilise(c,ctx||{});}} setTab={t=>{setTab(t);}}/>}
             {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} onRefresh={loadAll} tabSearch={tabSearch} hrMobActive={hrMobActive} hrMobLocs={hrMobLocs} thresholds={data.thresholds}/>}
             {tab==='requirements' &&<RequirementsTab requirements={data.requirements} onSave={onSave}/>}
             {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
