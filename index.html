@@ -1771,14 +1771,14 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
     const dt = (aiData.doc_type || docType || '').toLowerCase();
     const updates = {};
 
-    // Passport
+    // Passport — only update name if currently empty, never touch designation
     if (dt.includes('passport') || aiData.passport_no) {
-      if (aiData.full_name)       updates.full_name       = aiData.full_name;
+      if (aiData.full_name && !docPanel.entity.full_name) updates.full_name = aiData.full_name;
       if (aiData.passport_no)     updates.passport_no     = aiData.passport_no;
       if (aiData.passport_expiry) updates.passport_expiry = aiData.passport_expiry;
       if (aiData.nationality)     updates.nationality     = aiData.nationality;
       if (aiData.date_of_birth)   updates.date_of_birth   = aiData.date_of_birth;
-      if (aiData.designation)     updates.designation     = aiData.designation;
+      // NEVER overwrite designation from any scan
     }
     // Emirates ID
     else if (dt.includes('emirates') || aiData.emirates_id) {
@@ -1793,14 +1793,14 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
       if (aiData.visa_expiry)  updates.visa_expiry  = aiData.visa_expiry;
       if (aiData.issue_date)   updates.visa_expiry  = aiData.issue_date; // fallback
     }
-    // CICPA gate pass / security pass
+    // CICPA gate pass / security pass — NEVER overwrite name or designation
     else if (dt.includes('cicpa') || aiData.cicpa_pass_no) {
-      if (aiData.cicpa_pass_no)  updates.security_pass_no     = aiData.cicpa_pass_no;
-      if (aiData.pass_expiry)    updates.security_pass_expiry = aiData.pass_expiry;
-      if (aiData.cicpa_expiry)   updates.security_pass_expiry = aiData.cicpa_expiry;
-      if (aiData.training_expiry)updates.security_pass_expiry = aiData.training_expiry;
-      if (aiData.site_location)  updates.cicpa_location       = aiData.site_location;
-      if (aiData.designation)    updates.designation          = aiData.designation;
+      if (aiData.cicpa_pass_no)   updates.security_pass_no     = aiData.cicpa_pass_no;
+      if (aiData.pass_expiry)     updates.security_pass_expiry = aiData.pass_expiry;
+      if (aiData.cicpa_expiry)    updates.security_pass_expiry = aiData.cicpa_expiry;
+      if (aiData.training_expiry) updates.security_pass_expiry = aiData.training_expiry;
+      if (aiData.site_location)   updates.cicpa_location       = aiData.site_location;
+      // Never touch full_name or designation from CICPA scan
     }
     // Medical / ADNOC Medical
     else if (dt.includes('medical') || aiData.medical_result || aiData.medical_date) {
@@ -1808,23 +1808,27 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
       if (aiData.medical_date)   updates.adnoc_medical_date   = aiData.medical_date;
       if (aiData.issue_date && !aiData.medical_date) updates.adnoc_medical_date = aiData.issue_date;
     }
-    // Fallback: fill whatever recognised fields exist
+    // Fallback: fill whatever recognised document fields exist — never overwrite designation or existing name
     else {
-      if (aiData.full_name)       updates.full_name       = aiData.full_name;
+      if (aiData.full_name && !docPanel.entity.full_name) updates.full_name = aiData.full_name;
       if (aiData.passport_no)     updates.passport_no     = aiData.passport_no;
       if (aiData.passport_expiry) updates.passport_expiry = aiData.passport_expiry;
       if (aiData.emirates_id)     updates.emirates_id     = aiData.emirates_id;
       if (aiData.eid_expiry)      updates.eid_expiry      = aiData.eid_expiry;
-      if (aiData.visa_no)         updates.visa_no         = aiData.visa_no;
       if (aiData.nationality)     updates.nationality     = aiData.nationality;
       if (aiData.date_of_birth)   updates.date_of_birth   = aiData.date_of_birth;
-      if (aiData.designation)     updates.designation     = aiData.designation;
-      if (aiData.cicpa_pass_no)   updates.security_pass_no = aiData.cicpa_pass_no;
-      if (aiData.site_location)   updates.cicpa_location  = aiData.site_location;
+      if (aiData.cicpa_pass_no)   updates.security_pass_no    = aiData.cicpa_pass_no;
+      if (aiData.site_location)   updates.cicpa_location       = aiData.site_location;
       if (aiData.pass_expiry)     updates.security_pass_expiry = aiData.pass_expiry;
     }
 
     if (!Object.keys(updates).length) { alert('No recognised fields found in this document.'); return; }
+
+    // Clean nationality — strip Arabic if parenthetical English exists e.g. "الهند (India)" → "India"
+    if (updates.nationality) {
+      const m = updates.nationality.match(/\(([^)]+)\)/);
+      if (m) updates.nationality = m[1];
+    }
 
     const { error } = await db.from('mob_candidates').update({...updates, updated_at: new Date().toISOString()}).eq('id', docPanel.entity.id);
     if (error) { alert(error.message); return; }
@@ -1926,21 +1930,25 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
                   };
                   // Unified field map — covers all document types
                   const directMap = {
-                    full_name:'full_name', passport_no:'passport_no', nationality:'nationality',
+                    passport_no:'passport_no', nationality:'nationality',
                     date_of_birth:'date_of_birth', passport_expiry:'passport_expiry',
                     emirates_id:'emirates_id', eid_expiry:'eid_expiry',
-                    visa_no:'visa_no', visa_type:'visa_type', visa_expiry:'visa_expiry',
-                    designation:'designation', phone:'phone',
+                    phone:'phone',
+                    // full_name handled separately (only if empty)
+                    // designation NEVER overwritten from scan
+                    // visa fields excluded — EID covers visa for UAE residents
                   };
                   try {
                     for (const file of files) {
                       const result = await aiScanDocument(file, 'other');
                       const detectedType = (result.doc_type || 'unknown').toLowerCase();
-                      // Map standard document fields
+                      // Map standard document fields — never overwrite existing values
                       Object.entries(result).forEach(([k,v]) => {
                         if(directMap[k] && v && !allUpdates[directMap[k]]) allUpdates[directMap[k]] = v;
                       });
-                      // CICPA gate pass / security pass
+                      // full_name: only if draft currently has no name
+                      if (result.full_name && !draft.full_name && !allUpdates.full_name) allUpdates.full_name = result.full_name;
+                      // CICPA gate pass / security pass — never touch name or designation
                       if (detectedType.includes('cicpa') || result.cicpa_pass_no) {
                         if (result.cicpa_pass_no && !allUpdates.security_pass_no)
                           allUpdates.security_pass_no = result.cicpa_pass_no;
@@ -1955,6 +1963,11 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
                         if (md && !allUpdates.adnoc_medical_date) allUpdates.adnoc_medical_date = md;
                       }
                       allResults.push({file:file.name, docType:detectedType, result});
+                    }
+                    // Clean nationality — remove Arabic text if it contains parenthetical English
+                    if (allUpdates.nationality) {
+                      const m = allUpdates.nationality.match(/\(([^)]+)\)/);
+                      if (m) allUpdates.nationality = m[1]; // extract English from e.g. "الهند (India)"
                     }
                     setDraft(d=>({...d,...allUpdates,_scanning:false,_scanResult:allResults}));
                   } catch(ex) { setDraft(d=>({...d,_scanning:false,_scanErr:ex.message})); }
@@ -2046,15 +2059,24 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
             <Field label="Passport Expiry"><input type="date" value={draft.passport_expiry||''} onChange={e=>setDraft(d=>({...d,passport_expiry:e.target.value}))} style={S.input}/></Field>
             <Field label="Emirates ID"><input value={draft.emirates_id||''} onChange={e=>setDraft(d=>({...d,emirates_id:e.target.value}))} style={S.input}/></Field>
             <Field label="EID Expiry"><input type="date" value={draft.eid_expiry||''} onChange={e=>setDraft(d=>({...d,eid_expiry:e.target.value}))} style={S.input}/></Field>
-            <Field label="Visa No"><input value={draft.visa_no||''} onChange={e=>setDraft(d=>({...d,visa_no:e.target.value}))} style={S.input}/></Field>
-            <Field label="Visa Type"><input value={draft.visa_type||''} onChange={e=>setDraft(d=>({...d,visa_type:e.target.value}))} placeholder="Employment / Visit / Mission" style={S.input}/></Field>
+          </Grid>
+          <Grid cols={4}>
             <Field label="Visa Issued Emirate">
-              <select value={draft.visa_location||''} onChange={e=>setDraft(d=>({...d,visa_location:e.target.value}))} style={S.input}>
-                <option value="">Select…</option>
-                {UAE_EMIRATES.map(e=><option key={e} value={e}>{e}</option>)}
+              <select value={draft.visa_location||''} onChange={e=>setDraft(d=>({...d,visa_location:e.target.value==='__other'?'':e.target.value,_visaOther:e.target.value==='__other'}))} style={S.input}>
+                <option value="">— Select Emirate —</option>
+                <option value="Abu Dhabi">Abu Dhabi</option>
+                <option value="Dubai">Dubai</option>
+                <option value="Sharjah">Sharjah</option>
+                <option value="Ajman">Ajman</option>
+                <option value="Ras Al Khaimah">Ras Al Khaimah</option>
+                <option value="Fujairah">Fujairah</option>
+                <option value="Umm Al Quwain">Umm Al Quwain</option>
+                <option value="__other">Other…</option>
               </select>
+              {(draft._visaOther||!['Abu Dhabi','Dubai','Sharjah','Ajman','Ras Al Khaimah','Fujairah','Umm Al Quwain',''].includes(draft.visa_location))&&(
+                <input value={draft.visa_location||''} onChange={e=>setDraft(d=>({...d,visa_location:e.target.value}))} placeholder="Enter emirate…" style={{...S.input,marginTop:'4px'}}/>
+              )}
             </Field>
-            <Field label="Visa Expiry"><input type="date" value={draft.visa_expiry||''} onChange={e=>setDraft(d=>({...d,visa_expiry:e.target.value}))} style={S.input}/></Field>
           </Grid>
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Security Pass & CICPA</div>
           {/* Confiscated warning banner */}
@@ -2147,8 +2169,7 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
             <col style={{width:'100px'}}/>{/* Passport */}
             <col style={{width:'155px'}}/>{/* EID */}
             <col style={{width:'90px'}}/>{/* EID Expiry */}
-            <col style={{width:'120px'}}/>{/* Visa/Emirate */}
-            <col style={{width:'90px'}}/>{/* Visa Expiry */}
+            <col style={{width:'90px'}}/>{/* Visa Emirate */}
             <col style={{width:'110px'}}/>{/* Sec Pass No */}
             <col style={{width:'90px'}}/>{/* Sec Pass Exp */}
             <col style={{width:'90px'}}/>{/* ADNOC Med */}
@@ -2164,10 +2185,10 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
           </colgroup>
           <thead><tr style={{background:'#f8fafc'}}>
             <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,background:'#f8fafc',borderRight:'2px solid #e2e8f0'}}>Name</th>
-            {['Status','Current Site','Designation','Supplier','Emp No','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa / Emirate','Visa Expiry','Sec Pass','Sec Exp','ADNOC Med','CICPA Location','Work Permit','Medical','HSE','H2S','CICPA','Ready?','Phone','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>{h}</th>)}
+            {['Status','Current Site','Designation','Supplier','Emp No','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa Emirate','Sec Pass','Sec Exp','ADNOC Med','CICPA Location','Work Permit','Medical','HSE','H2S','CICPA','Ready?','Phone','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>{h}</th>)}
           </tr></thead>
           <tbody>
-            {filtered.length===0&&<tr><td colSpan={25} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
+            {filtered.length===0&&<tr><td colSpan={24} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
             {filtered.map((c,idx)=>{
               const isOnSite = isOnSiteFn(c);
               const currentSite = hrMobLocs[c.supplier_emp_no] || '';
@@ -2175,7 +2196,6 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
               // color helpers per doc type
               const ppCol  = docColor('passport',      c.passport_expiry,      thresholds);
               const eidCol = docColor('eid',           c.eid_expiry,           thresholds);
-              const visCol = docColor('visa',          c.visa_expiry,          thresholds);
               const secCol = docColor('security_pass', c.security_pass_expiry, thresholds);
               const adnCol = c.adnoc_medical_status==='Fit'
                 ? {bg:'#dcfce7',color:'#166534',icon:'✓'}
@@ -2212,12 +2232,10 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
                 <Cell col={c.emirates_id?eidCol:{bg:'#fee2e2',color:'#991b1b',icon:'✗'}} text={c.emirates_id||'Missing'} title="Emirates ID"/>
                 {/* EID Expiry */}
                 <Cell col={eidCol} text={fmtDate(c.eid_expiry)} title="EID Expiry"/>
-                {/* Visa */}
-                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'3px',paddingBottom:'3px'}}>
-                  <span style={{fontSize:'11px'}}>{c.visa_type||'—'} <span style={{color:'#94a3b8'}}>{c.visa_location||''}</span></span>
+                {/* Visa Issued Emirate */}
+                <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px',color:c.visa_location?'#0369a1':'#94a3b8',fontWeight:c.visa_location?600:400}}>
+                  {c.visa_location||'—'}
                 </td>
-                {/* Visa Expiry */}
-                <Cell col={c.visa_no?visCol:{bg:'#fee2e2',color:'#991b1b',icon:'✗'}} text={c.visa_no?fmtDate(c.visa_expiry):'No Visa'} title="Visa Expiry"/>
                 {/* Security Pass */}
                 <Cell col={c.security_pass_no?secCol:{bg:'#f1f5f9',color:'#94a3b8',icon:'—'}} text={c.security_pass_no||'—'} title="Security Pass No"/>
                 {/* Security Pass Expiry */}
