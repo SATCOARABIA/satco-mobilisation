@@ -2659,6 +2659,7 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
         <div className="tbl-box drag-scroll" style={{maxHeight:'calc(100vh - var(--stk-2) - 32px)',overflowX:'auto',overflowY:'auto'}}>
         <table style={{width:'max-content',minWidth:'100%',borderCollapse:'collapse',tableLayout:'fixed'}}>
           <colgroup>
+            <col style={{width:'34px'}}/>{/* Checkbox */}
             <col style={{width:'240px'}}/>{/* Name */}
             <col style={{width:'80px'}}/>{/* Status */}
             <col style={{width:'110px'}}/>{/* Current Site */}
