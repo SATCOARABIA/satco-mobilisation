@@ -353,15 +353,14 @@ function usePersistentDraft(key) {
   const stored = React.useMemo(() => {
     try { const v = localStorage.getItem('satco_mob_draft_' + key); return v ? JSON.parse(v) : null; } catch { return null; }
   }, [key]);
-  const [draft, setDraftRaw] = useState(stored);
+  const [draft, setDraftRaw] = useState(stored); // auto-restore on mount
   const setDraft = useCallback((valOrFn) => {
     setDraftRaw(prev => {
       const next = typeof valOrFn === 'function' ? valOrFn(prev) : valOrFn;
       try {
-        // Only persist NEW drafts (no id) — editing existing records should never be stored
         if (next === null) localStorage.removeItem('satco_mob_draft_' + key);
         else if (!next.id) localStorage.setItem('satco_mob_draft_' + key, JSON.stringify(next));
-        else localStorage.removeItem('satco_mob_draft_' + key); // clear any stale draft when editing existing
+        else localStorage.removeItem('satco_mob_draft_' + key);
       } catch {}
       return next;
     });
@@ -427,7 +426,9 @@ Return ONLY a valid JSON object with these fields (include only what is visible)
   "emirates_id": "15-digit UAE ID number",
   "visa_no": "visa or entry permit number",
   "wp_no": "work permit number",
-  "cicpa_pass_no": "CICPA gate pass number",
+  "cicpa_pass_no": "CICPA gate pass number or security pass number",
+  "site_location": "facility, project or site name shown on the gate pass (e.g. TAZIZ, ADNOC Ruwais, GASCO Habshan)",
+  "pass_expiry": "YYYY-MM-DD expiry date of the gate pass or security pass",
   "nationality": "nationality or country",
   "date_of_birth": "YYYY-MM-DD",
   "passport_expiry": "YYYY-MM-DD if passport expiry",
@@ -1303,14 +1304,16 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, tabSe
   // Single click = highlight + open doc panel; double click = open edit form
   const handleRowClick = (cand, e) => {
     if (e.target.closest('button')) return;
+    if (draft) return; // edit form is open — don't open doc panel
     clearTimeout(clickTimer.current);
     clickTimer.current = setTimeout(() => {
       setDocPanel({entity: cand, entityType: 'candidate'});
-    }, 220);
+    }, 250);
   };
   const handleRowDblClick = (cand, e) => {
     if (e.target.closest('button')) return;
     clearTimeout(clickTimer.current);
+    setDocPanel(null); // close doc panel if open
     setDraft({...cand});
     setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);
   };
@@ -2236,14 +2239,16 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
 
   const handleRowClick = (r, e) => {
     if (e.target.closest('button')) return;
+    if (draft) return;
     clearTimeout(clickTimer.current);
     clickTimer.current = setTimeout(() => {
       setDocPanel({entity: r, entityType: 'mobilisation'});
-    }, 220);
+    }, 250);
   };
   const handleRowDblClick = (r, e) => {
     if (e.target.closest('button')) return;
     clearTimeout(clickTimer.current);
+    setDocPanel(null);
     setDraft({...r});
     setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);
   };
@@ -2272,12 +2277,20 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
       if (aiData.wp_no)       updates.wp_no            = aiData.wp_no;
       if (aiData.issue_date)  updates.wp_approved_date = aiData.issue_date;
     }
-    // CICPA
+    // CICPA / Security Gate Pass
     if (dt.includes('cicpa') || aiData.cicpa_pass_no) {
       if (aiData.cicpa_pass_no)   updates.cicpa_pass_no       = aiData.cicpa_pass_no;
       if (aiData.issue_date)      updates.cicpa_approved_date = aiData.issue_date;
       if (aiData.cicpa_expiry)    updates.cicpa_expiry_date   = aiData.cicpa_expiry;
       if (aiData.training_expiry) updates.cicpa_expiry_date   = aiData.training_expiry;
+      if (aiData.pass_expiry)     updates.cicpa_expiry_date   = aiData.pass_expiry;
+      // If scanning in Candidates context, also fill security_pass and cicpa_location
+      if (docPanel.entityType === 'candidate') {
+        if (aiData.cicpa_pass_no) updates.security_pass_no     = aiData.cicpa_pass_no;
+        if (aiData.pass_expiry)   updates.security_pass_expiry = aiData.pass_expiry;
+        if (aiData.cicpa_expiry)  updates.security_pass_expiry = aiData.cicpa_expiry;
+        if (aiData.site_location) updates.cicpa_location       = aiData.site_location;
+      }
     }
     // Medical
     if (dt.includes('medical') || aiData.medical_result || aiData.medical_date) {
