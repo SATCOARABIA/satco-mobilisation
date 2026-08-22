@@ -1212,16 +1212,24 @@ const MobTick = ({done,label,date,optional}) => {
 };
 
 // ── Planning Tab ──────────────────────────────────────────────────────────────
-function PlanningTab({candidates, mobList, onMobilise}) {
-  const [plans, setPlans]       = useState([]);
+function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=[]}) {
+  const [plans, setPlans]           = useState([]);
   const [activePlan, setActivePlan] = useState(null);
   const [planDraft, setPlanDraft]   = useState(null);
+  const [selected, setSelected]     = useState(new Set());
+  const [assignments, setAssignments] = useState({});
 
   const loadPlans = async() => {
     const {data} = await db.from('mob_deployment_plan').select('*').eq('active',true).order('created_at',{ascending:false});
     setPlans(data||[]);
   };
-  useEffect(()=>{ loadPlans(); },[]);
+  const loadAssignments = async() => {
+    const {data} = await db.from('mob_plan_assignments').select('candidate_id, plan_id, mob_deployment_plan(name,location)');
+    const map = {};
+    (data||[]).forEach(a=>{ map[a.candidate_id]={planId:a.plan_id, planName:a.mob_deployment_plan?.name, location:a.mob_deployment_plan?.location}; });
+    setAssignments(map);
+  };
+  useEffect(()=>{ loadPlans(); loadAssignments(); },[]);
 
   const savePlan = async(p) => {
     const {error,data} = p.id
@@ -1232,11 +1240,11 @@ function PlanningTab({candidates, mobList, onMobilise}) {
     setPlanDraft(null);
     if(!p.id && data) setActivePlan(data.id);
   };
-
   const deletePlan = async(id) => {
     if(!window.confirm('Remove this plan?')) return;
     await db.from('mob_deployment_plan').update({active:false}).eq('id',id);
-    await loadPlans();
+    await db.from('mob_plan_assignments').delete().eq('plan_id',id);
+    await loadPlans(); await loadAssignments();
     if(activePlan===id) setActivePlan(null);
   };
 
@@ -1245,73 +1253,174 @@ function PlanningTab({candidates, mobList, onMobilise}) {
     const mob = mobList.filter(m=>m.candidate_id===c.id||m.full_name===c.full_name)
       .sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
     const checks = [];
+    // Docs — EID implies visa, just check EID+passport
     checks.push({label:'Passport',    done:!!c.passport_no&&!!c.passport_expiry, action:'Edit candidate → add passport'});
     checks.push({label:'Emirates ID', done:!!c.emirates_id&&!!c.eid_expiry,      action:'Edit candidate → add EID'});
-    checks.push({label:'UAE Visa',    done:!!c.visa_no&&!!c.visa_expiry,         action:'Edit candidate → add visa'});
-    if(plan.designation) checks.push({label:`Trade: ${plan.designation}`, done:(c.designation||'').toLowerCase().includes(plan.designation.toLowerCase()), action:`Candidate designation must match ${plan.designation}`});
-    if(plan.cicpa_required)         checks.push({label:'CICPA Gate Pass',  done:c.cicpa_status==='active'&&!!c.security_pass_no, action:'Apply for CICPA gate pass via LOA', warning:c.cicpa_status==='confiscated'?'CICPA confiscated':''});
-    if(plan.adnoc_medical_required) checks.push({label:'ADNOC Medical',    done:!!c.adnoc_medical_status&&c.adnoc_medical_status!=='Unfit', action:'Edit candidate → add ADNOC medical'});
-    if(plan.medical_required)       checks.push({label:'Site Medical',     done:!!mob?.medical_done&&mob?.medical_result!=='Unfit', action:'Mobilisation → mark medical done'});
-    if(plan.wp_required)            checks.push({label:'Work Permit',      done:!!mob?.wp_approved_date, action:'Mobilisation → update work permit'});
-    if(plan.hse_required)           checks.push({label:'HSE Passport',     done:!!mob?.hse_passport_done, action:'Mobilisation → mark HSE done'});
-    if(plan.h2s_required)           checks.push({label:'H2S Training',     done:!!mob?.h2s_done, action:'Mobilisation → mark H2S done'});
+    if(plan.designation) checks.push({label:`Trade: ${plan.designation}`, done:(c.designation||'').toLowerCase().includes((plan.designation||'').toLowerCase()), action:`Designation must include "${plan.designation}"`});
+    if(plan.cicpa_required)         checks.push({label:'CICPA', done:c.cicpa_status==='active'&&!!c.security_pass_no, action:'Apply CICPA via LOA', warning:c.cicpa_status==='confiscated'?'⚠ Confiscated':''});
+    if(plan.adnoc_medical_required) checks.push({label:'ADNOC Med', done:!!c.adnoc_medical_status&&c.adnoc_medical_status!=='Unfit', action:'Edit candidate → ADNOC medical'});
+    if(plan.medical_required)       checks.push({label:'Site Medical', done:!!mob?.medical_done&&mob?.medical_result!=='Unfit', action:'Mobilisation → medical'});
+    if(plan.wp_required)            checks.push({label:'Work Permit', done:!!mob?.wp_approved_date, action:'Mobilisation → work permit'});
+    if(plan.hse_required)           checks.push({label:'HSE', done:!!mob?.hse_passport_done, action:'Mobilisation → HSE'});
+    if(plan.h2s_required)           checks.push({label:'H2S', done:!!mob?.h2s_done, action:'Mobilisation → H2S'});
     (plan.extra_trainings||[]).forEach(t=>{
       const found=(mob?.extra_trainings||[]).find(et=>(et.name||'').toLowerCase()===t.toLowerCase()&&et.done);
-      checks.push({label:t, done:!!found, action:`Complete ${t} training`});
+      checks.push({label:t, done:!!found, action:`Complete ${t}`});
     });
     const allMet = checks.every(x=>x.done);
     return {checks, allMet, missing:checks.filter(x=>!x.done)};
   },[mobList]);
 
   const plan = plans.find(p=>p.id===activePlan);
-  const {greenCands, yellowCands} = useMemo(()=>{
-    if(!plan) return {greenCands:[], yellowCands:[]};
+
+  const sorted = useMemo(()=>{
+    if(!plan) return {green:[],yellow:[]};
     const green=[], yellow=[];
     candidates.forEach(c=>{
       const r = meetsPlan(c,plan);
-      if(r?.allMet) green.push({...c,_pr:r});
-      else yellow.push({...c,_pr:r});
+      const obj = {...c,_pr:r};
+      if(r?.allMet) green.push(obj); else yellow.push(obj);
     });
-    return {greenCands:green, yellowCands:yellow};
+    return {green, yellow};
   },[candidates,plan,meetsPlan]);
 
+  // Toggle select
+  const toggleSelect = (id) => setSelected(s=>{ const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
+  const selectAll  = (arr) => setSelected(s=>{ const n=new Set(s); arr.forEach(c=>n.add(c.id)); return n; });
+  const deselectAll= ()    => setSelected(new Set());
+
+  // Assign selected to this plan → check for conflicts
+  const assignSelected = async() => {
+    if(!activePlan || selected.size===0) return;
+    const conflicts = [];
+    for(const cid of selected){
+      const ex = assignments[cid];
+      if(ex && ex.planId !== activePlan) conflicts.push({cid, planName:ex.planName, location:ex.location});
+    }
+    if(conflicts.length>0){
+      const names = conflicts.map(c=>{
+        const cand = candidates.find(x=>x.id===c.cid);
+        return `• ${cand?.full_name} — currently planned for "${c.planName}" (${c.location||'unknown site'})`;
+      }).join('\n');
+      const proceed = window.confirm(`⚠ Conflict — already planned for another site:\n\n${names}\n\nProceed? They will be removed from the other plan and assigned here.`);
+      if(!proceed) return;
+      // Remove from other plans
+      for(const c of conflicts){
+        await db.from('mob_plan_assignments').delete().eq('candidate_id',c.cid).eq('plan_id',c.planId);
+      }
+    }
+    // Upsert assignments
+    const rows = [...selected].map(cid=>({plan_id:activePlan, candidate_id:cid}));
+    await db.from('mob_plan_assignments').upsert(rows,{onConflict:'candidate_id,plan_id'});
+    await loadAssignments();
+    alert(`✓ ${selected.size} candidate${selected.size>1?'s':''} assigned to this plan.`);
+  };
+
+  // Move selected to mobilisation
+  const mobiliseSelected = () => {
+    const toMob = candidates.filter(c=>selected.has(c.id));
+    if(toMob.length===0){alert('Select at least one candidate.');return;}
+    // Mobilise one at a time — open first, user can repeat
+    onMobilise(toMob[0]);
+  };
+
+  // Export selected (or all) to Excel
+  const exportPlan = () => {
+    const toExport = candidates.filter(c=>selected.size>0?selected.has(c.id):true).map((c,i)=>{
+      const r = meetsPlan(c,plan||plans[0]);
+      const status = r?.allMet?'Ready':'Needs Action';
+      const missing = (r?.missing||[]).map(x=>x.label).join(', ');
+      return {
+        'S.No':i+1, 'Name':c.full_name, 'Designation':c.designation||'',
+        'EMP No':c.supplier_emp_no||'', 'Nationality':c.nationality||'',
+        'Passport No':c.passport_no||'', 'Passport Expiry':c.passport_expiry||'',
+        'Emirates ID':c.emirates_id||'', 'EID Expiry':c.eid_expiry||'',
+        'ADNOC Medical':c.adnoc_medical_status||'', 'CICPA Status':c.cicpa_status||'',
+        'CICPA Location':c.cicpa_location||'', 'Plan Status':status, 'Missing':missing,
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(toExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Candidates');
+    XLSX.writeFile(wb, `${plan?.name||'Plan'}_Candidates.xlsx`);
+  };
+
   const blankPlan = {name:'',customer_name:'',location:'',designation:'',headcount:1,
-    cicpa_required:false,medical_required:true,adnoc_medical_required:false,
-    wp_required:false,hse_required:false,h2s_required:false,extra_trainings:[],notes:''};
+    cicpa_required:false,medical_required:false,adnoc_medical_required:false,
+    wp_required:false,hse_required:false,h2s_required:false,extra_trainings:[],notes:'',
+    po_status:'pending',loa_status:'pending'};
+
+  const ReqBadge = ({chk}) => (
+    <span title={!chk.done?('Action: '+chk.action):''}
+      style={{fontSize:'10px',fontWeight:700,padding:'2px 7px',borderRadius:4,
+        background:chk.done?'#dcfce7':'#fee2e2',color:chk.done?'#166534':'#dc2626',whiteSpace:'nowrap'}}>
+      {chk.done?'✓':'✗'} {chk.label}{chk.warning?` (${chk.warning})`:''}
+    </span>
+  );
+
+  const CandRow = ({c, showCheck=true}) => {
+    const isSel = selected.has(c.id);
+    const assigned = assignments[c.id];
+    const isAssigned = assigned?.planId === activePlan;
+    const conflicted = assigned && assigned.planId !== activePlan;
+    return (
+      <div style={{background:isSel?'#eff6ff':'#fff',border:`1.5px solid ${isSel?'#2563eb':conflicted?'#fde68a':'#e2e8f0'}`,
+        borderRadius:'8px',padding:'8px 12px',display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap',cursor:'pointer'}}
+        onClick={()=>toggleSelect(c.id)}>
+        {showCheck&&<input type="checkbox" checked={isSel} readOnly style={{width:15,height:15,flexShrink:0,accentColor:'#2563eb'}}/>}
+        <div style={{minWidth:'190px',flexShrink:0}}>
+          <div style={{fontWeight:700,fontSize:'12px',color:'#0f172a',textTransform:'uppercase'}}>{c.full_name}</div>
+          <div style={{fontSize:'10px',color:'#64748b'}}>{c.designation||'—'} · {c.supplier_emp_no||'—'}</div>
+          {conflicted&&<div style={{fontSize:'9px',color:'#b45309',fontWeight:700}}>⚠ Planned: {assigned.planName}</div>}
+          {isAssigned&&<div style={{fontSize:'9px',color:'#166534',fontWeight:700}}>✓ Assigned to this plan</div>}
+        </div>
+        <div style={{display:'flex',gap:'3px',flexWrap:'wrap',flex:1}}>
+          {(c._pr?.checks||[]).map((chk,i)=><ReqBadge key={i} chk={chk}/>)}
+        </div>
+        {c._pr?.missing?.length>0&&(
+          <div style={{fontSize:'10px',color:'#b45309',flexShrink:0,maxWidth:'160px'}}>→ {c._pr.missing[0]?.action}</div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div style={{maxWidth:'1400px',margin:'0 auto',padding:'16px'}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'16px'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'16px',flexWrap:'wrap',gap:'8px'}}>
         <div>
           <div style={{fontWeight:800,fontSize:'18px',color:'#0f172a'}}>🎯 Mobilisation Planning</div>
-          <div style={{fontSize:'12px',color:'#64748b',marginTop:'2px'}}>Define requirements per deployment — candidates auto-sort into Ready and Needs Action</div>
+          <div style={{fontSize:'12px',color:'#64748b',marginTop:'2px'}}>Define requirements · Select candidates · Export or move to Mobilisation</div>
         </div>
         <button style={S.btnPri} onClick={()=>setPlanDraft({...blankPlan})}>+ New Plan</button>
       </div>
 
-      {/* Plan cards row */}
+      {/* Plan cards */}
       {plans.length>0&&(
         <div style={{display:'flex',gap:'10px',flexWrap:'wrap',marginBottom:'16px'}}>
           {plans.map(p=>{
             const isActive = activePlan===p.id;
             const green = candidates.filter(c=>meetsPlan(c,p)?.allMet).length;
-            const total = candidates.length;
             return (
-              <div key={p.id} onClick={()=>setActivePlan(isActive?null:p.id)}
-                style={{background:isActive?'#0f172a':'#fff',border:`2px solid ${isActive?'#0f172a':'#e2e8f0'}`,borderRadius:'10px',padding:'12px 16px',cursor:'pointer',minWidth:'200px',transition:'all 0.15s'}}>
+              <div key={p.id} onClick={()=>{setActivePlan(isActive?null:p.id);setSelected(new Set());}}
+                style={{background:isActive?'#0f172a':'#fff',border:`2px solid ${isActive?'#0f172a':'#e2e8f0'}`,
+                  borderRadius:'10px',padding:'12px 16px',cursor:'pointer',minWidth:'200px'}}>
                 <div style={{fontWeight:800,fontSize:'14px',color:isActive?'#f8fafc':'#0f172a'}}>{p.name}</div>
-                {p.customer_name&&<div style={{fontSize:'11px',color:isActive?'#94a3b8':'#64748b',marginTop:'2px'}}>{p.customer_name}</div>}
+                {p.customer_name&&<div style={{fontSize:'11px',color:isActive?'#94a3b8':'#64748b'}}>{p.customer_name}</div>}
                 {p.location&&<div style={{fontSize:'11px',color:isActive?'#94a3b8':'#64748b'}}>{p.location}</div>}
-                <div style={{display:'flex',gap:'8px',marginTop:'8px',flexWrap:'wrap'}}>
-                  {p.designation&&<span style={{background:isActive?'#1e293b':'#f1f5f9',color:isActive?'#94a3b8':'#475569',fontSize:'10px',fontWeight:700,padding:'2px 8px',borderRadius:10}}>{p.designation}</span>}
-                  {p.headcount>0&&<span style={{background:isActive?'#1e293b':'#f1f5f9',color:isActive?'#94a3b8':'#475569',fontSize:'10px',fontWeight:700,padding:'2px 8px',borderRadius:10}}>{p.headcount} pax</span>}
-                  <span style={{background:'#dcfce7',color:'#166534',fontSize:'10px',fontWeight:700,padding:'2px 8px',borderRadius:10}}>{green} ready</span>
-                  <span style={{background:'#fef3c7',color:'#b45309',fontSize:'10px',fontWeight:700,padding:'2px 8px',borderRadius:10}}>{total-green} pending</span>
+                <div style={{display:'flex',gap:'4px',marginTop:'6px',flexWrap:'wrap'}}>
+                  <span style={{background:p.po_status==='issued'?'#dcfce7':'#fee2e2',color:p.po_status==='issued'?'#166534':'#dc2626',fontSize:'9px',fontWeight:700,padding:'1px 6px',borderRadius:8}}>{p.po_status==='issued'?'✓ PO':'⚠ No PO'}</span>
+                  <span style={{background:p.loa_status==='issued'?'#dcfce7':'#fee2e2',color:p.loa_status==='issued'?'#166534':'#dc2626',fontSize:'9px',fontWeight:700,padding:'1px 6px',borderRadius:8}}>{p.loa_status==='issued'?'✓ LOA':'⚠ No LOA'}</span>
+                </div>
+                <div style={{display:'flex',gap:'6px',marginTop:'8px',flexWrap:'wrap'}}>
+                  {p.designation&&<span style={{background:isActive?'#1e293b':'#f1f5f9',color:isActive?'#cbd5e1':'#475569',fontSize:'10px',fontWeight:700,padding:'2px 7px',borderRadius:10}}>{p.designation}</span>}
+                  {p.headcount>0&&<span style={{background:isActive?'#1e293b':'#f1f5f9',color:isActive?'#cbd5e1':'#475569',fontSize:'10px',fontWeight:700,padding:'2px 7px',borderRadius:10}}>{p.headcount} pax</span>}
+                  <span style={{background:'#dcfce7',color:'#166534',fontSize:'10px',fontWeight:700,padding:'2px 7px',borderRadius:10}}>{green} ready</span>
+                  <span style={{background:'#fef3c7',color:'#b45309',fontSize:'10px',fontWeight:700,padding:'2px 7px',borderRadius:10}}>{candidates.length-green} pending</span>
                 </div>
                 <div style={{display:'flex',gap:'6px',marginTop:'8px'}}>
-                  <button style={{...S.btnSm,padding:'2px 8px',fontSize:'10px',color:isActive?'#fff':undefined,borderColor:isActive?'#475569':undefined,background:isActive?'#1e293b':'transparent'}}
+                  <button style={{...S.btnSm,padding:'2px 8px',fontSize:'10px',color:isActive?'#fff':undefined,background:isActive?'#1e293b':'transparent',borderColor:isActive?'#475569':undefined}}
                     onClick={e=>{e.stopPropagation();setPlanDraft({...p,extra_trainings:p.extra_trainings||[]});}}>Edit</button>
-                  <button style={{...S.btnSm,padding:'2px 8px',fontSize:'10px',color:'#dc2626',borderColor:isActive?'#475569':undefined}}
+                  <button style={{...S.btnSm,padding:'2px 8px',fontSize:'10px',color:'#dc2626',borderColor:isActive?'#475569':undefined,background:isActive?'#1e293b':'transparent'}}
                     onClick={e=>{e.stopPropagation();deletePlan(p.id);}}>Delete</button>
                 </div>
               </div>
@@ -1323,38 +1432,123 @@ function PlanningTab({candidates, mobList, onMobilise}) {
       {/* Plan editor */}
       {planDraft&&(
         <div style={{...S.card,marginBottom:'16px',padding:'16px'}}>
-          <div style={{fontWeight:800,fontSize:'14px',marginBottom:'12px'}}>{planDraft.id?'Edit Deployment Plan':'New Deployment Plan'}</div>
+          <div style={{fontWeight:800,fontSize:'14px',marginBottom:'12px'}}>{planDraft.id?'Edit Plan':'New Deployment Plan'}</div>
+
+          {/* PO / LOA status toggles */}
+          <div style={{display:'flex',gap:'16px',marginBottom:'10px',flexWrap:'wrap',alignItems:'center'}}>
+            {[{key:'po_status',label:'PO'},{key:'loa_status',label:'LOA'}].map(({key,label})=>(
+              <div key={key} style={{display:'flex',gap:'6px',alignItems:'center'}}>
+                <span style={{fontSize:'12px',fontWeight:700,color:'#64748b'}}>{label}:</span>
+                {['issued','pending'].map(v=>(
+                  <label key={v} style={{display:'flex',gap:'5px',alignItems:'center',cursor:'pointer',
+                    background:(planDraft[key]||'pending')===v?(v==='issued'?'#dcfce7':'#fee2e2'):'#f8fafc',
+                    padding:'4px 10px',borderRadius:6,border:`1.5px solid ${(planDraft[key]||'pending')===v?(v==='issued'?'#86efac':'#fca5a5'):'#e2e8f0'}`}}>
+                    <input type="radio" checked={(planDraft[key]||'pending')===v} onChange={()=>setPlanDraft(d=>({...d,[key]:v}))} style={{accentColor:v==='issued'?'#166534':'#dc2626'}}/>
+                    <span style={{fontSize:'12px',fontWeight:600,color:(planDraft[key]||'pending')===v?(v==='issued'?'#166534':'#dc2626'):'#374151'}}>{v==='issued'?`✓ ${label} Issued`:`⚠ ${label} Pending`}</span>
+                  </label>
+                ))}
+              </div>
+            ))}
+          </div>
+          {((planDraft.po_status||'pending')!=='issued'||(planDraft.loa_status||'pending')!=='issued')&&(
+            <div style={{background:'#fef3c7',border:'1px solid #fde68a',borderRadius:'6px',padding:'8px 12px',marginBottom:'12px',fontSize:'12px',color:'#92400e',fontWeight:600}}>
+              ⚠ {[(planDraft.po_status||'pending')!=='issued'&&'PO not yet issued',(planDraft.loa_status||'pending')!=='issued'&&'LOA not yet issued'].filter(Boolean).join(' · ')} — planning can continue but mobilisation requires both before deployment.
+            </div>
+          )}
+
           <Grid cols={3}>
-            <Field label="Plan Name *"><input value={planDraft.name||''} onChange={e=>setPlanDraft(d=>({...d,name:e.target.value}))} placeholder="e.g. VOLTA TAZIZ Aug 2026" style={S.input}/></Field>
-            <Field label="Customer"><input value={planDraft.customer_name||''} onChange={e=>setPlanDraft(d=>({...d,customer_name:e.target.value}))} placeholder="Alghanim, ADNOC..." style={S.input}/></Field>
-            <Field label="Location / Site"><input value={planDraft.location||''} onChange={e=>setPlanDraft(d=>({...d,location:e.target.value}))} placeholder="TAZIZ, Ruwais, Habshan..." style={S.input}/></Field>
+            <Field label="Plan Name *">
+              <input value={planDraft.name||''} onChange={e=>setPlanDraft(d=>({...d,name:e.target.value}))} placeholder="e.g. VOLTA TAZIZ Aug 2026" style={S.input}/>
+            </Field>
+            <Field label="Customer">
+              <select value={planDraft.customer_name||''} onChange={e=>{
+                const cust=e.target.value;
+                const req=requirements.find(r=>r.customer_name===cust);
+                setPlanDraft(d=>({...d,customer_name:cust,location:req?.location||d.location}));
+              }} style={S.input}>
+                <option value="">— Select customer —</option>
+                {[...new Set(requirements.map(r=>r.customer_name).filter(Boolean))].map(c=><option key={c} value={c}>{c}</option>)}
+                <option value="__other">Other…</option>
+              </select>
+              {(planDraft.customer_name==='__other'||!requirements.find(r=>r.customer_name===planDraft.customer_name))&&planDraft.customer_name&&(
+                <input value={planDraft.customer_name==='__other'?'':planDraft.customer_name} onChange={e=>setPlanDraft(d=>({...d,customer_name:e.target.value}))} placeholder="Type customer name…" style={{...S.input,marginTop:'4px'}}/>
+              )}
+            </Field>
+            <Field label="Location / Site">
+              <select value={planDraft.location||''} onChange={e=>setPlanDraft(d=>({...d,location:e.target.value}))} style={S.input}>
+                <option value="">— Select location —</option>
+                {[...new Set(requirements.filter(r=>!planDraft.customer_name||r.customer_name===planDraft.customer_name).map(r=>r.location).filter(Boolean))].map(l=><option key={l} value={l}>{l}</option>)}
+                <option value="__other">Other…</option>
+              </select>
+              {(planDraft.location==='__other'||!requirements.find(r=>r.location===planDraft.location))&&planDraft.location&&(
+                <input value={planDraft.location==='__other'?'':planDraft.location} onChange={e=>setPlanDraft(d=>({...d,location:e.target.value}))} placeholder="Type location…" style={{...S.input,marginTop:'4px'}}/>
+              )}
+            </Field>
           </Grid>
+
           <Grid cols={3}>
-            <Field label="Designation / Trade"><input value={planDraft.designation||''} onChange={e=>setPlanDraft(d=>({...d,designation:e.target.value}))} placeholder="Grinder, Fitter Piping..." style={S.input}/></Field>
-            <Field label="Headcount Required"><input type="number" min={1} value={planDraft.headcount||1} onChange={e=>setPlanDraft(d=>({...d,headcount:+e.target.value}))} style={S.input}/></Field>
-            <Field label="PO / LOA Reference"><input value={planDraft.notes||''} onChange={e=>setPlanDraft(d=>({...d,notes:e.target.value}))} placeholder="PO-072-46, LOA-50..." style={S.input}/></Field>
+            <Field label="Designation / Trade">
+              {(()=>{
+                const opts=[...new Set(requirements.filter(r=>!planDraft.customer_name||r.customer_name===planDraft.customer_name).flatMap(r=>(r.positions||[]).map(p=>p.designation)).filter(Boolean))];
+                return (<>
+                  {opts.length>0&&<select value={planDraft.designation||''} onChange={e=>setPlanDraft(d=>({...d,designation:e.target.value}))} style={S.input}>
+                    <option value="">— Select trade —</option>
+                    {opts.map(p=><option key={p} value={p}>{p}</option>)}
+                    <option value="__other">Other…</option>
+                  </select>}
+                  {(planDraft.designation==='__other'||!opts.includes(planDraft.designation)||opts.length===0)&&(
+                    <input value={planDraft.designation==='__other'?'':planDraft.designation||''} onChange={e=>setPlanDraft(d=>({...d,designation:e.target.value}))} placeholder="Type trade/designation…" style={{...S.input,marginTop:opts.length>0?'4px':'0'}}/>
+                  )}
+                </>);
+              })()}
+            </Field>
+            <Field label="Headcount Required">
+              <input type="number" min={1} value={planDraft.headcount||1} onChange={e=>setPlanDraft(d=>({...d,headcount:+e.target.value}))} style={S.input}/>
+              {(()=>{const req=requirements.find(r=>r.customer_name===planDraft.customer_name&&r.location===planDraft.location);const pos=req&&(req.positions||[]).find(p=>p.designation===planDraft.designation);return pos?<div style={{fontSize:'10px',color:'#0369a1',marginTop:'2px'}}>PO quantity: {pos.qty} pax</div>:null;})()}
+            </Field>
+            <Field label="LOA / PO Reference">
+              <select value={planDraft.notes||''} onChange={e=>{
+                const val=e.target.value;
+                const loa=loaList.find(l=>l.loa_reference===val);
+                setPlanDraft(d=>({...d,notes:val,loa_status:loa?'issued':d.loa_status}));
+              }} style={S.input}>
+                <option value="">— Select LOA —</option>
+                {loaList.filter(l=>!planDraft.customer_name||l.customer_name===planDraft.customer_name).map(l=>(
+                  <option key={l.id} value={l.loa_reference||l.id}>{l.loa_reference||'LOA'} · {l.total_count} pax · {l.customer_name}</option>
+                ))}
+                <option value="__other">Type manually…</option>
+              </select>
+              {(planDraft.notes==='__other'||!loaList.find(l=>l.loa_reference===planDraft.notes))&&(
+                <input value={planDraft.notes==='__other'?'':planDraft.notes||''} onChange={e=>setPlanDraft(d=>({...d,notes:e.target.value}))} placeholder="PO ref / LOA ref…" style={{...S.input,marginTop:'4px'}}/>
+              )}
+              {loaList.find(l=>l.loa_reference===planDraft.notes)&&(()=>{
+                const loa=loaList.find(l=>l.loa_reference===planDraft.notes);
+                return <div style={{fontSize:'10px',color:'#166534',marginTop:'2px'}}>✓ {loa.total_count} pax available · {loa.notes||''}</div>;
+              })()}
+            </Field>
           </Grid>
-          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'12px 0 8px'}}>Requirements — check all that apply for this deployment</div>
-          <div style={{display:'flex',gap:'10px',flexWrap:'wrap',marginBottom:'12px'}}>
+
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'10px 0 8px'}}>Requirements — tick all that apply</div>
+          <div style={{display:'flex',gap:'8px',flexWrap:'wrap',marginBottom:'10px'}}>
             {[
-              {key:'cicpa_required',          label:'CICPA Gate Pass',   icon:'🔒'},
-              {key:'adnoc_medical_required',  label:'ADNOC Medical',     icon:'🏥'},
-              {key:'medical_required',        label:'Site Medical',      icon:'💊'},
-              {key:'wp_required',             label:'Work Permit',       icon:'📄'},
-              {key:'hse_required',            label:'HSE Passport',      icon:'🦺'},
-              {key:'h2s_required',            label:'H2S Training',      icon:'⚗️'},
+              {key:'cicpa_required',          label:'CICPA Gate Pass',  icon:'🔒'},
+              {key:'adnoc_medical_required',  label:'ADNOC Medical',    icon:'🏥'},
+              {key:'medical_required',        label:'Site Medical',     icon:'💊'},
+              {key:'wp_required',             label:'Work Permit',      icon:'📄'},
+              {key:'hse_required',            label:'HSE Passport',     icon:'🦺'},
+              {key:'h2s_required',            label:'H2S Training',     icon:'⚗️'},
             ].map(({key,label,icon})=>(
-              <label key={key} style={{display:'flex',gap:'8px',alignItems:'center',cursor:'pointer',
-                background:planDraft[key]?'#eff6ff':'#f8fafc',padding:'8px 14px',borderRadius:8,
-                border:`1.5px solid ${planDraft[key]?'#2563eb':'#e2e8f0'}`,transition:'all 0.1s'}}>
-                <input type="checkbox" checked={!!planDraft[key]} onChange={e=>setPlanDraft(d=>({...d,[key]:e.target.checked}))} style={{width:15,height:15,accentColor:'#2563eb'}}/>
-                <span style={{fontSize:'13px',fontWeight:planDraft[key]?700:400,color:planDraft[key]?'#1e40af':'#374151'}}>{icon} {label}</span>
+              <label key={key} style={{display:'flex',gap:'6px',alignItems:'center',cursor:'pointer',
+                background:planDraft[key]?'#eff6ff':'#f8fafc',padding:'6px 12px',borderRadius:6,
+                border:`1.5px solid ${planDraft[key]?'#2563eb':'#e2e8f0'}`}}>
+                <input type="checkbox" checked={!!planDraft[key]} onChange={e=>setPlanDraft(d=>({...d,[key]:e.target.checked}))} style={{width:14,height:14,accentColor:'#2563eb'}}/>
+                <span style={{fontSize:'12px',fontWeight:planDraft[key]?700:400,color:planDraft[key]?'#1e40af':'#374151'}}>{icon} {label}</span>
               </label>
             ))}
           </div>
-          <Field label="Additional Trainings Required (comma-separated)">
+          <Field label="Additional Trainings (comma-separated)">
             <input value={(planDraft.extra_trainings||[]).join(', ')} onChange={e=>setPlanDraft(d=>({...d,extra_trainings:e.target.value.split(',').map(x=>x.trim()).filter(Boolean)}))}
-              placeholder="First Aid, BOSIET, Fire Warden, Rigging..." style={S.input}/>
+              placeholder="First Aid, BOSIET, Fire Warden..." style={S.input}/>
           </Field>
           <div style={{display:'flex',gap:'8px',marginTop:'12px'}}>
             <button style={S.btnPri} onClick={()=>savePlan(planDraft)} disabled={!planDraft.name}>Save Plan</button>
@@ -1366,8 +1560,8 @@ function PlanningTab({candidates, mobList, onMobilise}) {
       {plans.length===0&&!planDraft&&(
         <div style={{...S.card,padding:'40px',textAlign:'center'}}>
           <div style={{fontSize:'40px',marginBottom:'12px'}}>🎯</div>
-          <div style={{fontWeight:700,fontSize:'16px',color:'#0f172a',marginBottom:'8px'}}>No deployment plans yet</div>
-          <div style={{color:'#64748b',fontSize:'13px',marginBottom:'16px'}}>Create a plan to define requirements for a specific deployment.<br/>Candidates will auto-sort into Ready and Needs Action.</div>
+          <div style={{fontWeight:700,fontSize:'16px',marginBottom:'8px'}}>No deployment plans yet</div>
+          <div style={{color:'#64748b',fontSize:'13px',marginBottom:'16px'}}>Create a plan to define requirements.<br/>Candidates auto-sort into Ready and Needs Action.</div>
           <button style={S.btnPri} onClick={()=>setPlanDraft({...blankPlan})}>+ Create First Plan</button>
         </div>
       )}
@@ -1375,90 +1569,66 @@ function PlanningTab({candidates, mobList, onMobilise}) {
       {/* Active plan results */}
       {plan&&(
         <div>
-          <div style={{fontWeight:800,fontSize:'15px',color:'#0f172a',marginBottom:'12px'}}>
-            Results for: <span style={{color:'#2563eb'}}>{plan.name}</span>
-            {plan.notes&&<span style={{fontWeight:400,fontSize:'12px',color:'#64748b',marginLeft:'10px'}}>PO/LOA: {plan.notes}</span>}
+          {/* Header + actions */}
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'10px',flexWrap:'wrap',gap:'8px'}}>
+            <div>
+              <span style={{fontWeight:800,fontSize:'15px',color:'#0f172a'}}>{plan.name}</span>
+              {plan.notes&&<span style={{fontWeight:400,fontSize:'12px',color:'#64748b',marginLeft:'10px'}}>Ref: {plan.notes}</span>}
+              {plan.headcount>0&&<span style={{marginLeft:'10px',fontSize:'12px',color:sorted.green.length>=plan.headcount?'#166534':'#b45309',fontWeight:700}}>{sorted.green.length}/{plan.headcount} ready</span>}
+              {(plan.po_status!=='issued'||plan.loa_status!=='issued')&&(
+                <span style={{marginLeft:'10px',background:'#fef3c7',color:'#92400e',fontSize:'11px',fontWeight:700,padding:'2px 8px',borderRadius:6}}>
+                  ⚠ {[plan.po_status!=='issued'&&'PO pending',plan.loa_status!=='issued'&&'LOA pending'].filter(Boolean).join(' · ')}
+                </span>
+              )}
+            </div>
+            <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+              <span style={{alignSelf:'center',fontSize:'12px',color:'#64748b'}}>{selected.size} selected</span>
+              <button style={S.btnSm} onClick={()=>selectAll([...sorted.green,...sorted.yellow])}>Select All</button>
+              <button style={S.btnSm} onClick={()=>selectAll(sorted.green)}>Select Ready</button>
+              <button style={S.btnSm} onClick={deselectAll}>Clear</button>
+              <button style={{...S.btnSm,background:'#166534',color:'#fff',border:'none',fontWeight:700}} onClick={()=>assignSelected()}>✓ Assign Selected</button>
+              <button style={{...S.btnSm,background:'#7c3aed',color:'#fff',border:'none',fontWeight:700}} onClick={mobiliseSelected}>+ Mobilise Selected</button>
+              <button style={{...S.btnSm,background:'#b8972a',color:'#fff',border:'none'}} onClick={exportPlan}>⬇ Export Excel</button>
+            </div>
           </div>
 
-          {/* Requirements summary bar */}
-          <div style={{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'16px',padding:'10px 14px',background:'#f8fafc',borderRadius:'8px',border:'1px solid #e2e8f0'}}>
-            <span style={{fontSize:'11px',fontWeight:700,color:'#64748b',marginRight:'4px',alignSelf:'center'}}>REQUIRED:</span>
+          {/* Requirements bar */}
+          <div style={{display:'flex',gap:'5px',flexWrap:'wrap',marginBottom:'12px',padding:'8px 12px',background:'#f8fafc',borderRadius:'8px',border:'1px solid #e2e8f0',alignItems:'center'}}>
+            <span style={{fontSize:'11px',fontWeight:700,color:'#64748b',marginRight:'4px'}}>REQUIRED:</span>
             {[
-              {show:true,              label:'Passport + EID + Visa'},
-              {show:plan.designation,  label:`Trade: ${plan.designation}`},
-              {show:plan.cicpa_required,         label:'CICPA'},
-              {show:plan.adnoc_medical_required, label:'ADNOC Medical'},
-              {show:plan.medical_required,       label:'Site Medical'},
-              {show:plan.wp_required,            label:'Work Permit'},
-              {show:plan.hse_required,           label:'HSE'},
-              {show:plan.h2s_required,           label:'H2S'},
+              {show:true,label:'Passport + EID'},
+              {show:!!plan.designation,label:`Trade: ${plan.designation}`},
+              {show:plan.cicpa_required,label:'CICPA'},
+              {show:plan.adnoc_medical_required,label:'ADNOC Medical'},
+              {show:plan.medical_required,label:'Site Medical'},
+              {show:plan.wp_required,label:'Work Permit'},
+              {show:plan.hse_required,label:'HSE'},
+              {show:plan.h2s_required,label:'H2S'},
               ...(plan.extra_trainings||[]).map(t=>({show:true,label:t})),
             ].filter(x=>x.show).map((x,i)=>(
               <span key={i} style={{background:'#e2e8f0',color:'#374151',fontSize:'11px',fontWeight:600,padding:'2px 8px',borderRadius:10}}>{x.label}</span>
             ))}
           </div>
 
-          {/* GREEN: ready */}
-          <div style={{background:'#f0fdf4',border:'2px solid #86efac',borderRadius:'10px',padding:'14px 16px',marginBottom:'12px'}}>
-            <div style={{fontWeight:800,fontSize:'14px',color:'#166534',marginBottom:'10px',display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}}>
-              <span>✅ {greenCands.length} Ready to Mobilise</span>
-              {plan.headcount>0&&(
-                <span style={{fontWeight:400,fontSize:'12px',padding:'3px 10px',borderRadius:10,
-                  background:greenCands.length>=plan.headcount?'#bbf7d0':'#fef3c7',
-                  color:greenCands.length>=plan.headcount?'#166534':'#b45309'}}>
-                  {greenCands.length} / {plan.headcount} needed {greenCands.length>=plan.headcount?'— FULL ✓':'— need more'}
-                </span>
-              )}
+          {/* Scrollable candidate list — Excel style one line per row */}
+          <div style={{...S.card,overflow:'hidden'}}>
+            {/* GREEN section header */}
+            <div style={{background:'#f0fdf4',borderBottom:'2px solid #86efac',padding:'8px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{fontWeight:800,fontSize:'13px',color:'#166534'}}>✅ {sorted.green.length} Ready to Mobilise</span>
+              <button style={{...S.btnSm,fontSize:'11px'}} onClick={()=>selectAll(sorted.green)}>Select all ready</button>
             </div>
-            {greenCands.length===0&&<div style={{color:'#15803d',fontSize:'13px'}}>No candidates meet all requirements yet. Check the yellow section below.</div>}
-            <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
-              {greenCands.map(c=>(
-                <div key={c.id} style={{background:'#fff',border:'1px solid #86efac',borderRadius:'8px',padding:'10px 14px',display:'flex',gap:'12px',alignItems:'center',minWidth:'240px'}}>
-                  <div style={{flex:1}}>
-                    <div style={{fontWeight:700,fontSize:'13px',color:'#166534',textTransform:'uppercase'}}>{c.full_name}</div>
-                    <div style={{fontSize:'11px',color:'#15803d'}}>{c.designation||'—'} · {c.supplier_emp_no||'—'}</div>
-                    <div style={{display:'flex',gap:'3px',marginTop:'4px',flexWrap:'wrap'}}>
-                      {(c._pr?.checks||[]).map((chk,i)=>(
-                        <span key={i} style={{fontSize:'9px',fontWeight:700,padding:'1px 5px',borderRadius:3,background:'#dcfce7',color:'#166534'}}>✓ {chk.label}</span>
-                      ))}
-                    </div>
-                  </div>
-                  <button style={{...S.btnSm,background:'#166534',color:'#fff',border:'none',padding:'6px 14px',fontSize:'12px',fontWeight:700,flexShrink:0}} onClick={()=>onMobilise(c)}>+ Mobilise →</button>
-                </div>
-              ))}
+            <div style={{maxHeight:'320px',overflowY:'auto',padding:'8px',display:'flex',flexDirection:'column',gap:'5px',background:'#f8fff8'}}>
+              {sorted.green.length===0&&<div style={{padding:'16px',textAlign:'center',color:'#64748b',fontSize:'12px'}}>No candidates meet all requirements yet.</div>}
+              {sorted.green.map(c=><CandRow key={c.id} c={c}/>)}
             </div>
-          </div>
-
-          {/* YELLOW: needs action */}
-          <div style={{background:'#fffbeb',border:'2px solid #fde68a',borderRadius:'10px',padding:'14px 16px'}}>
-            <div style={{fontWeight:800,fontSize:'14px',color:'#92400e',marginBottom:'10px'}}>⚠ {yellowCands.length} Need Action</div>
-            {yellowCands.length===0&&<div style={{color:'#b45309',fontSize:'13px'}}>All candidates are ready!</div>}
-            <div style={{display:'flex',flexDirection:'column',gap:'8px'}}>
-              {yellowCands.map(c=>(
-                <div key={c.id} style={{background:'#fff',border:'1px solid #fde68a',borderRadius:'8px',padding:'10px 14px',display:'flex',gap:'12px',alignItems:'flex-start',flexWrap:'wrap'}}>
-                  <div style={{minWidth:'200px',flexShrink:0}}>
-                    <div style={{fontWeight:700,fontSize:'13px',color:'#92400e',textTransform:'uppercase'}}>{c.full_name}</div>
-                    <div style={{fontSize:'11px',color:'#b45309'}}>{c.designation||'—'} · {c.supplier_emp_no||'—'}</div>
-                    {c.cicpa_status==='confiscated'&&<div style={{fontSize:'10px',fontWeight:700,color:'#dc2626',marginTop:'3px'}}>⚠ CICPA Confiscated</div>}
-                  </div>
-                  <div style={{flex:1}}>
-                    <div style={{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'6px'}}>
-                      {(c._pr?.checks||[]).map((chk,i)=>(
-                        <span key={i} title={!chk.done?('Action: '+chk.action):''}
-                          style={{fontSize:'10px',fontWeight:700,padding:'2px 8px',borderRadius:4,cursor:!chk.done?'help':'default',
-                            background:chk.done?'#dcfce7':'#fee2e2',color:chk.done?'#166534':'#dc2626'}}>
-                          {chk.done?'✓':'✗'} {chk.label}
-                        </span>
-                      ))}
-                    </div>
-                    {c._pr?.missing?.length>0&&(
-                      <div style={{fontSize:'11px',color:'#b45309'}}>
-                        <strong>Next action:</strong> {c._pr.missing[0]?.action}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
+            {/* YELLOW section header */}
+            <div style={{background:'#fffbeb',borderTop:'2px solid #fde68a',borderBottom:'2px solid #fde68a',padding:'8px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{fontWeight:800,fontSize:'13px',color:'#92400e'}}>⚠ {sorted.yellow.length} Need Action (can still be selected)</span>
+              <button style={{...S.btnSm,fontSize:'11px'}} onClick={()=>selectAll(sorted.yellow)}>Select all pending</button>
+            </div>
+            <div style={{maxHeight:'400px',overflowY:'auto',padding:'8px',display:'flex',flexDirection:'column',gap:'5px',background:'#fffef5'}}>
+              {sorted.yellow.length===0&&<div style={{padding:'16px',textAlign:'center',color:'#64748b',fontSize:'12px'}}>All candidates are ready!</div>}
+              {sorted.yellow.map(c=><CandRow key={c.id} c={c}/>)}
             </div>
           </div>
         </div>
@@ -1466,6 +1636,7 @@ function PlanningTab({candidates, mobList, onMobilise}) {
     </div>
   );
 }
+
 
 function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRefresh, tabSearch, hrMobActive=new Set(), hrMobLocs={}, thresholds=[]}) {
   const [draft,setDraft]   = usePersistentDraft('candidate');
@@ -3687,7 +3858,7 @@ function App() {
           {loading&&tableReady===null&&<div style={{padding:'40px',textAlign:'center',color:'#94a3b8'}}>Loading…</div>}
           {!loading&&tableReady&&<>
             {tab==='dashboard'    &&<Dashboard data={data} loaUsed={loaUsed} setTab={t=>{setTab(t);}} setFilterStatus={setFilterStatus} hrMobActive={hrMobActive}/>}
-            {tab==='planning'     &&<PlanningTab candidates={data.candidates} mobList={data.mobList} onMobilise={c=>{handleMobilise(c);setTab('mobilisation');}}/>}
+            {tab==='planning'     &&<PlanningTab candidates={data.candidates} mobList={data.mobList} requirements={data.requirements} loaList={data.loaList} onMobilise={c=>{handleMobilise(c);setTab('mobilisation');}}/>}
             {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} onRefresh={loadAll} tabSearch={tabSearch} hrMobActive={hrMobActive} hrMobLocs={hrMobLocs} thresholds={data.thresholds}/>}
             {tab==='requirements' &&<RequirementsTab requirements={data.requirements} onSave={onSave}/>}
             {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
