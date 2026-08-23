@@ -8,9 +8,22 @@
 //   CRON_SECRET           — any random string you set
 
 export default async function handler(req, res) {
-  const authHeader = req.headers['authorization'];
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  // Allow: (1) valid CRON_SECRET bearer token, OR (2) same-origin request from the app (no auth header)
+  const authHeader = req.headers['authorization'] || '';
+  const cronSecret = process.env.CRON_SECRET;
+  const hasBearerToken = authHeader.startsWith('Bearer ');
+
+  // If a bearer token is provided, it must match CRON_SECRET
+  if (hasBearerToken && cronSecret && authHeader !== `Bearer ${cronSecret}`) {
     return res.status(401).json({ error: 'Unauthorized' });
+  }
+  // If CRON_SECRET is set and no token provided, allow same-origin requests (Referer from vercel.app)
+  // External cron calls without a token are blocked
+  if (!hasBearerToken && cronSecret) {
+    const referer = req.headers['referer'] || req.headers['origin'] || '';
+    if (!referer.includes('satco-mobilisation.vercel.app') && !referer.includes('localhost')) {
+      return res.status(401).json({ error: 'Unauthorized — provide CRON_SECRET bearer token' });
+    }
   }
 
   const SUPA_URL   = process.env.SUPABASE_URL || 'https://oaerqjrkdpuhiproppaz.supabase.co';
