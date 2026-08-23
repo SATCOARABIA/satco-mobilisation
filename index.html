@@ -950,26 +950,31 @@ function TopNav({tab, setTab, onSignOut, globalSearch, setGlobalSearch, searchRe
     {k:'requirements',l:'📋 Requirements'},
     {k:'loa',         l:'📄 LOA'},
     {k:'candidates',  l:'👥 Candidates'},
-    {k:'mobilisation',l:'🏗️ Mobilisation'},
+    {k:'mobilisation',l:'🏗 Mobilisation'},
     {k:'suppliers',   l:'🏭 Suppliers'},
     {k:'letters',     l:'✉️ Letters'},
     {k:'config',      l:'⚙️ Setup'},
   ];
+  const tabScrollRef = React.useRef(null);
   return (
     <div ref={navRef} style={{background:'#0f172a',color:'#fff',position:'sticky',top:0,zIndex:100,boxShadow:'0 2px 8px rgba(0,0,0,0.3)'}}>
-      <div style={{maxWidth:'1600px',margin:'0 auto',padding:'0 16px',display:'flex',alignItems:'center',gap:'12px',height:'56px'}}>
-        <div style={{flexShrink:0}}>
+      <div style={{maxWidth:'1600px',margin:'0 auto',padding:'0 8px',display:'flex',alignItems:'center',gap:'8px',height:'56px'}}>
+        <div style={{flexShrink:0,paddingLeft:'8px'}}>
           <div style={{fontSize:'11px',fontWeight:800,color:'#b8972a',letterSpacing:'2px',lineHeight:1}}>SATCO ARABIA</div>
           <div style={{fontSize:'13px',fontWeight:700,color:'#fff',lineHeight:1.4}}>Mobilisation</div>
         </div>
-        <div style={{display:'flex',gap:'2px',flex:1,overflowX:'auto'}}>
+        {/* Scroll left button */}
+        <button onClick={()=>tabScrollRef.current&&(tabScrollRef.current.scrollLeft-=120)} style={{background:'none',border:'none',color:'#94a3b8',cursor:'pointer',fontSize:'16px',padding:'0 2px',flexShrink:0,lineHeight:1}} title="Scroll tabs left">‹</button>
+        <div ref={tabScrollRef} style={{display:'flex',gap:'1px',flex:1,overflowX:'auto',scrollbarWidth:'none',msOverflowStyle:'none'}}>
           {tabs.map(t=>(
             <button key={t.k} onClick={()=>setTab(t.k)}
-              style={{padding:'6px 13px',background:tab===t.k?'#b8972a':'transparent',color:tab===t.k?'#fff':'#94a3b8',border:'none',borderRadius:'6px',fontWeight:700,fontSize:'12px',cursor:'pointer',whiteSpace:'nowrap'}}>
+              style={{padding:'6px 10px',background:tab===t.k?'#b8972a':'transparent',color:tab===t.k?'#fff':'#94a3b8',border:'none',borderRadius:'6px',fontWeight:700,fontSize:'11px',cursor:'pointer',whiteSpace:'nowrap',flexShrink:0}}>
               {t.l}
             </button>
           ))}
         </div>
+        {/* Scroll right button */}
+        <button onClick={()=>tabScrollRef.current&&(tabScrollRef.current.scrollLeft+=120)} style={{background:'none',border:'none',color:'#94a3b8',cursor:'pointer',fontSize:'16px',padding:'0 2px',flexShrink:0,lineHeight:1}} title="Scroll tabs right">›</button>
         <GlobalSearch value={globalSearch} onChange={setGlobalSearch} results={searchResults} onSelect={onSearchSelect} onClear={()=>setGlobalSearch('')} />
         <button onClick={onSignOut} style={{...S.btnSec,fontSize:'12px',padding:'5px 12px',flexShrink:0}}>Sign Out</button>
       </div>
