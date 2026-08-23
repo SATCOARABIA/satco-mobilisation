@@ -772,10 +772,15 @@ async function getSignedUrl(filePath) {
 async function aiScanDocument(file, docType) {
   const prompt = `You are reading an official document image from the oil & gas / construction industry in UAE. Identify the document type and extract ALL visible information.
 
+CRITICAL RULES FOR NAME EXTRACTION:
+- For PASSPORT: The primary person is identified by their photo and the MRZ (machine readable zone) at the bottom. The name in the MRZ is the correct name. Do NOT use names listed under "Name of Father", "Name of Mother", "Name of Spouse" — those are family members, not the passport holder.
+- For EMIRATES ID / RESIDENCE VISA: Use the "Name:" field shown prominently, or from the MRZ. The employer line is NOT the person's name.
+- If you see multiple names on a page, always pick the passport/ID HOLDER's name (shown with their photo or in MRZ), NOT family member names.
+
 Return ONLY a valid JSON object with these fields (include only what is visible):
 {
   "doc_type": "passport|emirates_id|uae_visa|medical_certificate|work_permit|cicpa_gate_pass|hse_passport|h2s_certificate|safety_training|first_aid|bosiet|chubet|scaffolding|fire_warden|other_training|other",
-  "full_name": "full name as written",
+  "full_name": "full name of the ID/passport HOLDER only — from MRZ or photo page, NOT family members listed on other pages",
   "passport_no": "passport number",
   "emirates_id": "15-digit UAE ID number",
   "visa_no": "visa or entry permit number",
@@ -2139,7 +2144,7 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
 }
 
 
-function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRefresh, tabSearch, hrMobActive=new Set(), hrMobLocs={}, thresholds=[]}) {
+function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onMobilise, onRefresh, tabSearch, hrMobActive=new Set(), hrMobLocs={}, thresholds=[]}) {
   const [draft,setDraft]   = usePersistentDraft('candidate');
   const [savedDraft, setSavedDraft] = useState(() => { try { const v=localStorage.getItem('satco_mob_draft_candidate'); return v?JSON.parse(v):null; } catch{return null;} });
   const [search,setSearch] = useState(tabSearch||'');
@@ -2180,35 +2185,24 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
       .then(({data})=>setSatcoEmps(data||[]));
   },[]);
 
-  // Auto-generate next supplier emp number based on supplier name prefix
-  const getNextEmpNo = useCallback((supplierName) => {
+  // Auto-generate next supplier emp number in format SUB-001-1001
+  // Uses mob_suppliers to find the supplier code, then finds next sequential number
+  const getNextEmpNo = useCallback((supplierName, suppliersList=[]) => {
     if (!supplierName) return '';
-    const name = supplierName.trim().toUpperCase();
-    // Derive prefix from supplier name (first 3-4 consonant-heavy chars)
-    let prefix = '';
-    // Check known suppliers first
-    const prefixMap = {};
-    // Build from existing candidates
-    candidates.filter(c=>c.supplier_name&&c.supplier_emp_no).forEach(c=>{
-      const p = (c.supplier_emp_no||'').replace(/\d+$/,'');
-      if (p && !prefixMap[c.supplier_name]) prefixMap[c.supplier_name] = p;
-    });
-    prefix = prefixMap[supplierName];
-    if (!prefix) {
-      // Auto-derive: take up to 4 uppercase letters from the name
-      const words = name.split(/\s+/);
-      if (words.length > 1) {
-        prefix = words.map(w=>w[0]).join('').slice(0,4);
-      } else {
-        prefix = name.replace(/[^A-Z]/g,'').slice(0,4);
-      }
-    }
-    // Find highest existing number for this supplier
+    // Find the supplier record to get its code (e.g. SUB-001)
+    const supplierRec = suppliersList.find(s => s.name === supplierName);
+    const supplierCode = supplierRec?.supplier_code || '';
+    const prefix = supplierCode ? `${supplierCode}-` : '';
+    // Find highest existing number for this supplier across all candidates
     const existing = candidates
-      .filter(c=>c.supplier_name===supplierName && c.supplier_emp_no)
-      .map(c=>{ const m=(c.supplier_emp_no||'').match(/(\d+)$/); return m?parseInt(m[1]):0; })
-      .filter(n=>!isNaN(n));
-    const next = existing.length > 0 ? Math.max(...existing)+1 : 1001;
+      .filter(c => c.supplier_name === supplierName && c.supplier_emp_no)
+      .map(c => {
+        // Handle both old format (BALA1001) and new format (SUB-001-1001)
+        const m = (c.supplier_emp_no||'').match(/(\d+)$/);
+        return m ? parseInt(m[1]) : 0;
+      })
+      .filter(n => !isNaN(n) && n > 0);
+    const next = existing.length > 0 ? Math.max(...existing) + 1 : 1001;
     return `${prefix}${next}`;
   }, [candidates]);
 
@@ -2223,7 +2217,12 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
     if (c.source==='satco_own' && c.supplier_emp_no && hrMobActive.has(c.supplier_emp_no)) return true;
     return false;
   }, [activeCandIds, activeNames, hrMobActive]);
-  const supplierList  = useMemo(()=>[...new Set(candidates.map(c=>c.supplier_name).filter(Boolean))].sort(),[candidates]);
+  // Build supplier list from mob_suppliers (full registry) + any names already in candidates
+  const supplierList = useMemo(() => {
+    const fromRegistry = suppliers.map(s => s.name).filter(Boolean);
+    const fromCandidates = candidates.map(c => c.supplier_name).filter(Boolean);
+    return [...new Set([...fromRegistry, ...fromCandidates])].sort();
+  }, [suppliers, candidates]);
 
   const filtered = useMemo(()=> candidates.filter(c=>{
     if (excludeOnSite && (activeCandIds.has(c.id)||activeNames.has((c.full_name||'').toLowerCase().trim()))) return false;
@@ -2569,20 +2568,24 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
             </Field>
             {draft.source==='supplier'&&<>
               <Field label="Supplier Company">
-                <input value={draft.supplier_name||''} list="supp-list"
+                <select value={draft.supplier_name||''} style={S.input}
                   onChange={e=>{
-                    const name=e.target.value;
-                    const nextNo=getNextEmpNo(name);
-                    setDraft(d=>({...d,supplier_name:name,supplier_emp_no:d.supplier_emp_no||nextNo}));
-                  }}
-                  style={S.input}/>
-                <datalist id="supp-list">{supplierList.map(s=><option key={s} value={s}/>)}</datalist>
-                <div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Emp No auto-assigned when you select supplier · <span style={{color:'#b8972a',cursor:'pointer',textDecoration:'underline'}} onClick={()=>{}}>Manage in Suppliers tab</span></div>
+                    const name = e.target.value;
+                    const nextNo = getNextEmpNo(name, suppliers);
+                    setDraft(d=>({...d, supplier_name:name, supplier_emp_no:nextNo}));
+                  }}>
+                  <option value="">— Select Supplier —</option>
+                  {supplierList.map(s => {
+                    const rec = suppliers.find(x=>x.name===s);
+                    return <option key={s} value={s}>{rec?.supplier_code ? `${rec.supplier_code} · ` : ''}{s}</option>;
+                  })}
+                </select>
+                <div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Select from registered suppliers · <span style={{color:'#b8972a',cursor:'pointer',textDecoration:'underline'}} onClick={()=>{}}>Manage in Suppliers tab</span></div>
               </Field>
               <Field label="Supplier Emp No">
                 <input value={draft.supplier_emp_no||''} onChange={e=>setDraft(d=>({...d,supplier_emp_no:e.target.value}))}
-                  placeholder="Auto-assigned e.g. REL1001" style={S.input}/>
-                <div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Auto-generated · edit if needed</div>
+                  placeholder="e.g. SUB-001-1001" style={S.input}/>
+                <div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Auto-generated as SUB-001-1001 · edit if needed</div>
               </Field>
             </>}
             {draft.source==='satco_own'&&(
@@ -5463,7 +5466,7 @@ function App() {
           {!loading&&tableReady&&<>
             {tab==='dashboard'    &&<Dashboard data={data} loaUsed={loaUsed} setTab={t=>{setTab(t);}} setFilterStatus={setFilterStatus} hrMobActive={hrMobActive}/>}
             {tab==='planning'     &&<PlanningTab candidates={data.candidates} mobList={data.mobList} requirements={data.requirements} loaList={data.loaList} onMobilise={(c,ctx)=>{handleMobilise(c,ctx||{});}} setTab={t=>{setTab(t);}} onRefreshAndFilter={async(cust,loc)=>{await loadAll();setBulkMobFilter({customer:cust,location:loc});setTab('mobilisation');setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),300);}} onBulkMobFilter={(cust,loc)=>{setBulkMobFilter({customer:cust,location:loc});setTab('mobilisation');}}/>}
-            {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} onRefresh={loadAll} tabSearch={tabSearch} hrMobActive={hrMobActive} hrMobLocs={hrMobLocs} thresholds={data.thresholds}/>}
+            {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} suppliers={data.suppliers} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} onRefresh={loadAll} tabSearch={tabSearch} hrMobActive={hrMobActive} hrMobLocs={hrMobLocs} thresholds={data.thresholds}/>}
             {tab==='requirements' &&<RequirementsTab requirements={data.requirements} onSave={onSave}/>}
             {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
             {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} requirements={data.requirements} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} onRefresh={loadAll} initialStatus={filterStatus} tabSearch={tabSearch} bulkMobFilter={bulkMobFilter} onClearBulkFilter={()=>setBulkMobFilter(null)}/>}
