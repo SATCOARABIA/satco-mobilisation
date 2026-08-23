@@ -261,8 +261,35 @@ const MAIN_SQL = `-- SATCO Mobilisation Portal — Run ONCE in HR Supabase SQL E
 
 CREATE TABLE IF NOT EXISTS mob_suppliers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name text NOT NULL UNIQUE, contact_name text, contact_phone text, contact_email text, remarks text, active boolean DEFAULT true, created_at timestamptz DEFAULT now()
+  name text NOT NULL UNIQUE,
+  supplier_code text UNIQUE,
+  supplier_services text,
+  address_state text,
+  license_number text,
+  license_expiry date,
+  vat_number text,
+  icv_score text,
+  contact_name text,
+  contact_phone text,
+  contact_phone2 text,
+  contact_email text,
+  remarks text,
+  attachments jsonb DEFAULT '{}',
+  active boolean DEFAULT true,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
 );
+-- Migration for existing installs (safe to run again)
+ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS supplier_code text;
+ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS supplier_services text;
+ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS address_state text;
+ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS license_number text;
+ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS license_expiry date;
+ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS vat_number text;
+ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS icv_score text;
+ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS contact_phone2 text;
+ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS attachments jsonb DEFAULT '{}';
+ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
 CREATE TABLE IF NOT EXISTS mob_candidates (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   full_name text NOT NULL, designation text, source text DEFAULT 'supplier',
@@ -880,6 +907,7 @@ function TopNav({tab, setTab, onSignOut, globalSearch, setGlobalSearch, searchRe
     {k:'loa',         l:'📄 LOA'},
     {k:'candidates',  l:'👥 Candidates'},
     {k:'mobilisation',l:'🏗️ Mobilisation'},
+    {k:'suppliers',   l:'🏭 Suppliers'},
     {k:'letters',     l:'✉️ Letters'},
     {k:'config',      l:'⚙️ Setup'},
   ];
@@ -2525,7 +2553,7 @@ function CandidatesTab({candidates, mobList, onSave, onDelete, onMobilise, onRef
                   }}
                   style={S.input}/>
                 <datalist id="supp-list">{supplierList.map(s=><option key={s} value={s}/>)}</datalist>
-                <div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Emp No auto-assigned when you select supplier</div>
+                <div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Emp No auto-assigned when you select supplier · <span style={{color:'#b8972a',cursor:'pointer',textDecoration:'underline'}} onClick={()=>{}}>Manage in Suppliers tab</span></div>
               </Field>
               <Field label="Supplier Emp No">
                 <input value={draft.supplier_emp_no||''} onChange={e=>setDraft(d=>({...d,supplier_emp_no:e.target.value}))}
@@ -4256,10 +4284,439 @@ function LettersTab({mobList}) {
   );
 }
 
+// ── Suppliers Tab ─────────────────────────────────────────────────────────────
+const SUPPLIER_SERVICES = ['MANPOWER SUPPLY','MECHANICAL','CIVIL','ELECTRICAL','EPC','INSTRUMENTATION','PIPING','HVAC','SCAFFOLDING','PAINTING','INSULATION','OTHER'];
+const UAE_EMIRATES_UPPER = ['ABU DHABI','DUBAI','SHARJAH','AJMAN','RAS AL KHAIMAH','FUJAIRAH','UMM AL QUWAIN'];
+
+function SuppliersTab({ suppliers, onRefresh }) {
+  const [draft, setDraft]         = useState(null);   // null = list, {} = new, {...s} = edit
+  const [search, setSearch]       = useState('');
+  const [serviceF, setServiceF]   = useState(new Set());
+  const [stateF, setStateF]       = useState(new Set());
+  const [saving, setSaving]       = useState(false);
+  const [aiStatus, setAiStatus]   = useState('');     // '' | 'processing' | 'done' | 'error'
+  const [aiMsg, setAiMsg]         = useState('');
+  const [deleteId, setDeleteId]   = useState(null);
+  const toolbarRef = useRef(null);
+
+  // Measure toolbar for sticky stacking
+  useEffect(() => { if (toolbarRef.current) measureToStk2(toolbarRef.current); }, []);
+
+  // ── Filtered list ─────────────────────────────────────────────────────────
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return suppliers.filter(s => {
+      if (serviceF.size && !serviceF.has(s.supplier_services||'')) return false;
+      if (stateF.size   && !stateF.has(s.address_state||''))      return false;
+      if (!q) return true;
+      return ['name','supplier_code','supplier_services','address_state','license_number','vat_number','contact_name','contact_email']
+        .some(f => (s[f]||'').toLowerCase().includes(q));
+    });
+  }, [suppliers, search, serviceF, stateF]);
+
+  // ── Stats ─────────────────────────────────────────────────────────────────
+  const stats = useMemo(() => {
+    const now = new Date();
+    let active=0, expiring=0, expired=0;
+    suppliers.forEach(s => {
+      if (!s.license_expiry) return;
+      const exp  = new Date(s.license_expiry);
+      const diff = (exp - now) / 86400000;
+      if (diff < 0)      expired++;
+      else if (diff < 90) expiring++;
+      else                active++;
+    });
+    return { total: suppliers.length, active, expiring, expired };
+  }, [suppliers]);
+
+  // ── Expiry colour ─────────────────────────────────────────────────────────
+  const expiryStyle = (dateStr) => {
+    if (!dateStr) return {};
+    const diff = (new Date(dateStr) - new Date()) / 86400000;
+    if (diff < 0)   return { background:'#fee2e2', color:'#991b1b', fontWeight:700 };
+    if (diff < 90)  return { background:'#fef3c7', color:'#b45309', fontWeight:700 };
+    return { background:'#dcfce7', color:'#166534', fontWeight:700 };
+  };
+
+  // ── Auto-generate supplier code ───────────────────────────────────────────
+  const nextCode = () => {
+    const nums = suppliers
+      .map(s => { const m = (s.supplier_code||'').match(/SUB-(\d+)/); return m ? parseInt(m[1]) : 0; })
+      .filter(n => n > 0);
+    const n = nums.length > 0 ? Math.max(...nums)+1 : 1;
+    return `SUB-${String(n).padStart(3,'0')}`;
+  };
+
+  // ── AI Extraction from uploaded document ─────────────────────────────────
+  const handleDocUpload = async (e, docType) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    e.target.value = '';
+    setAiStatus('processing');
+    setAiMsg(`Reading ${docType === 'trade' ? 'Trade License' : docType === 'commercial' ? 'Commercial License' : 'VAT Certificate'}…`);
+    try {
+      const { b64, mimeType, contentType } = await prepareFileForAI(file);
+      const docLabel = docType === 'trade' ? 'UAE Trade License / Commercial Registration' : docType === 'commercial' ? 'UAE Commercial License' : 'UAE VAT Registration Certificate';
+      const prompt = `You are reading a ${docLabel}. Extract ALL visible fields and return ONLY a valid JSON object with these exact keys (empty string "" if not visible):
+{
+  "name": "full legal company name exactly as written",
+  "license_number": "license/trade registration number (e.g. CN-XXXXXXX, TL-XXXXXXX, or similar)",
+  "license_expiry": "YYYY-MM-DD expiry date",
+  "vat_number": "VAT registration / TRN number (15-digit)",
+  "address_state": "emirate where registered (ABU DHABI, DUBAI, SHARJAH, etc.)",
+  "contact_name": "owner, responsible person, or manager name if shown",
+  "contact_email": "email address if shown",
+  "contact_phone": "phone or mobile if shown"
+}
+Return ONLY the JSON. No markdown, no backticks, no explanation.`;
+      const contentBlock = { type: contentType, source: { type: 'base64', media_type: mimeType, data: b64 } };
+      const res = await fetch(CLAUDE_PROXY, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 800,
+          messages: [{ role: 'user', content: [contentBlock, { type:'text', text: prompt }] }] })
+      });
+      if (!res.ok) throw new Error('API error ' + res.status);
+      const data = await res.json();
+      const text = (data.content||[]).map(c=>c.text||'').join('').trim();
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error('No JSON returned');
+      const extracted = JSON.parse(match[0]);
+
+      // Merge into draft — only fill blank fields
+      setDraft(d => {
+        const upd = { ...d };
+        if (extracted.name         && !upd.name)           upd.name           = extracted.name;
+        if (extracted.license_number && !upd.license_number) upd.license_number = extracted.license_number;
+        if (extracted.license_expiry && !upd.license_expiry) upd.license_expiry = extracted.license_expiry;
+        if (extracted.vat_number   && !upd.vat_number)     upd.vat_number     = extracted.vat_number;
+        if (extracted.contact_name && !upd.contact_name)   upd.contact_name   = extracted.contact_name;
+        if (extracted.contact_email&& !upd.contact_email)  upd.contact_email  = extracted.contact_email;
+        if (extracted.contact_phone&& !upd.contact_phone)  upd.contact_phone  = extracted.contact_phone;
+        if (extracted.address_state) {
+          const up = extracted.address_state.toUpperCase().trim();
+          const match = UAE_EMIRATES_UPPER.find(e => up.includes(e) || e.includes(up));
+          if (match && !upd.address_state) upd.address_state = match;
+        }
+        // Store attachment reference
+        const atts = { ...(upd.attachments||{}) };
+        atts[docType] = { name: file.name, size: file.size };
+        upd.attachments = atts;
+        return upd;
+      });
+
+      setAiStatus('done');
+      setAiMsg(`✓ ${docType === 'vat' ? 'VAT Certificate' : docType === 'trade' ? 'Trade License' : 'Commercial License'} scanned — fields filled below. Review and save.`);
+    } catch (err) {
+      setAiStatus('error');
+      setAiMsg('⚠ AI extraction failed: ' + err.message + ' — fill fields manually.');
+    }
+  };
+
+  // ── Save supplier ─────────────────────────────────────────────────────────
+  const save = async () => {
+    if (!draft.name?.trim()) return alert('Vendor name is required');
+    setSaving(true);
+    const clean = { ...draft };
+    delete clean._ui;
+    Object.keys(clean).forEach(k => { if (clean[k] === '') clean[k] = null; });
+    clean.updated_at = new Date().toISOString();
+    const { error } = draft.id
+      ? await db.from('mob_suppliers').update(clean).eq('id', draft.id)
+      : await db.from('mob_suppliers').insert({ ...clean, supplier_code: clean.supplier_code || nextCode(), created_at: new Date().toISOString() });
+    setSaving(false);
+    if (error) return alert(error.message);
+    setDraft(null);
+    setAiStatus(''); setAiMsg('');
+    await onRefresh();
+  };
+
+  // ── Delete supplier ───────────────────────────────────────────────────────
+  const doDelete = async (id) => {
+    const { error } = await db.from('mob_suppliers').delete().eq('id', id);
+    if (error) return alert(error.message);
+    setDeleteId(null);
+    await onRefresh();
+  };
+
+  // ── Export CSV ────────────────────────────────────────────────────────────
+  const exportCSV2 = () => {
+    const cols = [
+      {label:'SR'},
+      {label:'Supplier Code',key:'supplier_code'},
+      {label:'Vendor Name',key:'name'},
+      {label:'Supplier Services',key:'supplier_services'},
+      {label:'Address State',key:'address_state'},
+      {label:'License #',key:'license_number'},
+      {label:'License Expiry',key:'license_expiry'},
+      {label:'VAT #',key:'vat_number'},
+      {label:'ICV',key:'icv_score'},
+      {label:'Email',key:'contact_email'},
+      {label:'Contact Person',key:'contact_name'},
+      {label:'Mob #',key:'contact_phone'},
+      {label:'Mob #2',key:'contact_phone2'},
+      {label:'Remarks',key:'remarks'},
+    ];
+    const rows = [cols.map(c=>c.label), ...filtered.map((s,i) =>
+      cols.map((c,ci) => ci===0 ? i+1 : (s[c.key]||''))
+    )];
+    const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    Object.assign(document.createElement('a'), {href:url, download:`SATCO_Suppliers_${todayStr()}.csv`}).click();
+    URL.revokeObjectURL(url);
+  };
+
+  const serviceOpts = useMemo(() => [...new Set(suppliers.map(s=>s.supplier_services).filter(Boolean))].sort().map(v=>({value:v,label:v})), [suppliers]);
+  const stateOpts   = useMemo(() => [...new Set(suppliers.map(s=>s.address_state).filter(Boolean))].sort().map(v=>({value:v,label:v})), [suppliers]);
+
+  // ── FORM VIEW ─────────────────────────────────────────────────────────────
+  if (draft !== null) {
+    return (
+      <div>
+        {/* Form header */}
+        <div style={{...S.card,padding:'14px 18px',marginBottom:'12px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div>
+            <div style={{fontWeight:800,fontSize:'16px',color:'#0f172a'}}>{draft.id ? '✏️ Edit Supplier' : '➕ Add Supplier'}</div>
+            <div style={{fontSize:'12px',color:'#64748b',marginTop:'2px'}}>Upload trade licence, commercial licence or VAT certificate — AI extracts data automatically</div>
+          </div>
+          <button style={S.btnSec} onClick={()=>{setDraft(null);setAiStatus('');setAiMsg('');}}>← Back to List</button>
+        </div>
+
+        {/* AI Document Upload */}
+        <div style={{...S.card,padding:'16px 18px',marginBottom:'12px'}}>
+          <div style={{fontWeight:800,fontSize:'13px',color:'#0f172a',marginBottom:'10px'}}>📎 Upload Documents — AI Auto-Fill</div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'12px',marginBottom:'10px'}}>
+            {[
+              {key:'trade',      label:'Trade License',      icon:'📄'},
+              {key:'commercial', label:'Commercial License',  icon:'📋'},
+              {key:'vat',        label:'VAT Certificate',    icon:'🧾'},
+            ].map(({key,label,icon}) => {
+              const has = !!(draft.attachments||{})[key];
+              return (
+                <label key={key} style={{
+                  border: `2px dashed ${has?'#b8972a':'#cbd5e1'}`,
+                  background: has ? 'rgba(184,151,42,0.05)' : '#f8fafc',
+                  borderRadius:'10px', padding:'18px 12px', textAlign:'center',
+                  cursor:'pointer', transition:'all .15s', display:'block',
+                }}>
+                  <input type="file" accept="image/*,application/pdf" style={{display:'none'}}
+                    onChange={e=>handleDocUpload(e,key)}/>
+                  <div style={{fontSize:'28px',marginBottom:'6px'}}>{icon}</div>
+                  <div style={{fontWeight:700,fontSize:'12px',color:'#0f172a'}}>{label}</div>
+                  <div style={{fontSize:'10px',color:'#64748b',marginTop:'2px'}}>PDF · JPG · PNG</div>
+                  {has && <div style={{fontSize:'10px',color:'#b8972a',fontWeight:700,marginTop:'4px'}}>✓ {(draft.attachments[key].name||'').slice(0,22)}</div>}
+                </label>
+              );
+            })}
+          </div>
+          {aiStatus && (
+            <div style={{
+              padding:'10px 14px', borderRadius:'8px', fontSize:'13px', fontWeight:600,
+              background: aiStatus==='processing'?'#eff6ff': aiStatus==='done'?'#f0fdf4':'#fee2e2',
+              color:       aiStatus==='processing'?'#1e40af': aiStatus==='done'?'#166534':'#991b1b',
+              border:`1px solid ${aiStatus==='processing'?'#bfdbfe':aiStatus==='done'?'#bbf7d0':'#fecaca'}`,
+              display:'flex', alignItems:'center', gap:'8px',
+            }}>
+              {aiStatus==='processing' && <span style={{display:'inline-block',width:14,height:14,border:'2px solid #bfdbfe',borderTopColor:'#1e40af',borderRadius:'50%',animation:'spin .8s linear infinite',flexShrink:0}}/>}
+              <span>{aiStatus==='processing'?'⏳ ':''}{aiMsg}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Supplier Details Form */}
+        <div style={{...S.card,padding:'16px 18px'}}>
+          <div style={{fontWeight:700,fontSize:'12px',color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'12px',paddingBottom:'8px',borderBottom:'1px solid #e2e8f0'}}>Supplier Information</div>
+          <Grid cols={3}>
+            <Field label="Supplier Code">
+              <input value={draft.supplier_code||''} onChange={e=>setDraft(d=>({...d,supplier_code:e.target.value}))}
+                placeholder={draft.id?'':nextCode()} style={S.input}/>
+              <div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Auto-generated if blank</div>
+            </Field>
+            <Field label="Vendor Name *" span={2}>
+              <input value={draft.name||''} onChange={e=>setDraft(d=>({...d,name:e.target.value}))}
+                placeholder="e.g. BAB AL JANAH GENERAL CONTRACTING LLC" style={{...S.input}}/>
+            </Field>
+          </Grid>
+          <Grid cols={3}>
+            <Field label="Supplier Services">
+              <select value={draft.supplier_services||''} onChange={e=>setDraft(d=>({...d,supplier_services:e.target.value}))} style={S.input}>
+                <option value="">— Select —</option>
+                {SUPPLIER_SERVICES.map(s=><option key={s} value={s}>{s}</option>)}
+              </select>
+            </Field>
+            <Field label="Address / Emirate">
+              <select value={draft.address_state||''} onChange={e=>setDraft(d=>({...d,address_state:e.target.value}))} style={S.input}>
+                <option value="">— Select —</option>
+                {UAE_EMIRATES_UPPER.map(e=><option key={e} value={e}>{e}</option>)}
+              </select>
+            </Field>
+            <Field label="ICV Score">
+              <input value={draft.icv_score||''} onChange={e=>setDraft(d=>({...d,icv_score:e.target.value}))} placeholder="e.g. 72.5" style={S.input}/>
+            </Field>
+          </Grid>
+
+          <div style={{fontWeight:700,fontSize:'12px',color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'12px',paddingBottom:'8px',borderBottom:'1px solid #e2e8f0',marginTop:'4px'}}>License & VAT</div>
+          <Grid cols={3}>
+            <Field label="License #">
+              <input value={draft.license_number||''} onChange={e=>setDraft(d=>({...d,license_number:e.target.value}))} placeholder="CN-XXXXXXX" style={S.input}/>
+            </Field>
+            <Field label="License Expiry">
+              <input type="date" value={draft.license_expiry||''} onChange={e=>setDraft(d=>({...d,license_expiry:e.target.value}))} style={S.input}/>
+            </Field>
+            <Field label="VAT Registration #">
+              <input value={draft.vat_number||''} onChange={e=>setDraft(d=>({...d,vat_number:e.target.value}))} placeholder="1004XXXXXXXXXXX (15 digits)" style={S.input}/>
+            </Field>
+          </Grid>
+
+          <div style={{fontWeight:700,fontSize:'12px',color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'12px',paddingBottom:'8px',borderBottom:'1px solid #e2e8f0',marginTop:'4px'}}>Contact Details</div>
+          <Grid cols={3}>
+            <Field label="Contact Person">
+              <input value={draft.contact_name||''} onChange={e=>setDraft(d=>({...d,contact_name:e.target.value}))} style={S.input}/>
+            </Field>
+            <Field label="Email">
+              <input type="email" value={draft.contact_email||''} onChange={e=>setDraft(d=>({...d,contact_email:e.target.value}))} style={S.input}/>
+            </Field>
+            <Field label="Mobile # 1">
+              <input value={draft.contact_phone||''} onChange={e=>setDraft(d=>({...d,contact_phone:e.target.value}))} placeholder="050 XXX XXXX" style={S.input}/>
+            </Field>
+            <Field label="Mobile # 2">
+              <input value={draft.contact_phone2||''} onChange={e=>setDraft(d=>({...d,contact_phone2:e.target.value}))} placeholder="050 XXX XXXX" style={S.input}/>
+            </Field>
+            <Field label="Remarks" span={2}>
+              <input value={draft.remarks||''} onChange={e=>setDraft(d=>({...d,remarks:e.target.value}))} style={S.input}/>
+            </Field>
+          </Grid>
+
+          <div style={{display:'flex',gap:'10px',marginTop:'16px',paddingTop:'14px',borderTop:'1px solid #e2e8f0'}}>
+            <button style={S.btnPri} onClick={save} disabled={saving}>{saving?'Saving…':'💾 Save Supplier'}</button>
+            <button style={S.btnSec} onClick={()=>{setDraft(null);setAiStatus('');setAiMsg('');}}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── LIST VIEW ─────────────────────────────────────────────────────────────
+  return (
+    <div>
+      {/* Stats row */}
+      <div style={{display:'flex',gap:'12px',marginBottom:'16px',flexWrap:'wrap'}}>
+        {[
+          {label:'Total Suppliers', value:stats.total,    bg:'#eff6ff', c:'#1e40af'},
+          {label:'Active Licenses', value:stats.active,   bg:'#f0fdf4', c:'#166534'},
+          {label:'Expiring ≤90d',   value:stats.expiring, bg:'#fef3c7', c:'#92400e'},
+          {label:'Expired',         value:stats.expired,  bg:'#fee2e2', c:'#991b1b'},
+        ].map(({label,value,bg,c})=>(
+          <div key={label} style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'12px 18px',display:'flex',gap:'14px',alignItems:'center',minWidth:'160px',flex:1}}>
+            <div>
+              <div style={{fontSize:'11px',color:'#64748b'}}>{label}</div>
+              <div style={{fontSize:'24px',fontWeight:800,color:'#0f172a'}}>{value}</div>
+            </div>
+            <div style={{width:36,height:36,borderRadius:'8px',background:bg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'16px',marginLeft:'auto',flexShrink:0,color:c,fontWeight:800}}>
+              {value}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Toolbar */}
+      <div ref={toolbarRef} className="sticky-toolbar" style={{padding:'10px 14px',display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap'}}>
+        <input placeholder="Search supplier name, code, license…" value={search} onChange={e=>setSearch(e.target.value)}
+          style={{...S.input,width:'280px'}}/>
+        <MultiSelect options={serviceOpts} selected={serviceF} onChange={setServiceF} placeholder="All services" width="180px"/>
+        <MultiSelect options={stateOpts}   selected={stateF}   onChange={setStateF}   placeholder="All states"   width="160px"/>
+        <span style={{fontSize:'12px',color:'#64748b',marginLeft:'auto'}}>{filtered.length} supplier{filtered.length!==1?'s':''}</span>
+        <button style={S.btnSec} onClick={exportCSV2}>⬇ Export CSV</button>
+        <button style={S.btnPri} onClick={()=>{setAiStatus('');setAiMsg('');setDraft({name:'',supplier_code:'',supplier_services:'',address_state:'',license_number:'',license_expiry:'',vat_number:'',icv_score:'',contact_name:'',contact_email:'',contact_phone:'',contact_phone2:'',remarks:'',attachments:{}});}}>+ Add Supplier</button>
+      </div>
+
+      {/* Table */}
+      <div style={{...S.card,marginTop:0,borderRadius:'0 0 10px 10px'}}>
+        <div className="tbl-box" style={{maxHeight:'calc(100vh - var(--stk-2) - 220px)'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:'1400px'}}>
+            <thead>
+              <tr>
+                {['SR','Supplier Code','Vendor Name','Supplier Services','Address State','License #','License Expiry','VAT #','ICV','Email','Contact Person','Mob #','Mob # 2','Remarks',''].map(h=>(
+                  <th key={h} style={{...S.th,whiteSpace:'nowrap',position:'sticky',top:0,zIndex:12,background:'#f8fafc'}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length===0&&(
+                <tr><td colSpan={15} style={{padding:'40px',textAlign:'center',color:'#94a3b8'}}>
+                  {suppliers.length===0 ? 'No suppliers yet — click + Add Supplier to get started.' : 'No suppliers match the filters.'}
+                </td></tr>
+              )}
+              {filtered.map((s,i)=>{
+                const es = expiryStyle(s.license_expiry);
+                const atts = s.attachments || {};
+                const attCount = Object.keys(atts).length;
+                return (
+                  <tr key={s.id} className="hr-row">
+                    <td style={{...S.td,color:'#94a3b8',fontSize:'11px',textAlign:'center',width:36}}>{i+1}</td>
+                    <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap'}}>
+                      <span style={{background:'#f1f5f9',padding:'2px 7px',borderRadius:5,fontWeight:700,color:'#0f172a'}}>{s.supplier_code||'—'}</span>
+                    </td>
+                    <td style={{...S.td,fontWeight:700,maxWidth:'240px'}}>
+                      <div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.name}</div>
+                      {attCount>0&&<div style={{fontSize:'10px',color:'#b8972a',marginTop:'2px'}}>📎 {attCount} doc{attCount>1?'s':''}</div>}
+                    </td>
+                    <td style={{...S.td,fontSize:'12px'}}>{s.supplier_services||'—'}</td>
+                    <td style={{...S.td,fontSize:'12px'}}>{s.address_state||'—'}</td>
+                    <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap'}}>{s.license_number||'—'}</td>
+                    <td style={{...S.td,whiteSpace:'nowrap'}}>
+                      {s.license_expiry
+                        ? <span style={{...es,padding:'2px 8px',borderRadius:6,fontSize:'11px'}}>{fmtDate(s.license_expiry)}</span>
+                        : <span style={{color:'#94a3b8'}}>—</span>}
+                    </td>
+                    <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap'}}>{s.vat_number||'—'}</td>
+                    <td style={{...S.td,textAlign:'center',fontSize:'12px'}}>{s.icv_score||'—'}</td>
+                    <td style={{...S.td,fontSize:'11px',maxWidth:'160px'}}>
+                      {s.contact_email ? <a href={`mailto:${s.contact_email}`} style={{color:'#0369a1'}}>{s.contact_email}</a> : '—'}
+                    </td>
+                    <td style={{...S.td,fontSize:'12px'}}>{s.contact_name||'—'}</td>
+                    <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap'}}>{s.contact_phone||'—'}</td>
+                    <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap'}}>{s.contact_phone2||'—'}</td>
+                    <td style={{...S.td,fontSize:'11px',color:'#64748b',maxWidth:'140px'}}>
+                      <div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.remarks||'—'}</div>
+                    </td>
+                    <td style={{...S.td,whiteSpace:'nowrap'}}>
+                      <div style={{display:'flex',gap:'4px'}}>
+                        <button style={S.btnSm} onClick={()=>{setAiStatus('');setAiMsg('');setDraft({...s,attachments:s.attachments||{}});}}>Edit</button>
+                        <button style={{...S.btnSm,color:'#dc2626'}} onClick={()=>setDeleteId(s.id)}>Del</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Delete confirm */}
+      {deleteId && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}
+          onClick={()=>setDeleteId(null)}>
+          <div style={{background:'#fff',borderRadius:'12px',width:'100%',maxWidth:'380px',padding:'24px'}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontWeight:800,fontSize:'16px',color:'#991b1b',marginBottom:'6px'}}>Delete Supplier?</div>
+            <div style={{fontSize:'13px',color:'#64748b',marginBottom:'18px'}}>
+              <strong>{suppliers.find(s=>s.id===deleteId)?.name}</strong> will be permanently removed.
+            </div>
+            <div style={{display:'flex',gap:'8px'}}>
+              <button style={S.btnRed} onClick={()=>doDelete(deleteId)}>Delete</button>
+              <button style={S.btnSec} onClick={()=>setDeleteId(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Config Tab ────────────────────────────────────────────────────────────────
 function ConfigTab({locConfigs, suppliers, onSave}) {
   const [locDraft,setLocDraft]=useState(null);
-  const [suppDraft,setSuppDraft]=useState(null);
   const [thresholds,setThresholds]=useState([]);
   const [thDraft,setThDraft]=useState(null);
 
@@ -4294,36 +4751,28 @@ function ConfigTab({locConfigs, suppliers, onSave}) {
       </div>
       <div style={S.card}>
         <div style={{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#f8fafc'}}>
-          <div style={{fontWeight:800,fontSize:'13px'}}>🏭 Labour Suppliers / Subcontractors</div>
-          <button style={S.btnPri} onClick={()=>setSuppDraft({name:'',contact_name:'',contact_phone:'',contact_email:'',remarks:''})}>+ Add Supplier</button>
-        </div>
-        {suppDraft&&(
-          <div style={{padding:'14px',background:'#fffbeb',borderBottom:'1px solid #e2e8f0'}}>
-            <Grid cols={3}>
-              <Field label="Supplier Name *"><input value={suppDraft.name||''} onChange={e=>setSuppDraft(d=>({...d,name:e.target.value}))} style={S.input}/></Field>
-              <Field label="Contact Person"><input value={suppDraft.contact_name||''} onChange={e=>setSuppDraft(d=>({...d,contact_name:e.target.value}))} style={S.input}/></Field>
-              <Field label="Phone"><input value={suppDraft.contact_phone||''} onChange={e=>setSuppDraft(d=>({...d,contact_phone:e.target.value}))} style={S.input}/></Field>
-              <Field label="Email"><input value={suppDraft.contact_email||''} onChange={e=>setSuppDraft(d=>({...d,contact_email:e.target.value}))} style={S.input}/></Field>
-              <Field label="Remarks"><input value={suppDraft.remarks||''} onChange={e=>setSuppDraft(d=>({...d,remarks:e.target.value}))} style={S.input}/></Field>
-            </Grid>
-            <div style={{display:'flex',gap:'8px',marginTop:'8px'}}>
-              <button style={S.btnPri} onClick={()=>{if(!suppDraft.name)return alert('Name required');onSave('suppliers',suppDraft,()=>setSuppDraft(null));}}>Save</button>
-              <button style={S.btnSec} onClick={()=>setSuppDraft(null)}>Cancel</button>
-            </div>
+          <div>
+            <div style={{fontWeight:800,fontSize:'13px'}}>🏭 Labour Suppliers / Subcontractors</div>
+            <div style={{fontSize:'11px',color:'#64748b',marginTop:'2px'}}>Manage full supplier registry (with AI document extraction) in the <strong>🏭 Suppliers</strong> tab above.</div>
           </div>
-        )}
+        </div>
         <table style={{width:'100%',borderCollapse:'collapse'}}>
-          <thead><tr>{['Name','Contact','Phone','Email','Remarks',''].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>{['Code','Name','Services','License #','Expiry','Contact','Phone',''].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>
-            {suppliers.length===0&&<tr><td colSpan={6} style={{padding:'16px',textAlign:'center',color:'#94a3b8'}}>No suppliers yet.</td></tr>}
-            {suppliers.map(s=><tr key={s.id} className="hr-row">
-              <td style={{...S.td,fontWeight:700}}>{s.name}</td>
-              <td style={S.td}>{s.contact_name||'—'}</td>
-              <td style={S.td}>{s.contact_phone||'—'}</td>
-              <td style={S.td}>{s.contact_email||'—'}</td>
-              <td style={S.td}>{s.remarks||'—'}</td>
-              <td style={S.td}><button style={S.btnSm} onClick={()=>setSuppDraft({...s})}>Edit</button></td>
-            </tr>)}
+            {suppliers.length===0&&<tr><td colSpan={8} style={{padding:'16px',textAlign:'center',color:'#94a3b8'}}>No suppliers yet — use the 🏭 Suppliers tab to add them.</td></tr>}
+            {suppliers.map(s=>{
+              const es = s.license_expiry && (new Date(s.license_expiry)-new Date())/86400000 < 0 ? {color:'#dc2626',fontWeight:700} : s.license_expiry && (new Date(s.license_expiry)-new Date())/86400000 < 90 ? {color:'#b45309',fontWeight:700} : {};
+              return (<tr key={s.id} className="hr-row">
+                <td style={{...S.td,fontFamily:'monospace',fontSize:'11px'}}>{s.supplier_code||'—'}</td>
+                <td style={{...S.td,fontWeight:700}}>{s.name}</td>
+                <td style={{...S.td,fontSize:'11px'}}>{s.supplier_services||'—'}</td>
+                <td style={{...S.td,fontFamily:'monospace',fontSize:'11px'}}>{s.license_number||'—'}</td>
+                <td style={{...S.td,...es,fontSize:'11px'}}>{s.license_expiry?fmtDate(s.license_expiry):'—'}</td>
+                <td style={S.td}>{s.contact_name||'—'}</td>
+                <td style={S.td}>{s.contact_phone||'—'}</td>
+                <td style={S.td}><span style={{fontSize:'11px',color:'#64748b'}}>→ Suppliers tab to edit</span></td>
+              </tr>);
+            })}
           </tbody>
         </table>
       </div>
@@ -4686,6 +5135,7 @@ function App() {
             {tab==='requirements' &&<RequirementsTab requirements={data.requirements} onSave={onSave}/>}
             {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
             {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} requirements={data.requirements} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} onRefresh={loadAll} initialStatus={filterStatus} tabSearch={tabSearch} bulkMobFilter={bulkMobFilter} onClearBulkFilter={()=>setBulkMobFilter(null)}/>}
+            {tab==='suppliers'    &&<SuppliersTab suppliers={data.suppliers} onRefresh={loadAll}/>}
             {tab==='letters'      &&<LettersTab mobList={data.mobList}/>}
             {tab==='config'       &&<ConfigTab locConfigs={data.locConfigs} suppliers={data.suppliers} onSave={onSave}/>}
           </>}
