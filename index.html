@@ -321,6 +321,7 @@ CREATE TABLE IF NOT EXISTS mob_candidates (
   nationality text, date_of_birth date, passport_no text, passport_expiry date,
   emirates_id text, eid_expiry date, visa_no text, visa_type text,
   visa_location text, visa_expiry date, phone text, remarks text,
+  wp_no text, wp_employer text, wp_expiry date, wp_issue_date date,
   active boolean DEFAULT true, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS mob_requirements (
@@ -395,6 +396,10 @@ ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS wp_expiry date;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS medical_expiry date;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS hse_passport_expiry date;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS h2s_expiry date;
+ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS wp_no text;
+ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS wp_employer text;
+ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS wp_expiry date;
+ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS wp_issue_date date;
 `;
 
 const ALL_SQL = SETUP_SQL + '\n' + MAIN_SQL;
@@ -781,10 +786,14 @@ Return ONLY a valid JSON object with these fields (include only what is visible)
 {
   "doc_type": "passport|emirates_id|uae_visa|medical_certificate|work_permit|cicpa_gate_pass|hse_passport|h2s_certificate|safety_training|first_aid|bosiet|chubet|scaffolding|fire_warden|other_training|other",
   "full_name": "full name of the ID/passport HOLDER only — from MRZ or photo page, NOT family members listed on other pages",
-  "passport_no": "passport number",
+  "passport_no": "passport number — CRITICAL: extract this from all document types, it is shown on work permits, EIDs and visas too",
   "emirates_id": "15-digit UAE ID number",
   "visa_no": "visa or entry permit number",
-  "wp_no": "work permit number",
+  "wp_no": "work permit card number (Card Number field on MOHRE work permit)",
+  "wp_employer": "establishment/employer name shown on work permit (e.g. SATCO ARABIA GENERAL CONTRACTING)",
+  "wp_card_expiry": "YYYY-MM-DD Card Expiry Date shown on MOHRE work permit — this is the work permit expiry",
+  "wp_issue_date": "YYYY-MM-DD Card Issuance Date on work permit",
+  "wp_designation": "Designation/Job shown on work permit",
   "cicpa_pass_no": "CICPA gate pass number or security pass number",
   "site_location": "facility, project or site name shown on the gate pass (e.g. TAZIZ, ADNOC Ruwais, GASCO Habshan)",
   "pass_expiry": "YYYY-MM-DD expiry date of the gate pass or security pass",
@@ -802,7 +811,7 @@ Return ONLY a valid JSON object with these fields (include only what is visible)
   "training_expiry": "YYYY-MM-DD expiry date if shown",
   "training_passed": "true if passed/completed, false if failed",
   "cicpa_expiry": "YYYY-MM-DD CICPA expiry",
-  "wp_expiry": "YYYY-MM-DD work permit expiry",
+  "wp_expiry": "YYYY-MM-DD work permit expiry (same as wp_card_expiry)",
   "issue_date": "YYYY-MM-DD issue or approval date",
   "issuing_authority": "name of issuing body or sponsor",
   "designation": "job title or occupation if shown",
@@ -1629,7 +1638,17 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
     if(plan.cicpa_required)         checks.push({label:'CICPA', done:c.cicpa_status==='active'&&!!c.security_pass_no, action:'Apply CICPA via LOA', warning:c.cicpa_status==='confiscated'?'⚠ Confiscated':''});
     if(plan.adnoc_medical_required) checks.push({label:'ADNOC Med', done:!!c.adnoc_medical_status&&c.adnoc_medical_status!=='Unfit', action:'Edit candidate → ADNOC medical'});
     if(plan.medical_required)       checks.push({label:'Site Medical', done:!!mob?.medical_done&&mob?.medical_result!=='Unfit', action:'Mobilisation → medical'});
-    if(plan.wp_required)            checks.push({label:'Work Permit', done:!!mob?.wp_approved_date, action:'Mobilisation → work permit'});
+    if(plan.wp_required) {
+      // Check candidate's own WP (from WP card) OR mob register WP
+      const candWpDone = !!c.wp_no && !!c.wp_expiry && new Date(c.wp_expiry) > new Date();
+      const mobWpDone  = !!mob?.wp_approved_date;
+      const wpDone = candWpDone || mobWpDone;
+      const isSatcoWP = (c.wp_employer||'').toUpperCase().includes('SATCO');
+      const wpLabel = candWpDone
+        ? (isSatcoWP ? 'WP-SATCO' : `WP-${(c.wp_employer||'').split(' ').slice(0,2).join(' ')}`)
+        : 'Work Permit';
+      checks.push({label:wpLabel, done:wpDone, action:'Upload work permit via Documents panel', warning: candWpDone&&!isSatcoWP?`⚠ Not SATCO (${(c.wp_employer||'').split(' ').slice(0,2).join(' ')})`:''});
+    }
     if(plan.hse_required)           checks.push({label:'HSE', done:!!mob?.hse_passport_done, action:'Mobilisation → HSE'});
     if(plan.h2s_required)           checks.push({label:'H2S', done:!!mob?.h2s_done, action:'Mobilisation → H2S'});
     (plan.extra_trainings||[]).forEach(t=>{
@@ -2359,7 +2378,7 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
     return [...map.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([v,cnt])=>({value:v,label:v,count:cnt}));
   }, [candidates]);
 
-  const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',passport_expiry:'',emirates_id:'',eid_expiry:'',visa_no:'',visa_type:'',visa_location:'',visa_expiry:'',phone:'',email:'',security_pass_no:'',security_pass_expiry:'',adnoc_medical_status:'',adnoc_medical_date:'',cicpa_location:'',cicpa_status:'not_issued',cicpa_remarks:'',remarks:'',active:true}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
+  const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',passport_expiry:'',emirates_id:'',eid_expiry:'',visa_no:'',visa_type:'',visa_location:'',visa_expiry:'',phone:'',email:'',wp_no:'',wp_employer:'',wp_expiry:'',wp_issue_date:'',security_pass_no:'',security_pass_expiry:'',adnoc_medical_status:'',adnoc_medical_date:'',cicpa_location:'',cicpa_status:'not_issued',cicpa_remarks:'',remarks:'',active:true}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
 
   const personHistory = (cand) => {
     const hist = mobList.filter(m => m.candidate_id === cand.id || m.full_name === cand.full_name);
@@ -2389,8 +2408,27 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
     const dt = (aiData.doc_type || docType || '').toLowerCase();
     const updates = {};
 
+    // Work Permit — check passport matches, extract employer
+    if (dt.includes('work_permit') || aiData.wp_no || aiData.wp_employer) {
+      // Passport number cross-check
+      const scannedPassport = aiData.passport_no || '';
+      const existingPassport = docPanel.entity.passport_no || '';
+      if (scannedPassport && existingPassport && scannedPassport.toUpperCase() !== existingPassport.toUpperCase()) {
+        const proceed = window.confirm(
+          `⚠ PASSPORT MISMATCH\n\nWork permit passport: ${scannedPassport}\nCandidate passport:   ${existingPassport}\n\nThese do not match — this work permit may belong to a different person.\n\nApply anyway?`
+        );
+        if (!proceed) return;
+      }
+      if (aiData.wp_no)         updates.wp_no         = aiData.wp_no;
+      if (aiData.wp_employer)   updates.wp_employer   = aiData.wp_employer;
+      const wpExp = aiData.wp_card_expiry || aiData.wp_expiry || aiData.wp_expiry;
+      if (wpExp)                updates.wp_expiry     = wpExp;
+      const wpIssue = aiData.wp_issue_date || aiData.issue_date;
+      if (wpIssue)              updates.wp_issue_date = wpIssue;
+      if (scannedPassport && !existingPassport) updates.passport_no = scannedPassport;
+    }
     // Passport — only update name if currently empty, never touch designation
-    if (dt.includes('passport') || aiData.passport_no) {
+    else if (dt.includes('passport') || (aiData.passport_no && !aiData.wp_no)) {
       if (aiData.full_name && !docPanel.entity.full_name) updates.full_name = aiData.full_name;
       if (aiData.passport_no)     updates.passport_no     = aiData.passport_no;
       if (aiData.passport_expiry) updates.passport_expiry = aiData.passport_expiry;
@@ -2799,6 +2837,29 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
               )}
             </Field>
           </Grid>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Work Permit (Upload via Documents panel — AI reads automatically)</div>
+          <Grid cols={4}>
+            <Field label="WP Card No">
+              <input value={draft.wp_no||''} onChange={e=>setDraft(d=>({...d,wp_no:e.target.value}))} placeholder="e.g. 141920969" style={S.input}/>
+            </Field>
+            <Field label="WP Employer (Establishment Name)">
+              <input value={draft.wp_employer||''} onChange={e=>setDraft(d=>({...d,wp_employer:e.target.value}))} placeholder="e.g. SATCO ARABIA GENERAL CONTRACTING" style={S.input}/>
+              {draft.wp_employer && (()=>{
+                const isSatco = (draft.wp_employer||'').toUpperCase().includes('SATCO');
+                return <div style={{fontSize:'10px',marginTop:'2px',fontWeight:700,color:isSatco?'#166534':'#b45309'}}>
+                  {isSatco ? '✓ Under SATCO' : '⚠ Not under SATCO — '+draft.wp_employer}
+                </div>;
+              })()}
+            </Field>
+            <Field label="WP Issue Date">
+              <input type="date" value={draft.wp_issue_date||''} onChange={e=>setDraft(d=>({...d,wp_issue_date:e.target.value}))} style={S.input}/>
+            </Field>
+            <Field label="WP Expiry Date">
+              <input type="date" value={draft.wp_expiry||''} onChange={e=>setDraft(d=>({...d,wp_expiry:e.target.value}))}
+                style={{...S.input,...(draft.wp_expiry?(()=>{const diff=(new Date(draft.wp_expiry)-new Date())/86400000;return diff<0?{borderColor:'#dc2626'}:diff<90?{borderColor:'#f59e0b'}:{};})():{})}}/>
+              {draft.wp_expiry&&(()=>{const diff=Math.ceil((new Date(draft.wp_expiry)-new Date())/86400000);return diff<0?<div style={{fontSize:'10px',color:'#dc2626',fontWeight:700,marginTop:'2px'}}>⚠ EXPIRED {Math.abs(diff)}d ago</div>:diff<90?<div style={{fontSize:'10px',color:'#b45309',fontWeight:700,marginTop:'2px'}}>⚠ Expiring in {diff} days</div>:null;})()}
+            </Field>
+          </Grid>
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Security Pass & CICPA</div>
           {/* Confiscated warning banner */}
           {draft.cicpa_status==='confiscated' && (
@@ -2988,14 +3049,18 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                   const mob = mobList.filter(m=>m.candidate_id===c.id||m.full_name===c.full_name).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
                   const isSatco = c.source==='satco_own';
                   const T = MobTick;
-                  const wpDone  = !!mob?.wp_approved_date;
+                  // WP: check candidate's own WP card first, then mob register
+                  const candWpDone = !!c.wp_no && !!c.wp_expiry && new Date(c.wp_expiry) > new Date();
+                  const mobWpDone  = !!mob?.wp_approved_date;
+                  const wpDone     = candWpDone || mobWpDone;
+                  const isSatcoWP  = (c.wp_employer||'').toUpperCase().includes('SATCO');
+                  const wpLabel    = candWpDone
+                    ? (isSatcoWP ? 'WP-SATCO' : `WP-${(c.wp_employer||'').split(' ').slice(0,2).join(' ')}`)
+                    : (mobWpDone ? 'WP-MOB' : 'WP');
                   const hseDone = !!mob?.hse_passport_done;
                   const h2sDone = !!mob?.h2s_done;
-                  // CICPA: use candidate's own record (security_pass_no + cicpa_status)
-                  // This shows correctly even before a mob_register record exists
                   const cicpaDone = c.cicpa_status==='active' && !!c.security_pass_no;
                   const adnocOk   = !!c.adnoc_medical_status && c.adnoc_medical_status!=='Unfit';
-                  // overall readiness
                   const docOk = !!c.passport_no && !!c.emirates_id && !!c.visa_no;
                   const mobOk = hseDone && h2sDone && cicpaDone && adnocOk && (isSatco || wpDone);
                   const allGreen = docOk && mobOk;
@@ -3009,7 +3074,14 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                   return <>
                     {isSatco
                       ? <td style={{...S.td,paddingTop:'3px',paddingBottom:'3px'}}><span style={{background:'#f1f5f9',color:'#94a3b8',fontSize:'10px',padding:'2px 6px',borderRadius:4}}>N/A</span></td>
-                      : <T done={wpDone} label="WP" date={mob?.wp_approved_date}/>}
+                      : <td style={{...S.td,paddingTop:'3px',paddingBottom:'3px',whiteSpace:'nowrap'}}>
+                          {wpDone
+                            ? <span style={{background: isSatcoWP?'#dcfce7':'#fef3c7', color: isSatcoWP?'#166534':'#b45309', fontWeight:700, fontSize:'10px', padding:'2px 6px', borderRadius:4}}
+                                title={c.wp_employer||mob?.wp_no||''}>
+                                ✓ {wpLabel}
+                              </span>
+                            : <span style={{background:'#fee2e2',color:'#dc2626',fontSize:'10px',padding:'2px 6px',borderRadius:4}}>✗ WP</span>}
+                        </td>}
                     <T done={hseDone} label="HSE" optional={!mob}/>
                     <T done={h2sDone} label="H2S" optional={!mob}/>
                     <T done={cicpaDone} label="CICPA" date={cicpaDone&&c.security_pass_expiry?c.security_pass_expiry:undefined} optional={false}/>
