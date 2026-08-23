@@ -300,6 +300,20 @@ ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS wci_insurer text;
 ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS wci_start date;
 ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS wci_expiry date;
 ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS other_docs jsonb DEFAULT '[]';
+CREATE TABLE IF NOT EXISTS mob_supplier_alert_settings (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  alert_email text NOT NULL DEFAULT 'admin@satcoarabiaengg.com',
+  warn_days   int  NOT NULL DEFAULT 90,
+  alert_days  int  NOT NULL DEFAULT 30,
+  enabled     boolean DEFAULT true,
+  updated_at  timestamptz DEFAULT now()
+);
+ALTER TABLE mob_supplier_alert_settings ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='mob_supplier_alert_settings' AND policyname='mob_auth') THEN
+    CREATE POLICY mob_auth ON mob_supplier_alert_settings FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS mob_candidates (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   full_name text NOT NULL, designation text, source text DEFAULT 'supplier',
@@ -596,12 +610,11 @@ function usePersistentDraft(key) {
       try {
         if (next === null) {
           localStorage.removeItem('satco_mob_draft_' + key);
-        } else if (!next.id) {
-          // Strip scan/UI state before persisting — prevents beforeunload false triggers
+        } else {
+          // Save ALL drafts — both new (no id) and edits (has id)
+          // Strip scan/UI state (_scanning, _scanResult etc.) before persisting
           const toSave = stripUIState(next);
           localStorage.setItem('satco_mob_draft_' + key, JSON.stringify(toSave));
-        } else {
-          localStorage.removeItem('satco_mob_draft_' + key);
         }
       } catch {}
       return next;
@@ -610,13 +623,14 @@ function usePersistentDraft(key) {
   return [draft, setDraft];
 }
 
-function DraftBanner({draft, onRestore, onDiscard}) {
+function DraftBanner({draft, onRestore, onDiscard, label}) {
   if (!draft) return null;
+  const displayName = label || draft.full_name || draft.name || '(no name yet)';
   return (
     <div style={{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'8px',padding:'10px 16px',marginBottom:'12px',display:'flex',gap:'12px',alignItems:'center'}}>
       <span style={{fontSize:'18px'}}>💾</span>
       <div style={{flex:1}}>
-        <div style={{fontWeight:700,fontSize:'13px',color:'#92400e'}}>Unsaved draft found — {draft.full_name||'(no name yet)'}</div>
+        <div style={{fontWeight:700,fontSize:'13px',color:'#92400e'}}>Unsaved draft found — {displayName}</div>
         <div style={{fontSize:'12px',color:'#78350f'}}>You left this form without saving. Click Restore to continue where you left off.</div>
       </div>
       <button onClick={onRestore} style={{padding:'6px 14px',background:'#b8972a',color:'#fff',border:'none',borderRadius:'6px',fontWeight:700,fontSize:'12px',cursor:'pointer'}}>Restore</button>
@@ -4299,12 +4313,18 @@ const SUPPLIER_SERVICES = ['MANPOWER SUPPLY','MECHANICAL','CIVIL','ELECTRICAL','
 const UAE_EMIRATES_UPPER = ['ABU DHABI','DUBAI','SHARJAH','AJMAN','RAS AL KHAIMAH','FUJAIRAH','UMM AL QUWAIN'];
 
 function SuppliersTab({ suppliers, onRefresh }) {
-  const [draft, setDraft]         = useState(null);   // null = list, {} = new, {...s} = edit
+  const [draft, setDraft]   = usePersistentDraft('supplier');
+  // showBanner: true when we remounted and found a pre-existing draft in localStorage
+  // (distinguishes "user was filling a form" from "user clicked + Add Supplier now")
+  const [showBanner, setShowBanner] = useState(() => {
+    try { return !!localStorage.getItem('satco_mob_draft_supplier'); } catch { return false; }
+  });
+
   const [search, setSearch]       = useState('');
   const [serviceF, setServiceF]   = useState(new Set());
   const [stateF, setStateF]       = useState(new Set());
   const [saving, setSaving]       = useState(false);
-  const [aiStatus, setAiStatus]   = useState('');     // '' | 'processing' | 'done' | 'error'
+  const [aiStatus, setAiStatus]   = useState('');
   const [aiMsg, setAiMsg]         = useState('');
   const [deleteId, setDeleteId]   = useState(null);
   const toolbarRef = useRef(null);
@@ -4484,6 +4504,7 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
     setSaving(false);
     if (error) return alert(error.message);
     setDraft(null);
+    setShowBanner(false);
     setAiStatus(''); setAiMsg('');
     await onRefresh();
   };
@@ -4528,6 +4549,52 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
     URL.revokeObjectURL(url);
   };
 
+  const [alertSettings, setAlertSettings] = useState(null);  // loaded from DB
+  const [alertSaving,   setAlertSaving]   = useState(false);
+  const [alertOpen,     setAlertOpen]     = useState(false);  // collapse state
+
+  // Load alert settings on mount
+  useEffect(() => {
+    db.from('mob_supplier_alert_settings').select('*').limit(1)
+      .then(({ data }) => {
+        if (data?.[0]) setAlertSettings(data[0]);
+        else setAlertSettings({ alert_email:'admin@satcoarabiaengg.com', warn_days:90, alert_days:15, enabled:true });
+      });
+  }, []);
+
+  const saveAlertSettings = async () => {
+    if (!alertSettings) return;
+    setAlertSaving(true);
+    const payload = {
+      alert_email: alertSettings.alert_email,
+      warn_days:   parseInt(alertSettings.warn_days)  || 90,
+      alert_days:  parseInt(alertSettings.alert_days) || 30,
+      enabled:     alertSettings.enabled,
+      updated_at:  new Date().toISOString(),
+    };
+    const { error } = alertSettings.id
+      ? await db.from('mob_supplier_alert_settings').update(payload).eq('id', alertSettings.id)
+      : await db.from('mob_supplier_alert_settings').insert(payload);
+    setAlertSaving(false);
+    if (error) return alert(error.message);
+    // Refresh to get id if newly created
+    const { data } = await db.from('mob_supplier_alert_settings').select('*').limit(1);
+    if (data?.[0]) setAlertSettings(data[0]);
+    alert('✓ Alert settings saved.');
+  };
+
+  const sendTestAlert = async () => {
+    if (!window.confirm('Send a test alert email to ' + alertSettings?.alert_email + '?')) return;
+    try {
+      const res = await fetch('/api/supplier-expiry-check', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer ' + (window.CRON_SECRET || prompt('Enter CRON_SECRET:') || '') }
+      });
+      const d = await res.json();
+      alert(res.ok ? '✓ Test alert sent: ' + (d.message || d.issues + ' issues found') : '✗ ' + (d.error || 'Failed'));
+    } catch (e) { alert('✗ ' + e.message); }
+  };
+
   const serviceOpts = useMemo(() => [...new Set(suppliers.map(s=>s.supplier_services).filter(Boolean))].sort().map(v=>({value:v,label:v})), [suppliers]);
   const stateOpts   = useMemo(() => [...new Set(suppliers.map(s=>s.address_state).filter(Boolean))].sort().map(v=>({value:v,label:v})), [suppliers]);
 
@@ -4541,7 +4608,7 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
             <div style={{fontWeight:800,fontSize:'16px',color:'#0f172a'}}>{draft.id ? '✏️ Edit Supplier' : '➕ Add Supplier'}</div>
             <div style={{fontSize:'12px',color:'#64748b',marginTop:'2px'}}>Upload trade licence, commercial licence or VAT certificate — AI extracts data automatically</div>
           </div>
-          <button style={S.btnSec} onClick={()=>{setDraft(null);setAiStatus('');setAiMsg('');}}>← Back to List</button>
+          <button style={S.btnSec} onClick={()=>{setDraft(null);setShowBanner(false);setAiStatus('');setAiMsg('');}}>← Back to List</button>
         </div>
 
         {/* AI Document Upload */}
@@ -4731,7 +4798,7 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
 
           <div style={{display:'flex',gap:'10px',marginTop:'16px',paddingTop:'14px',borderTop:'1px solid #e2e8f0'}}>
             <button style={S.btnPri} onClick={save} disabled={saving}>{saving?'Saving…':'💾 Save Supplier'}</button>
-            <button style={S.btnSec} onClick={()=>{setDraft(null);setAiStatus('');setAiMsg('');}}>Cancel</button>
+            <button style={S.btnSec} onClick={()=>{setDraft(null);setShowBanner(false);setAiStatus('');setAiMsg('');}}>Cancel</button>
           </div>
         </div>
       </div>
@@ -4741,6 +4808,14 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
   // ── LIST VIEW ─────────────────────────────────────────────────────────────
   return (
     <div>
+      {/* Draft restore banner — shown when component remounts with unsaved data */}
+      {showBanner && draft && (
+        <DraftBanner draft={draft}
+          onRestore={()=>{ setShowBanner(false); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); }}
+          onDiscard={()=>{ setDraft(null); setShowBanner(false); }}
+        />
+      )}
+
       {/* Stats row */}
       <div style={{display:'flex',gap:'12px',marginBottom:'16px',flexWrap:'wrap'}}>
         {[
@@ -4769,7 +4844,7 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
         <MultiSelect options={stateOpts}   selected={stateF}   onChange={setStateF}   placeholder="All states"   width="160px"/>
         <span style={{fontSize:'12px',color:'#64748b',marginLeft:'auto'}}>{filtered.length} supplier{filtered.length!==1?'s':''}</span>
         <button style={S.btnSec} onClick={exportCSV2}>⬇ Export CSV</button>
-        <button style={S.btnPri} onClick={()=>{setAiStatus('');setAiMsg('');setDraft({name:'',supplier_code:'',supplier_services:'',address_state:'',license_number:'',license_expiry:'',vat_number:'',icv_score:'',contact_name:'',contact_email:'',contact_phone:'',contact_phone2:'',remarks:'',wci_policy_no:'',wci_insurer:'',wci_expiry:'',wci_start:'',other_docs:[],attachments:{}});}}>+ Add Supplier</button>
+        <button style={S.btnPri} onClick={()=>{setAiStatus('');setAiMsg('');setShowBanner(false);setDraft({name:'',supplier_code:'',supplier_services:'',address_state:'',license_number:'',license_expiry:'',vat_number:'',icv_score:'',contact_name:'',contact_email:'',contact_phone:'',contact_phone2:'',remarks:'',wci_policy_no:'',wci_insurer:'',wci_expiry:'',wci_start:'',other_docs:[],attachments:{}});}}>+ Add Supplier</button>
       </div>
 
       {/* Table */}
@@ -4843,7 +4918,7 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
                     </td>
                     <td style={{...S.td,whiteSpace:'nowrap'}}>
                       <div style={{display:'flex',gap:'4px'}}>
-                        <button style={S.btnSm} onClick={()=>{setAiStatus('');setAiMsg('');setDraft({...s,attachments:s.attachments||{},other_docs:s.other_docs||[]});}}>Edit</button>
+                        <button style={S.btnSm} onClick={()=>{setAiStatus('');setAiMsg('');setShowBanner(false);setDraft({...s,attachments:s.attachments||{},other_docs:s.other_docs||[]});}}>Edit</button>
                         <button style={{...S.btnSm,color:'#dc2626'}} onClick={()=>setDeleteId(s.id)}>Del</button>
                       </div>
                     </td>
@@ -4853,6 +4928,99 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* ── Alert Settings ── */}
+      <div style={{...S.card,marginTop:'16px'}}>
+        <div
+          style={{padding:'12px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',cursor:'pointer',background:'#f8fafc',borderBottom:alertOpen?'1px solid #e2e8f0':'none'}}
+          onClick={()=>setAlertOpen(o=>!o)}
+        >
+          <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+            <span style={{fontSize:'18px'}}>📧</span>
+            <div>
+              <div style={{fontWeight:800,fontSize:'13px',color:'#0f172a'}}>Expiry Alert Email Settings</div>
+              <div style={{fontSize:'11px',color:'#64748b',marginTop:'1px'}}>
+                Daily email alert when License, VAT or WCI is expiring · sent to: <strong>{alertSettings?.alert_email||'—'}</strong>
+                {alertSettings && <span style={{marginLeft:'8px',background:alertSettings.enabled?'#dcfce7':'#fee2e2',color:alertSettings.enabled?'#166534':'#991b1b',fontWeight:700,fontSize:'10px',padding:'1px 7px',borderRadius:10}}>{alertSettings.enabled?'ON':'OFF'}</span>}
+              </div>
+            </div>
+          </div>
+          <span style={{fontSize:'12px',color:'#94a3b8'}}>{alertOpen?'▲':'▼'}</span>
+        </div>
+
+        {alertOpen && alertSettings && (
+          <div style={{padding:'16px 18px'}}>
+            <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr auto',gap:'12px',alignItems:'end',marginBottom:'14px'}}>
+              <Field label="Alert Email Address (comma-separate multiple)">
+                <input value={alertSettings.alert_email||''} type="email"
+                  placeholder="admin@satcoarabiaengg.com"
+                  onChange={e=>setAlertSettings(s=>({...s,alert_email:e.target.value}))}
+                  style={S.input}/>
+                <div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Separate multiple addresses with a comma</div>
+              </Field>
+              <Field label="🟡 Warning threshold (days)">
+                <input type="number" min={1} max={365} value={alertSettings.warn_days||90}
+                  onChange={e=>setAlertSettings(s=>({...s,warn_days:+e.target.value}))}
+                  style={S.input}/>
+                <div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Email sent when expiry is within this many days · default 90 (≈3 months)</div>
+              </Field>
+              <Field label="🔴 Critical threshold (days)">
+                <input type="number" min={1} max={365} value={alertSettings.alert_days||15}
+                  onChange={e=>setAlertSettings(s=>({...s,alert_days:+e.target.value}))}
+                  style={S.input}/>
+                <div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Shown as critical / urgent · default 15 days</div>
+              </Field>
+              <div style={{paddingBottom:'20px'}}>
+                <label style={{display:'flex',gap:'7px',alignItems:'center',cursor:'pointer',fontWeight:700,fontSize:'13px',padding:'8px 0'}}>
+                  <input type="checkbox" checked={!!alertSettings.enabled}
+                    onChange={e=>setAlertSettings(s=>({...s,enabled:e.target.checked}))}
+                    style={{width:16,height:16,accentColor:'#166534'}}/>
+                  Enabled
+                </label>
+              </div>
+            </div>
+
+            {/* What gets checked */}
+            <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'8px',padding:'12px 14px',marginBottom:'14px',fontSize:'12px',color:'#475569'}}>
+              <div style={{fontWeight:700,color:'#0f172a',marginBottom:'6px'}}>📋 What gets checked daily:</div>
+              <div style={{display:'flex',gap:'20px',flexWrap:'wrap'}}>
+                {['Trade / Commercial License expiry','Workmen Compensation Insurance expiry','Other documents with expiry dates'].map(t=>(
+                  <span key={t} style={{display:'flex',alignItems:'center',gap:'5px'}}>
+                    <span style={{color:'#166534',fontWeight:700}}>✓</span> {t}
+                  </span>
+                ))}
+              </div>
+              <div style={{fontSize:'11px',color:'#94a3b8',marginTop:'8px'}}>
+                Alert runs every day at 06:00 UAE time. Email is sent <strong>only</strong> when a document is expiring within the warning threshold. VAT TRN does not expire in UAE — not checked.
+              </div>
+            </div>
+
+            {/* Setup instructions */}
+            <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'12px 14px',marginBottom:'14px',fontSize:'12px'}}>
+              <div style={{fontWeight:700,color:'#1e40af',marginBottom:'6px'}}>⚙️ One-time Vercel setup required:</div>
+              <div style={{color:'#1e40af',lineHeight:1.7}}>
+                Add these environment variables in <strong>Vercel Dashboard → satco-mobilisation → Settings → Environment Variables</strong>:<br/>
+                <code style={{background:'#dbeafe',padding:'1px 5px',borderRadius:3,fontSize:'11px'}}>RESEND_API_KEY</code> — get from <a href="https://resend.com" target="_blank" rel="noopener noreferrer" style={{color:'#2563eb'}}>resend.com</a> (free tier: 100 emails/day)<br/>
+                <code style={{background:'#dbeafe',padding:'1px 5px',borderRadius:3,fontSize:'11px'}}>SUPABASE_SERVICE_KEY</code> — from Supabase → Project Settings → API → service_role key<br/>
+                <code style={{background:'#dbeafe',padding:'1px 5px',borderRadius:3,fontSize:'11px'}}>CRON_SECRET</code> — any random password you choose (e.g. <em>satco2025cron</em>)<br/>
+                <code style={{background:'#dbeafe',padding:'1px 5px',borderRadius:3,fontSize:'11px'}}>SUPABASE_URL</code> — https://oaerqjrkdpuhiproppaz.supabase.co
+              </div>
+            </div>
+
+            <div style={{display:'flex',gap:'10px',alignItems:'center'}}>
+              <button style={S.btnPri} onClick={saveAlertSettings} disabled={alertSaving}>
+                {alertSaving ? 'Saving…' : '💾 Save Alert Settings'}
+              </button>
+              <button style={S.btnSec} onClick={sendTestAlert} title="Triggers the cron function now — requires CRON_SECRET">
+                📧 Send Test Alert
+              </button>
+              <span style={{fontSize:'11px',color:'#94a3b8'}}>
+                Alert emails come from: <strong>alerts@satcoarabiaengg.com</strong> via Resend
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Delete confirm */}
