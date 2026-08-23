@@ -1799,9 +1799,11 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
     wp_required:false,hse_required:false,h2s_required:false,extra_trainings:[],notes:'',
     po_status:'pending',loa_status:'pending'};
 
+  const [candSearch, setCandSearch] = useState('');
+
   const ReqBadge = ({chk}) => (
     <span title={!chk.done?('Action: '+chk.action):''}
-      style={{fontSize:'10px',fontWeight:700,padding:'2px 7px',borderRadius:4,
+      style={{fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:4,flexShrink:0,
         background:chk.done?'#dcfce7':'#fee2e2',color:chk.done?'#166534':'#dc2626',whiteSpace:'nowrap'}}>
       {chk.done?'✓':'✗'} {chk.label}{chk.warning?` (${chk.warning})`:''}
     </span>
@@ -1813,22 +1815,32 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
     const isAssigned = assigned?.planId === activePlan;
     const conflicted = assigned && assigned.planId !== activePlan;
     return (
-      <div style={{background:isSel?'#eff6ff':'#fff',border:`1.5px solid ${isSel?'#2563eb':conflicted?'#fde68a':'#e2e8f0'}`,
-        borderRadius:'8px',padding:'8px 12px',display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap',cursor:'pointer'}}
+      <div style={{
+        background:isSel?'#eff6ff':'#fff',
+        border:`1.5px solid ${isSel?'#2563eb':conflicted?'#fde68a':'#e2e8f0'}`,
+        borderRadius:'6px',padding:'6px 10px',
+        display:'flex',alignItems:'center',gap:'8px',cursor:'pointer',
+        minHeight:'34px',overflow:'hidden',
+      }}
         onClick={()=>toggleSelect(c.id)}>
-        {showCheck&&<input type="checkbox" checked={isSel} readOnly style={{width:15,height:15,flexShrink:0,accentColor:'#2563eb'}}/>}
-        <div style={{minWidth:'180px',maxWidth:'220px',flexShrink:0,overflow:'hidden'}}>
-          <div style={{fontWeight:700,fontSize:'11px',color:'#0f172a',textTransform:'uppercase',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c.full_name}</div>
-          <div style={{fontSize:'9px',color:'#64748b',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c.designation||'—'} · {c.supplier_emp_no||'—'}</div>
-          {planCandSiteMap[c.id]&&<div style={{fontSize:'9px',fontWeight:800,color:'#166534',background:'#dcfce7',padding:'1px 5px',borderRadius:3,display:'inline-block',marginTop:'1px',whiteSpace:'nowrap'}}>🏗 {(planCandSiteMap[c.id]||'').split(/[-–]/)[0].trim().substring(0,20)}</div>}
-          {conflicted&&<div style={{fontSize:'9px',color:'#b45309',fontWeight:700,whiteSpace:'nowrap'}}>⚠ {assigned.planName}</div>}
-          {isAssigned&&<div style={{fontSize:'9px',color:'#166534',fontWeight:700,whiteSpace:'nowrap'}}>✓ This plan</div>}
+        {showCheck&&<input type="checkbox" checked={isSel} readOnly style={{width:14,height:14,flexShrink:0,accentColor:'#2563eb'}}/>}
+        {/* Name + subtitle — fixed width */}
+        <div style={{width:'200px',flexShrink:0,overflow:'hidden'}}>
+          <div style={{fontWeight:700,fontSize:'11px',color:'#0f172a',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',textTransform:'uppercase'}}>{c.full_name}</div>
+          <div style={{fontSize:'9px',color:'#64748b',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+            {c.designation||'—'} · {c.supplier_emp_no||'—'}
+            {conflicted&&<span style={{color:'#b45309',fontWeight:700}}> · ⚠ {assigned.planName}</span>}
+            {isAssigned&&<span style={{color:'#166534',fontWeight:700}}> · ✓ This plan</span>}
+            {planCandSiteMap[c.id]&&<span style={{color:'#166534',fontWeight:700}}> · 🏗 {(planCandSiteMap[c.id]||'').split(/[-–]/)[0].trim().substring(0,15)}</span>}
+          </div>
         </div>
-        <div style={{display:'flex',gap:'3px',flexWrap:'nowrap',flex:1,overflowX:'auto',alignItems:'center'}}>
+        {/* Check badges — scrollable row, no wrap */}
+        <div style={{display:'flex',gap:'3px',alignItems:'center',flex:1,overflowX:'auto',flexWrap:'nowrap'}}>
           {(c._pr?.checks||[]).map((chk,i)=><ReqBadge key={i} chk={chk}/>)}
         </div>
+        {/* First missing action hint */}
         {c._pr?.missing?.length>0&&(
-          <div style={{fontSize:'10px',color:'#b45309',flexShrink:0,maxWidth:'200px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>→ {c._pr.missing[0]?.action}</div>
+          <div style={{fontSize:'10px',color:'#b45309',flexShrink:0,whiteSpace:'nowrap',maxWidth:'180px',overflow:'hidden',textOverflow:'ellipsis'}}>→ {c._pr.missing[0]?.action}</div>
         )}
       </div>
     );
@@ -2116,26 +2128,82 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
               <span style={{fontSize:'10px',color:'#64748b'}}>CICPA for this site = ✅ &nbsp;|&nbsp; CICPA for another site = ⚠ amber</span>
             </div>
           )}
-          {/* Scrollable candidate list — Excel style one line per row */}
+          {/* Scrollable candidate list */}
           <div style={{...S.card,overflow:'hidden'}}>
-            {/* GREEN section header */}
-            <div style={{background:'#f0fdf4',borderBottom:'2px solid #86efac',padding:'8px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <span style={{fontWeight:800,fontSize:'13px',color:'#166534'}}>✅ {sorted.green.length} Ready to Mobilise</span>
-              <button style={{...S.btnSm,fontSize:'11px'}} onClick={()=>setSelected(new Set(sorted.green.map(c=>c.id)))}>Select all ready</button>
+
+            {/* ── Search bar ── */}
+            <div style={{padding:'8px 12px',borderBottom:'1px solid #e2e8f0',background:'#fff',display:'flex',gap:'8px',alignItems:'center'}}>
+              <span style={{fontSize:'14px'}}>🔍</span>
+              <input
+                placeholder="Search by name, designation, emp no, nationality…"
+                value={candSearch}
+                onChange={e=>setCandSearch(e.target.value)}
+                style={{...S.input,flex:1,fontSize:'12px',padding:'5px 10px'}}
+              />
+              {candSearch&&<button onClick={()=>setCandSearch('')} style={{background:'none',border:'none',cursor:'pointer',color:'#94a3b8',fontSize:'16px',lineHeight:1,flexShrink:0}}>×</button>}
+              <span style={{fontSize:'11px',color:'#94a3b8',whiteSpace:'nowrap'}}>
+                {candSearch ? `${[...sorted.green,...sorted.yellow].filter(c=>(c.full_name+c.designation+c.supplier_emp_no+c.nationality).toLowerCase().includes(candSearch.toLowerCase())).length} matches` : `${sorted.green.length+sorted.yellow.length} total`}
+              </span>
             </div>
-            <div style={{maxHeight:'320px',overflowY:'auto',padding:'8px',display:'flex',flexDirection:'column',gap:'5px',background:'#f8fff8'}}>
-              {sorted.green.length===0&&<div style={{padding:'16px',textAlign:'center',color:'#64748b',fontSize:'12px'}}>No candidates meet all requirements yet.</div>}
-              {sorted.green.map(c=><CandRow key={c.id} c={c}/>)}
-            </div>
-            {/* YELLOW section header */}
-            <div style={{background:'#fffbeb',borderTop:'2px solid #fde68a',borderBottom:'2px solid #fde68a',padding:'8px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <span style={{fontWeight:800,fontSize:'13px',color:'#92400e'}}>⚠ {sorted.yellow.length} Need Action (can still be selected)</span>
-              <button style={{...S.btnSm,fontSize:'11px'}} onClick={()=>setSelected(new Set(sorted.yellow.map(c=>c.id)))}>Select all pending</button>
-            </div>
-            <div style={{maxHeight:'400px',overflowY:'auto',padding:'8px',display:'flex',flexDirection:'column',gap:'5px',background:'#fffef5'}}>
-              {sorted.yellow.length===0&&<div style={{padding:'16px',textAlign:'center',color:'#64748b',fontSize:'12px'}}>All candidates are ready!</div>}
-              {sorted.yellow.map(c=><CandRow key={c.id} c={c}/>)}
-            </div>
+
+            {/* ── Assigned Candidates for this plan ── */}
+            {(()=>{
+              const assignedList = [...sorted.green,...sorted.yellow].filter(c=>assignments[c.id]?.planId===activePlan);
+              if (!assignedList.length) return null;
+              return (
+                <div>
+                  <div style={{background:'#f0f4ff',borderBottom:'2px solid #6366f1',padding:'8px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <span style={{fontWeight:800,fontSize:'13px',color:'#3730a3'}}>📋 {assignedList.length} Assigned to "{plan.name}"</span>
+                    <div style={{display:'flex',gap:'6px'}}>
+                      <button style={{...S.btnSm,fontSize:'11px'}} onClick={()=>setSelected(new Set(assignedList.map(c=>c.id)))}>Select all assigned</button>
+                      <button style={{...S.btnSm,background:'#7c3aed',color:'#fff',border:'none',fontWeight:700,fontSize:'11px',padding:'4px 10px'}}
+                        onClick={()=>{setSelected(new Set(assignedList.map(c=>c.id)));setTimeout(()=>mobiliseSelected(),50);}}>
+                        🚀 Mobilise All Assigned
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{padding:'6px 8px',display:'flex',flexDirection:'column',gap:'4px',background:'#f5f3ff',borderBottom:'2px solid #e2e8f0'}}>
+                    {assignedList.map(c=><CandRow key={c.id} c={c}/>)}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── GREEN — Ready ── */}
+            {(()=>{
+              const q = candSearch.toLowerCase();
+              const list = sorted.green.filter(c=>!q||((c.full_name+c.designation+c.supplier_emp_no+(c.nationality||'')).toLowerCase().includes(q)));
+              return (
+                <div>
+                  <div style={{background:'#f0fdf4',borderBottom:'2px solid #86efac',padding:'8px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <span style={{fontWeight:800,fontSize:'13px',color:'#166534'}}>✅ {list.length} Ready to Mobilise</span>
+                    <button style={{...S.btnSm,fontSize:'11px'}} onClick={()=>setSelected(new Set(list.map(c=>c.id)))}>Select all ready</button>
+                  </div>
+                  <div style={{maxHeight:'280px',overflowY:'auto',padding:'6px 8px',display:'flex',flexDirection:'column',gap:'4px',background:'#f8fff8'}}>
+                    {list.length===0&&<div style={{padding:'12px',textAlign:'center',color:'#64748b',fontSize:'12px'}}>{candSearch?'No matches in ready list.':'No candidates meet all requirements yet.'}</div>}
+                    {list.map(c=><CandRow key={c.id} c={c}/>)}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── YELLOW — Need Action ── */}
+            {(()=>{
+              const q = candSearch.toLowerCase();
+              const list = sorted.yellow.filter(c=>!q||((c.full_name+c.designation+c.supplier_emp_no+(c.nationality||'')).toLowerCase().includes(q)));
+              return (
+                <div>
+                  <div style={{background:'#fffbeb',borderTop:'2px solid #fde68a',borderBottom:'2px solid #fde68a',padding:'8px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <span style={{fontWeight:800,fontSize:'13px',color:'#92400e'}}>⚠ {list.length} Need Action (can still be selected)</span>
+                    <button style={{...S.btnSm,fontSize:'11px'}} onClick={()=>setSelected(new Set(list.map(c=>c.id)))}>Select all pending</button>
+                  </div>
+                  <div style={{maxHeight:'400px',overflowY:'auto',padding:'6px 8px',display:'flex',flexDirection:'column',gap:'4px',background:'#fffef5'}}>
+                    {list.length===0&&<div style={{padding:'12px',textAlign:'center',color:'#64748b',fontSize:'12px'}}>{candSearch?'No matches in pending list.':'All candidates are ready!'}</div>}
+                    {list.map(c=><CandRow key={c.id} c={c}/>)}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
