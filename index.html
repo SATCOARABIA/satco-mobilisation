@@ -4964,10 +4964,8 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
   const sendTestAlert = async () => {
     if (!window.confirm('Send a test alert email to ' + alertSettings?.alert_email + '?')) return;
     try {
-      const res = await fetch('/api/supplier-expiry-check', {
-        method: 'GET',
-        headers: { Authorization: 'Bearer ' + (window.CRON_SECRET || prompt('Enter CRON_SECRET:') || '') }
-      });
+      // Call without Authorization header — the API endpoint handles auth via env variable server-side
+      const res = await fetch('/api/supplier-expiry-check', { method: 'GET' });
       const d = await res.json();
       alert(res.ok ? '✓ Test alert sent: ' + (d.message || d.issues + ' issues found') : '✗ ' + (d.error || 'Failed'));
     } catch (e) { alert('✗ ' + e.message); }
