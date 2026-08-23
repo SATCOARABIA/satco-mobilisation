@@ -2224,23 +2224,36 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
     return [...new Set([...fromRegistry, ...fromCandidates])].sort();
   }, [suppliers, candidates]);
 
-  const filtered = useMemo(()=> candidates.filter(c=>{
-    if (excludeOnSite && (activeCandIds.has(c.id)||activeNames.has((c.full_name||'').toLowerCase().trim()))) return false;
-    if (suppF.size && !suppF.has(c.supplier_name||'')) return false;
-    if (desigF.size && !desigF.has(normalizeDesig(c.designation))) return false;
-    if (cicpaLocF.size && !cicpaLocF.has(canonicalCicpa(c.cicpa_location))) return false;
-    if (readyF.size) {
-      const docOk = !!c.passport_no && !!c.emirates_id && !!c.visa_no;
-      const mob = mobList.filter(m=>m.candidate_id===c.id||m.full_name===c.full_name).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
-      const cicpaCandOk = c.cicpa_status==='active' && !!c.security_pass_no;
-      const adnocCandOk = !!c.adnoc_medical_status && c.adnoc_medical_status!=='Unfit';
-      const mobOk = !!mob?.hse_passport_done && !!mob?.h2s_done && cicpaCandOk && adnocCandOk && (c.source==='satco_own' || !!mob?.wp_approved_date);
-      const allGreen = docOk && mobOk;
-      if (readyF.has('ready')     && !allGreen) return false;
-      if (readyF.has('not_ready') && allGreen)  return false;
-    }
-    return matchSearch(c, search);
-  }), [candidates, mobList, search, suppF, readyF, desigF, cicpaLocF]);
+  const filtered = useMemo(()=> {
+    const list = candidates.filter(c=>{
+      if (excludeOnSite && (activeCandIds.has(c.id)||activeNames.has((c.full_name||'').toLowerCase().trim()))) return false;
+      if (suppF.size && !suppF.has(c.supplier_name||'')) return false;
+      if (desigF.size && !desigF.has(normalizeDesig(c.designation))) return false;
+      if (cicpaLocF.size && !cicpaLocF.has(canonicalCicpa(c.cicpa_location))) return false;
+      if (readyF.size) {
+        const docOk = !!c.passport_no && !!c.emirates_id && !!c.visa_no;
+        const mob = mobList.filter(m=>m.candidate_id===c.id||m.full_name===c.full_name).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
+        const cicpaCandOk = c.cicpa_status==='active' && !!c.security_pass_no;
+        const adnocCandOk = !!c.adnoc_medical_status && c.adnoc_medical_status!=='Unfit';
+        const mobOk = !!mob?.hse_passport_done && !!mob?.h2s_done && cicpaCandOk && adnocCandOk && (c.source==='satco_own' || !!mob?.wp_approved_date);
+        const allGreen = docOk && mobOk;
+        if (readyF.has('ready')     && !allGreen) return false;
+        if (readyF.has('not_ready') && allGreen)  return false;
+      }
+      return matchSearch(c, search);
+    });
+    // Sort: supplier name A→Z, then emp number numerically
+    list.sort((a, b) => {
+      const sA = (a.source==='satco_own' ? 'SATCO Arabia' : a.supplier_name||'').toLowerCase();
+      const sB = (b.source==='satco_own' ? 'SATCO Arabia' : b.supplier_name||'').toLowerCase();
+      if (sA !== sB) return sA.localeCompare(sB);
+      // Within same supplier: sort by trailing number in emp no
+      const nA = parseInt((a.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');
+      const nB = parseInt((b.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');
+      return nA - nB;
+    });
+    return list;
+  }, [candidates, mobList, search, suppF, readyF, desigF, cicpaLocF, excludeOnSite]);
 
   // Unique values for filter dropdowns — normalized & deduplicated
   const designationOpts = useMemo(() => {
@@ -2724,13 +2737,13 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
         <div className="tbl-box drag-scroll" style={{maxHeight:'calc(100vh - var(--stk-2) - 32px)',overflowX:'auto',overflowY:'auto'}}>
         <table style={{width:'max-content',minWidth:'100%',borderCollapse:'collapse',tableLayout:'fixed'}}>
           <colgroup>
-            <col style={{width:'34px'}}/>{/* Checkbox */}
-            <col style={{width:'240px'}}/>{/* Name */}
+            <col style={{width:'240px'}}/>{/* Name — frozen */}
+            <col style={{width:'140px'}}/>{/* Emp No */}
+            <col style={{width:'200px'}}/>{/* Supplier */}
             <col style={{width:'80px'}}/>{/* Status */}
+            <col style={{width:'20px'}}/>{/* gap */}
             <col style={{width:'110px'}}/>{/* Current Site */}
             <col style={{width:'130px'}}/>{/* Designation */}
-            <col style={{width:'110px'}}/>{/* Supplier */}
-            <col style={{width:'75px'}}/>{/* EmpNo */}
             <col style={{width:'85px'}}/>{/* Nationality */}
             <col style={{width:'90px'}}/>{/* DOB */}
             <col style={{width:'100px'}}/>{/* Passport */}
@@ -2751,10 +2764,14 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
           </colgroup>
           <thead><tr style={{background:'#f8fafc'}}>
             <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,background:'#f8fafc',borderRight:'2px solid #e2e8f0'}}>Name</th>
-            {['Status','Current Site','Designation','Supplier','Emp No','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa Emirate','Sec Pass','Sec Exp','ADNOC Med','CICPA Location','Work Permit','HSE','H2S','CICPA','Ready?','Phone','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>{h}</th>)}
+            <th style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>Emp No</th>
+            <th style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>Supplier</th>
+            <th style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>Status</th>
+            <th style={{position:'sticky',top:0,zIndex:12,background:'#f8fafc',borderBottom:'2px solid #e2e8f0'}}></th>{/* gap */}
+            {['Current Site','Designation','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa Emirate','Sec Pass','Sec Exp','ADNOC Med','CICPA Location','Work Permit','HSE','H2S','CICPA','Ready?','Phone','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>{h}</th>)}
           </tr></thead>
           <tbody>
-            {filtered.length===0&&<tr><td colSpan={23} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
+            {filtered.length===0&&<tr><td colSpan={24} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
             {filtered.map((c,idx)=>{
               const isOnSite = isOnSiteFn(c);
               const currentSite = hrMobLocs[c.supplier_emp_no] || '';
@@ -2777,21 +2794,25 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                 <td className="frozen-col" style={{...S.td,fontWeight:700,borderLeft:docPanel?.entity?.id===c.id?'3px solid #2563eb':'3px solid transparent',borderRight:'2px solid #e2e8f0',background:rowBg,paddingTop:'4px',paddingBottom:'4px',whiteSpace:'nowrap'}}>
                   <span style={{color:'#2563eb',cursor:'pointer',textTransform:'uppercase',letterSpacing:'0.2px'}} onClick={e=>{e.stopPropagation();personHistory(c);}}>{c.full_name}</span>
                 </td>
+                {/* Emp No — second column */}
+                <td style={{...S.td,fontFamily:'monospace',fontSize:'12px',fontWeight:700,color:'#0369a1',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.supplier_emp_no||'—'}</td>
+                {/* Supplier — third column */}
+                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',fontSize:'12px',fontWeight:c.source==='satco_own'?700:400,color:c.source==='satco_own'?'#2563eb':'inherit',paddingTop:'4px',paddingBottom:'4px'}}>{c.source==='satco_own'?'SATCO Arabia':c.supplier_name||'—'}</td>
                 {/* Status */}
                 <td style={{...S.td,paddingTop:'3px',paddingBottom:'3px',whiteSpace:'nowrap'}}>
                   <span style={{background:isOnSite?'#dcfce7':'#eff6ff',color:isOnSite?'#166534':'#2563eb',fontSize:'10px',fontWeight:800,padding:'2px 7px',borderRadius:4,display:'inline-block'}}>
                     {isOnSite?'ON SITE':'FREE'}
                   </span>
                 </td>
-                {/* Current Site — portal mob_register first, then HR portal */}
+                {/* Gap column */}
+                <td style={{padding:0,background:rowBg,borderBottom:'1px solid #f1f5f9'}}/>
+                {/* Current Site */}
                 {(()=>{ const site=candSiteMap[c.id]||currentSite||''; const label=site?site.split(/[-–]/)[0].trim().substring(0,20)+(site.length>22?'…':''):'—'; return (
                   <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
                     {site?<span title={site} style={{background:'#dcfce7',color:'#166534',padding:'1px 7px',borderRadius:4,fontSize:'10px',fontWeight:800}}>🏗 {label}</span>:<span style={{color:'#94a3b8'}}>—</span>}
                   </td>
                 );})()}
                 <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px'}}>{c.designation||'—'}</td>
-                <td style={{...S.td,whiteSpace:'nowrap',fontSize:'12px',fontWeight:c.source==='satco_own'?700:400,color:c.source==='satco_own'?'#2563eb':'inherit',paddingTop:'4px',paddingBottom:'4px'}}>{c.source==='satco_own'?'SATCO Arabia':c.supplier_name||'—'}</td>
-                <td style={{...S.td,fontFamily:'monospace',fontSize:'12px',fontWeight:700,color:'#0369a1',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.supplier_emp_no||'—'}</td>
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.nationality||'—'}</td>
                 <td style={{...S.td,fontSize:'12px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.date_of_birth?fmtDOB(c.date_of_birth):'—'}</td>
                 {/* Passport — red X if missing, colored expiry */}
