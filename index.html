@@ -4503,9 +4503,12 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
       : await db.from('mob_suppliers').insert({ ...clean, supplier_code: clean.supplier_code || nextCode(), created_at: new Date().toISOString() });
     setSaving(false);
     if (error) return alert(error.message);
+    // Clear draft from localStorage first so remount doesn't restore it
+    try { localStorage.removeItem('satco_mob_draft_supplier'); } catch {}
     setDraft(null);
     setShowBanner(false);
     setAiStatus(''); setAiMsg('');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     await onRefresh();
   };
 
@@ -4608,7 +4611,7 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
             <div style={{fontWeight:800,fontSize:'16px',color:'#0f172a'}}>{draft.id ? '✏️ Edit Supplier' : '➕ Add Supplier'}</div>
             <div style={{fontSize:'12px',color:'#64748b',marginTop:'2px'}}>Upload trade licence, commercial licence or VAT certificate — AI extracts data automatically</div>
           </div>
-          <button style={S.btnSec} onClick={()=>{setDraft(null);setShowBanner(false);setAiStatus('');setAiMsg('');}}>← Back to List</button>
+          <button style={S.btnSec} onClick={()=>{ try{localStorage.removeItem('satco_mob_draft_supplier');}catch{} setDraft(null);setShowBanner(false);setAiStatus('');setAiMsg('');window.scrollTo({top:0,behavior:'smooth'}); }}>← Back to List</button>
         </div>
 
         {/* AI Document Upload */}
@@ -4798,7 +4801,7 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
 
           <div style={{display:'flex',gap:'10px',marginTop:'16px',paddingTop:'14px',borderTop:'1px solid #e2e8f0'}}>
             <button style={S.btnPri} onClick={save} disabled={saving}>{saving?'Saving…':'💾 Save Supplier'}</button>
-            <button style={S.btnSec} onClick={()=>{setDraft(null);setShowBanner(false);setAiStatus('');setAiMsg('');}}>Cancel</button>
+            <button style={S.btnSec} onClick={()=>{ try{localStorage.removeItem('satco_mob_draft_supplier');}catch{} setDraft(null);setShowBanner(false);setAiStatus('');setAiMsg('');window.scrollTo({top:0,behavior:'smooth'}); }}>Cancel</button>
           </div>
         </div>
       </div>
