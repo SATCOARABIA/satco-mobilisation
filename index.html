@@ -1862,14 +1862,16 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
         {/* Check badges — scrollable row, no wrap */}
         <div style={{display:'flex',gap:'3px',alignItems:'center',flex:1,overflowX:'auto',flexWrap:'nowrap'}}>
           {(c._pr?.checks||[]).map((chk,i)=><ReqBadge key={i} chk={chk}/>)}
-          {/* WP status always shown if plan has wp_required but also show as info badge always */}
-          {!plan?.wp_required&&(()=>{
-            const wpDone = !!c.wp_no && !!c.wp_expiry && new Date(c.wp_expiry)>new Date();
-            const wpExpired = !!c.wp_no && !!c.wp_expiry && new Date(c.wp_expiry)<=new Date();
-            if(wpDone) return <span style={{fontSize:'9px',fontWeight:700,padding:'2px 5px',borderRadius:4,background:'#dbeafe',color:'#1e40af',flexShrink:0,whiteSpace:'nowrap'}} title={`WP: ${c.wp_no} exp ${c.wp_expiry}`}>📄 WP ✓</span>;
-            if(wpExpired) return <span style={{fontSize:'9px',fontWeight:700,padding:'2px 5px',borderRadius:4,background:'#fef3c7',color:'#92400e',flexShrink:0,whiteSpace:'nowrap'}} title="Work permit expired">📄 WP exp</span>;
-            return <span style={{fontSize:'9px',fontWeight:600,padding:'2px 5px',borderRadius:4,background:'#f1f5f9',color:'#94a3b8',flexShrink:0,whiteSpace:'nowrap'}}>no WP</span>;
-          })()}
+          {/* WP status badge — always visible */}
+          {!plan?.wp_required&&c.wp_no&&!!c.wp_expiry&&new Date(c.wp_expiry)>new Date()&&(
+            <span style={{fontSize:'9px',fontWeight:700,padding:'2px 5px',borderRadius:4,background:'#dbeafe',color:'#1e40af',flexShrink:0,whiteSpace:'nowrap'}} title={'WP: '+c.wp_no+' exp '+c.wp_expiry}>📄 WP ✓</span>
+          )}
+          {!plan?.wp_required&&c.wp_no&&!!c.wp_expiry&&new Date(c.wp_expiry)<=new Date()&&(
+            <span style={{fontSize:'9px',fontWeight:700,padding:'2px 5px',borderRadius:4,background:'#fef3c7',color:'#92400e',flexShrink:0,whiteSpace:'nowrap'}} title="Work permit expired">📄 WP exp</span>
+          )}
+          {!plan?.wp_required&&!c.wp_no&&(
+            <span style={{fontSize:'9px',fontWeight:600,padding:'2px 5px',borderRadius:4,background:'#f1f5f9',color:'#94a3b8',flexShrink:0,whiteSpace:'nowrap'}}>no WP</span>
+          )}
         </div>
         {/* First missing action hint */}
         {c._pr?.missing?.length>0&&(
