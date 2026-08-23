@@ -2388,16 +2388,90 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
     alert(`✓ Updated: ${filled}`);
   };
 
-  const exportCols = [
-    {key:'full_name',label:'Name'},{key:'designation',label:'Designation'},{key:'source',label:'Source'},
-    {key:'supplier_name',label:'Supplier'},{key:'supplier_emp_no',label:'Supplier Emp No'},
-    {key:'nationality',label:'Nationality'},{key:'date_of_birth',label:'DOB',date:true},
-    {key:'passport_no',label:'Passport No'},{key:'passport_expiry',label:'Passport Expiry',date:true},
-    {key:'emirates_id',label:'Emirates ID'},{key:'eid_expiry',label:'EID Expiry',date:true},
-    {key:'visa_no',label:'Visa No'},{key:'visa_type',label:'Visa Type'},
-    {key:'visa_location',label:'Visa Location'},{key:'visa_expiry',label:'Visa Expiry',date:true},
-    {key:'phone',label:'Phone'},{key:'remarks',label:'Remarks'},
-  ];
+  // ── Export all portal fields as Excel ─────────────────────────────────────
+  const exportExcel = (rows, filename) => {
+    const XLSX = window.XLSX;
+    if (!XLSX) return alert('SheetJS not loaded — refresh and try again.');
+    const data = rows.map((c, i) => {
+      // Get latest mob record for this candidate
+      const mob = mobList
+        .filter(m => m.candidate_id === c.id || m.full_name === c.full_name)
+        .sort((a,b) => new Date(b.created_at) - new Date(a.created_at))[0];
+      const docOk = !!c.passport_no && !!c.emirates_id && !!c.visa_no;
+      const cicpaDone = c.cicpa_status === 'active' && !!c.security_pass_no;
+      const adnocOk   = !!c.adnoc_medical_status && c.adnoc_medical_status !== 'Unfit';
+      const wpDone    = !!mob?.wp_approved_date;
+      const hseDone   = !!mob?.hse_passport_done;
+      const h2sDone   = !!mob?.h2s_done;
+      const mobOk     = hseDone && h2sDone && cicpaDone && adnocOk && (c.source==='satco_own' || wpDone);
+      const ready     = docOk && mobOk ? 'Ready' : docOk ? 'Pending' : 'Docs Missing';
+      const fD = d => d ? new Date(d).toLocaleDateString('en-GB') : '';
+      return {
+        'S.No':                  i + 1,
+        'Name':                  c.full_name || '',
+        'Supplier Emp No':       c.supplier_emp_no || '',
+        'Supplier':              c.source==='satco_own' ? 'SATCO Arabia' : (c.supplier_name || ''),
+        'Designation':           c.designation || '',
+        'Source':                c.source || '',
+        'Nationality':           c.nationality || '',
+        'Date of Birth':         fD(c.date_of_birth),
+        'Passport No':           c.passport_no || '',
+        'Passport Expiry':       fD(c.passport_expiry),
+        'Emirates ID':           c.emirates_id || '',
+        'EID Expiry':            fD(c.eid_expiry),
+        'Visa No':               c.visa_no || '',
+        'Visa Type':             c.visa_type || '',
+        'Visa Issued Emirate':   c.visa_location || '',
+        'Visa Expiry':           fD(c.visa_expiry),
+        'Security Pass No':      c.security_pass_no || '',
+        'Security Pass Expiry':  fD(c.security_pass_expiry),
+        'CICPA Status':          c.cicpa_status || '',
+        'CICPA Location':        c.cicpa_location || '',
+        'CICPA Remarks':         c.cicpa_remarks || '',
+        'ADNOC Medical':         c.adnoc_medical_status || '',
+        'ADNOC Medical Date':    fD(c.adnoc_medical_date),
+        'Work Permit No':        mob?.wp_no || '',
+        'WP Applied Date':       fD(mob?.wp_applied_date),
+        'WP Approved Date':      fD(mob?.wp_approved_date),
+        'WP Expiry':             fD(mob?.wp_expiry),
+        'Medical Done':          mob?.medical_done ? 'Yes' : 'No',
+        'Medical Date':          fD(mob?.medical_date),
+        'Medical Result':        mob?.medical_result || '',
+        'Medical Expiry':        fD(mob?.medical_expiry),
+        'HSE Passport':          mob?.hse_passport_done ? 'Yes' : 'No',
+        'HSE Date':              fD(mob?.hse_passport_date),
+        'HSE Expiry':            fD(mob?.hse_passport_expiry),
+        'H2S Done':              mob?.h2s_done ? 'Yes' : 'No',
+        'H2S Date':              fD(mob?.h2s_date),
+        'H2S Expiry':            fD(mob?.h2s_expiry),
+        'CICPA Pass No (Mob)':   mob?.cicpa_pass_no || '',
+        'CICPA Approved Date':   fD(mob?.cicpa_approved_date),
+        'CICPA Expiry':          fD(mob?.cicpa_expiry_date),
+        'Customer':              mob?.customer_name || '',
+        'Location / Site':       mob?.location || '',
+        'Mob Status':            mob?.status || '',
+        'Mobilisation Date':     fD(mob?.mobilisation_date),
+        'Demob Date':            fD(mob?.demobilisation_date),
+        'Demob Reason':          mob?.demob_reason || '',
+        'Readiness':             ready,
+        'Phone':                 c.phone || '',
+        'Remarks':               c.remarks || '',
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(data);
+    // Column widths
+    ws['!cols'] = [
+      {wch:5},{wch:28},{wch:14},{wch:36},{wch:18},{wch:10},{wch:12},{wch:12},
+      {wch:12},{wch:14},{wch:20},{wch:12},{wch:14},{wch:12},{wch:14},{wch:12},
+      {wch:16},{wch:16},{wch:12},{wch:24},{wch:20},{wch:14},{wch:14},
+      {wch:14},{wch:14},{wch:14},{wch:12},{wch:10},{wch:12},{wch:12},{wch:12},
+      {wch:10},{wch:12},{wch:12},{wch:10},{wch:12},{wch:12},{wch:14},{wch:16},{wch:12},
+      {wch:20},{wch:20},{wch:12},{wch:16},{wch:14},{wch:14},{wch:14},{wch:16},{wch:20},
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Candidates');
+    XLSX.writeFile(wb, `${filename}_${todayStr()}.xlsx`);
+  };
 
   return (
     <div>
@@ -2470,7 +2544,7 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
             title={excludeOnSite?'Click to show all candidates':'Click to hide candidates currently on site'}>
             {excludeOnSite?'👁 All candidates':'🏗 Available only'}
           </button>
-          <button style={S.btnGold} onClick={()=>exportCSV(filtered,'SATCO_Candidates',exportCols)}>⬇ Export</button>
+          <button style={S.btnGold} onClick={()=>exportExcel(filtered,'SATCO_Candidates')}>⬇ Export Excel</button>
           <button style={S.btnPri} onClick={blank}>+ Add Person</button>
         </div>
       </div>
@@ -3592,21 +3666,79 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
     }
   },[]);
 
-  const exportCols = [
-    {key:'full_name',label:'Name'},{key:'designation',label:'Designation'},{key:'source',label:'Source'},
-    {key:'supplier_name',label:'Supplier'},{key:'supplier_emp_no',label:'Supplier Emp No'},
-    {key:'nationality',label:'Nationality'},{key:'date_of_birth',label:'DOB',date:true},
-    {key:'passport_no',label:'Passport No'},{key:'emirates_id',label:'Emirates ID'},{key:'visa_location',label:'Visa Location'},
-    {key:'customer_name',label:'Customer'},{key:'location',label:'Location'},
-    {key:'wp_no',label:'WP No'},{key:'wp_approved_date',label:'WP Approved',date:true},
-    {key:'medical_done',label:'Medical Done',bool:true},{key:'medical_date',label:'Medical Date',date:true},{key:'medical_result',label:'Medical Result'},
-    {key:'hse_passport_done',label:'HSE Passport',bool:true},{key:'hse_passport_date',label:'HSE Date',date:true},
-    {key:'h2s_done',label:'H2S Done',bool:true},{key:'h2s_date',label:'H2S Date',date:true},
-    {key:'cicpa_pass_no',label:'CICPA Pass No'},{key:'cicpa_approved_date',label:'CICPA Approved',date:true},{key:'cicpa_expiry_date',label:'CICPA Expiry',date:true},
-    {key:'status',label:'Status'},{key:'mobilisation_date',label:'Mob Date',date:true},
-    {key:'demobilisation_date',label:'Demob Date',date:true},{key:'demob_reason',label:'Demob Reason'},{key:'demob_remarks',label:'Demob Remarks'},
-    {key:'wp_action_on_demob',label:'WP Action on Demob'},{key:'notes',label:'Notes'},
-  ];
+  // ── Export all mobilisation fields as Excel ────────────────────────────────
+  const exportMobExcel = (rows, filename) => {
+    const XLSX = window.XLSX;
+    if (!XLSX) return alert('SheetJS not loaded — refresh and try again.');
+    const fD = d => d ? new Date(d).toLocaleDateString('en-GB') : '';
+    const data = rows.map((r, i) => {
+      const extraDone  = (r.extra_trainings||[]).filter(t=>t.done).map(t=>t.name).join(', ');
+      const extraAll   = (r.extra_trainings||[]).map(t=>t.name).join(', ');
+      return {
+        'S.No':                  i + 1,
+        'Name':                  r.full_name || '',
+        'Supplier Emp No':       r.supplier_emp_no || '',
+        'Supplier':              r.supplier_name || '',
+        'Designation':           r.designation || '',
+        'Source':                r.source || '',
+        'Nationality':           r.nationality || '',
+        'Date of Birth':         fD(r.date_of_birth),
+        'Passport No':           r.passport_no || '',
+        'Passport Expiry':       fD(r.passport_expiry),
+        'Emirates ID':           r.emirates_id || '',
+        'EID Expiry':            fD(r.eid_expiry),
+        'Visa No':               r.visa_no || '',
+        'Visa Type':             r.visa_type || '',
+        'Visa Issued Emirate':   r.visa_location || '',
+        'Visa Expiry':           fD(r.visa_expiry),
+        'Customer':              r.customer_name || '',
+        'Location / Site':       r.location || '',
+        'Status':                r.status || '',
+        'Mobilisation Date':     fD(r.mobilisation_date),
+        'Demob Date':            fD(r.demobilisation_date),
+        'Demob Reason':          r.demob_reason || '',
+        'Demob Remarks':         r.demob_remarks || '',
+        'WP Action on Demob':    r.wp_action_on_demob || '',
+        'Work Permit No':        r.wp_no || '',
+        'WP Applied Date':       fD(r.wp_applied_date),
+        'WP Approved Date':      fD(r.wp_approved_date),
+        'WP Expiry':             fD(r.wp_expiry),
+        'Medical Done':          r.medical_done ? 'Yes' : 'No',
+        'Medical Date':          fD(r.medical_date),
+        'Medical Result':        r.medical_result || '',
+        'Medical Expiry':        fD(r.medical_expiry),
+        'HSE Passport':          r.hse_passport_done ? 'Yes' : 'No',
+        'HSE Date':              fD(r.hse_passport_date),
+        'HSE Expiry':            fD(r.hse_passport_expiry),
+        'H2S Done':              r.h2s_done ? 'Yes' : 'No',
+        'H2S Date':              fD(r.h2s_date),
+        'H2S Expiry':            fD(r.h2s_expiry),
+        'CICPA Pass No':         r.cicpa_pass_no || '',
+        'CICPA Applied Date':    fD(r.cicpa_applied_date),
+        'CICPA Approved Date':   fD(r.cicpa_approved_date),
+        'CICPA Expiry':          fD(r.cicpa_expiry_date),
+        'CICPA Returned':        r.cicpa_returned ? 'Yes' : 'No',
+        'Extra Trainings (Done)':extraDone,
+        'Extra Trainings (All)': extraAll,
+        'Client Submitted Date': fD(r.client_submitted_date),
+        'Camp Notified Date':    fD(r.camp_notified_date),
+        'Phone':                 r.phone || '',
+        'Notes':                 r.notes || '',
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws['!cols'] = [
+      {wch:5},{wch:28},{wch:14},{wch:32},{wch:18},{wch:10},{wch:12},{wch:12},
+      {wch:12},{wch:14},{wch:20},{wch:12},{wch:14},{wch:12},{wch:14},{wch:12},
+      {wch:20},{wch:20},{wch:12},{wch:14},{wch:14},{wch:16},{wch:20},{wch:18},
+      {wch:14},{wch:14},{wch:14},{wch:12},{wch:10},{wch:12},{wch:12},{wch:12},
+      {wch:10},{wch:12},{wch:12},{wch:10},{wch:12},{wch:12},{wch:14},{wch:16},
+      {wch:16},{wch:14},{wch:10},{wch:28},{wch:28},{wch:16},{wch:16},{wch:14},{wch:30},
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Mobilisation');
+    XLSX.writeFile(wb, `${filename}_${todayStr()}.xlsx`);
+  };
 
   return (
     <div>
@@ -3672,10 +3804,10 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
         <div style={{display:'flex',gap:'8px'}}>
           <button style={{...S.btnGold,background:'#166534'}} onClick={()=>{
             const readyOnly=filtered.filter(r=>computeReadiness(r).readyForSubmission);
-            if(!readyOnly.length)return alert('No ready personnel in current filter. Check location config for required certs.');
-            exportCSV(readyOnly,`SATCO_Ready_${fCust.size?[...fCust].join('-'):'All'}_${fLoc.size?[...fLoc].join('-'):'AllLoc'}`,exportCols);
+            if(!readyOnly.length)return alert('No ready personnel in current filter.');
+            exportMobExcel(readyOnly,`SATCO_Ready_${fCust.size?[...fCust].join('-'):'All'}`);
           }}>✅ Export Ready</button>
-          <button style={S.btnGold} onClick={()=>exportCSV(filtered,`SATCO_Mob_${fCust.size?[...fCust].join('-'):'All'}_${fLoc.size?[...fLoc].join('-'):'AllLoc'}`,exportCols)}>⬇ Export All</button>
+          <button style={S.btnGold} onClick={()=>exportMobExcel(filtered,`SATCO_Mob_${fCust.size?[...fCust].join('-'):'All'}`)}>⬇ Export All</button>
           <button style={{...S.btnGold,background:'#0f172a',color:'#c49a28',fontWeight:700,fontSize:'12px'}} onClick={()=>{
             const XLSX=window.XLSX;
             if(!XLSX)return alert('SheetJS not loaded — refresh page.');
@@ -4546,34 +4678,39 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
 
   // ── Export CSV ────────────────────────────────────────────────────────────
   const exportCSV2 = () => {
-    const cols = [
-      {label:'SR'},
-      {label:'Supplier Code',key:'supplier_code'},
-      {label:'Vendor Name',key:'name'},
-      {label:'Supplier Services',key:'supplier_services'},
-      {label:'Address State',key:'address_state'},
-      {label:'License #',key:'license_number'},
-      {label:'License Expiry',key:'license_expiry'},
-      {label:'VAT #',key:'vat_number'},
-      {label:'ICV',key:'icv_score'},
-      {label:'WCI Policy #',key:'wci_policy_no'},
-      {label:'WCI Insurer',key:'wci_insurer'},
-      {label:'WCI Start',key:'wci_start'},
-      {label:'WCI Expiry',key:'wci_expiry'},
-      {label:'Email',key:'contact_email'},
-      {label:'Contact Person',key:'contact_name'},
-      {label:'Mob #',key:'contact_phone'},
-      {label:'Mob #2',key:'contact_phone2'},
-      {label:'Remarks',key:'remarks'},
+    const XLSX = window.XLSX;
+    if (!XLSX) return alert('SheetJS not loaded — refresh and try again.');
+    const fD = d => d ? new Date(d).toLocaleDateString('en-GB') : '';
+    const data = filtered.map((s, i) => ({
+      'S.No':                 i + 1,
+      'Supplier Code':        s.supplier_code || '',
+      'Vendor Name':          s.name || '',
+      'Supplier Services':    s.supplier_services || '',
+      'Address State':        s.address_state || '',
+      'License #':            s.license_number || '',
+      'License Expiry':       fD(s.license_expiry),
+      'VAT #':                s.vat_number || '',
+      'ICV Score':            s.icv_score || '',
+      'WCI Policy No':        s.wci_policy_no || '',
+      'WCI Insurer':          s.wci_insurer || '',
+      'WCI Start Date':       fD(s.wci_start),
+      'WCI Expiry':           fD(s.wci_expiry),
+      'Email':                s.contact_email || '',
+      'Contact Person':       s.contact_name || '',
+      'Mobile # 1':           s.contact_phone || '',
+      'Mobile # 2':           s.contact_phone2 || '',
+      'Remarks':              s.remarks || '',
+      'Other Docs':           (s.other_docs||[]).map(d=>`${d.doc_name}${d.expiry?' (exp '+fD(d.expiry)+')':''}`).join(' | '),
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws['!cols'] = [
+      {wch:5},{wch:12},{wch:40},{wch:18},{wch:14},{wch:14},{wch:14},
+      {wch:18},{wch:8},{wch:18},{wch:22},{wch:14},{wch:14},
+      {wch:28},{wch:22},{wch:16},{wch:16},{wch:24},{wch:40},
     ];
-    const rows = [cols.map(c=>c.label), ...filtered.map((s,i) =>
-      cols.map((c,ci) => ci===0 ? i+1 : (s[c.key]||''))
-    )];
-    const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
-    const url = URL.createObjectURL(blob);
-    Object.assign(document.createElement('a'), {href:url, download:`SATCO_Suppliers_${todayStr()}.csv`}).click();
-    URL.revokeObjectURL(url);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Suppliers');
+    XLSX.writeFile(wb, `SATCO_Suppliers_${todayStr()}.xlsx`);
   };
 
   const [alertSettings, setAlertSettings] = useState(null);  // loaded from DB
@@ -4870,7 +5007,7 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
         <MultiSelect options={serviceOpts} selected={serviceF} onChange={setServiceF} placeholder="All services" width="180px"/>
         <MultiSelect options={stateOpts}   selected={stateF}   onChange={setStateF}   placeholder="All states"   width="160px"/>
         <span style={{fontSize:'12px',color:'#64748b',marginLeft:'auto'}}>{filtered.length} supplier{filtered.length!==1?'s':''}</span>
-        <button style={S.btnSec} onClick={exportCSV2}>⬇ Export CSV</button>
+        <button style={S.btnSec} onClick={exportCSV2}>⬇ Export Excel</button>
         <button style={S.btnPri} onClick={()=>{setAiStatus('');setAiMsg('');setShowBanner(false);setDraft({name:'',supplier_code:'',supplier_services:'',address_state:'',license_number:'',license_expiry:'',vat_number:'',icv_score:'',contact_name:'',contact_email:'',contact_phone:'',contact_phone2:'',remarks:'',wci_policy_no:'',wci_insurer:'',wci_expiry:'',wci_start:'',other_docs:[],attachments:{}});}}>+ Add Supplier</button>
       </div>
 
