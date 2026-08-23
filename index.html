@@ -4705,6 +4705,10 @@ function SuppliersTab({ suppliers, onRefresh }) {
       if (!q) return true;
       return ['name','supplier_code','supplier_services','address_state','license_number','vat_number','contact_name','contact_email']
         .some(f => (s[f]||'').toLowerCase().includes(q));
+    }).sort((a,b)=>{
+      const numA=parseInt((a.supplier_code||'').replace(/[^0-9]/g,''))||9999;
+      const numB=parseInt((b.supplier_code||'').replace(/[^0-9]/g,''))||9999;
+      return numA-numB;
     });
   }, [suppliers, search, serviceF, stateF]);
 
