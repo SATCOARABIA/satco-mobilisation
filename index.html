@@ -275,6 +275,11 @@ CREATE TABLE IF NOT EXISTS mob_suppliers (
   contact_email text,
   remarks text,
   attachments jsonb DEFAULT '{}',
+  wci_policy_no text,
+  wci_insurer text,
+  wci_start date,
+  wci_expiry date,
+  other_docs jsonb DEFAULT '[]',
   active boolean DEFAULT true,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
@@ -290,6 +295,11 @@ ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS icv_score text;
 ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS contact_phone2 text;
 ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS attachments jsonb DEFAULT '{}';
 ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
+ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS wci_policy_no text;
+ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS wci_insurer text;
+ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS wci_start date;
+ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS wci_expiry date;
+ALTER TABLE mob_suppliers ADD COLUMN IF NOT EXISTS other_docs jsonb DEFAULT '[]';
 CREATE TABLE IF NOT EXISTS mob_candidates (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   full_name text NOT NULL, designation text, source text DEFAULT 'supplier',
@@ -4348,16 +4358,35 @@ function SuppliersTab({ suppliers, onRefresh }) {
   };
 
   // ── AI Extraction from uploaded document ─────────────────────────────────
+  const DOC_TYPE_LABELS = {
+    trade:      'Trade License',
+    commercial: 'Commercial License',
+    vat:        'VAT Certificate',
+    wci:        'Workmen Compensation Insurance',
+  };
+
   const handleDocUpload = async (e, docType) => {
     const file = e.target.files[0];
     if (!file) return;
     e.target.value = '';
     setAiStatus('processing');
-    setAiMsg(`Reading ${docType === 'trade' ? 'Trade License' : docType === 'commercial' ? 'Commercial License' : 'VAT Certificate'}…`);
+    setAiMsg(`Reading ${DOC_TYPE_LABELS[docType] || docType}…`);
     try {
       const { b64, mimeType, contentType } = await prepareFileForAI(file);
-      const docLabel = docType === 'trade' ? 'UAE Trade License / Commercial Registration' : docType === 'commercial' ? 'UAE Commercial License' : 'UAE VAT Registration Certificate';
-      const prompt = `You are reading a ${docLabel}. Extract ALL visible fields and return ONLY a valid JSON object with these exact keys (empty string "" if not visible):
+
+      // WCI — extract policy number, insurer, expiry
+      const isWCI = docType === 'wci';
+      const prompt = isWCI
+        ? `You are reading a Workmen Compensation Insurance (WCI) or Employers Liability Insurance certificate/policy. Extract ALL visible fields and return ONLY a valid JSON object with these exact keys (empty string "" if not visible):
+{
+  "name": "full legal company name of the insured exactly as written",
+  "wci_policy_no": "policy number or certificate number",
+  "wci_insurer": "name of the insurance company / underwriter",
+  "wci_expiry": "YYYY-MM-DD policy expiry date",
+  "wci_start": "YYYY-MM-DD policy start/issue date if shown"
+}
+Return ONLY the JSON. No markdown, no backticks, no explanation.`
+        : `You are reading a ${docType === 'trade' ? 'UAE Trade License / Commercial Registration' : docType === 'commercial' ? 'UAE Commercial License' : 'UAE VAT Registration Certificate'}. Extract ALL visible fields and return ONLY a valid JSON object with these exact keys (empty string "" if not visible):
 {
   "name": "full legal company name exactly as written",
   "license_number": "license/trade registration number (e.g. CN-XXXXXXX, TL-XXXXXXX, or similar)",
@@ -4369,6 +4398,7 @@ function SuppliersTab({ suppliers, onRefresh }) {
   "contact_phone": "phone or mobile if shown"
 }
 Return ONLY the JSON. No markdown, no backticks, no explanation.`;
+
       const contentBlock = { type: contentType, source: { type: 'base64', media_type: mimeType, data: b64 } };
       const res = await fetch(CLAUDE_PROXY, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4385,17 +4415,24 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
       // Merge into draft — only fill blank fields
       setDraft(d => {
         const upd = { ...d };
-        if (extracted.name         && !upd.name)           upd.name           = extracted.name;
-        if (extracted.license_number && !upd.license_number) upd.license_number = extracted.license_number;
-        if (extracted.license_expiry && !upd.license_expiry) upd.license_expiry = extracted.license_expiry;
-        if (extracted.vat_number   && !upd.vat_number)     upd.vat_number     = extracted.vat_number;
-        if (extracted.contact_name && !upd.contact_name)   upd.contact_name   = extracted.contact_name;
-        if (extracted.contact_email&& !upd.contact_email)  upd.contact_email  = extracted.contact_email;
-        if (extracted.contact_phone&& !upd.contact_phone)  upd.contact_phone  = extracted.contact_phone;
-        if (extracted.address_state) {
-          const up = extracted.address_state.toUpperCase().trim();
-          const match = UAE_EMIRATES_UPPER.find(e => up.includes(e) || e.includes(up));
-          if (match && !upd.address_state) upd.address_state = match;
+        if (extracted.name && !upd.name) upd.name = extracted.name;
+        if (isWCI) {
+          if (extracted.wci_policy_no && !upd.wci_policy_no) upd.wci_policy_no = extracted.wci_policy_no;
+          if (extracted.wci_insurer   && !upd.wci_insurer)   upd.wci_insurer   = extracted.wci_insurer;
+          if (extracted.wci_expiry    && !upd.wci_expiry)    upd.wci_expiry    = extracted.wci_expiry;
+          if (extracted.wci_start     && !upd.wci_start)     upd.wci_start     = extracted.wci_start;
+        } else {
+          if (extracted.license_number && !upd.license_number) upd.license_number = extracted.license_number;
+          if (extracted.license_expiry && !upd.license_expiry) upd.license_expiry = extracted.license_expiry;
+          if (extracted.vat_number   && !upd.vat_number)     upd.vat_number     = extracted.vat_number;
+          if (extracted.contact_name && !upd.contact_name)   upd.contact_name   = extracted.contact_name;
+          if (extracted.contact_email&& !upd.contact_email)  upd.contact_email  = extracted.contact_email;
+          if (extracted.contact_phone&& !upd.contact_phone)  upd.contact_phone  = extracted.contact_phone;
+          if (extracted.address_state) {
+            const up = extracted.address_state.toUpperCase().trim();
+            const m2 = UAE_EMIRATES_UPPER.find(e => up.includes(e) || e.includes(up));
+            if (m2 && !upd.address_state) upd.address_state = m2;
+          }
         }
         // Store attachment reference
         const atts = { ...(upd.attachments||{}) };
@@ -4405,12 +4442,33 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
       });
 
       setAiStatus('done');
-      setAiMsg(`✓ ${docType === 'vat' ? 'VAT Certificate' : docType === 'trade' ? 'Trade License' : 'Commercial License'} scanned — fields filled below. Review and save.`);
+      setAiMsg(`✓ ${DOC_TYPE_LABELS[docType] || docType} scanned — fields filled below. Review and save.`);
     } catch (err) {
       setAiStatus('error');
       setAiMsg('⚠ AI extraction failed: ' + err.message + ' — fill fields manually.');
     }
   };
+
+  // ── Other document upload (named, no AI scan) ─────────────────────────────
+  const handleOtherDocUpload = async (e, idx) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    e.target.value = '';
+    setDraft(d => {
+      const others = [...(d.other_docs||[])];
+      others[idx] = { ...others[idx], file_name: file.name, file_size: file.size };
+      return { ...d, other_docs: others };
+    });
+  };
+
+  const addOtherDoc = () => setDraft(d => ({
+    ...d, other_docs: [...(d.other_docs||[]), { doc_name:'', expiry:'', file_name:'', file_size:0 }]
+  }));
+
+  const removeOtherDoc = (idx) => setDraft(d => {
+    const others = (d.other_docs||[]).filter((_,i)=>i!==idx);
+    return { ...d, other_docs: others };
+  });
 
   // ── Save supplier ─────────────────────────────────────────────────────────
   const save = async () => {
@@ -4450,6 +4508,10 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
       {label:'License Expiry',key:'license_expiry'},
       {label:'VAT #',key:'vat_number'},
       {label:'ICV',key:'icv_score'},
+      {label:'WCI Policy #',key:'wci_policy_no'},
+      {label:'WCI Insurer',key:'wci_insurer'},
+      {label:'WCI Start',key:'wci_start'},
+      {label:'WCI Expiry',key:'wci_expiry'},
       {label:'Email',key:'contact_email'},
       {label:'Contact Person',key:'contact_name'},
       {label:'Mob #',key:'contact_phone'},
@@ -4484,27 +4546,29 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
 
         {/* AI Document Upload */}
         <div style={{...S.card,padding:'16px 18px',marginBottom:'12px'}}>
-          <div style={{fontWeight:800,fontSize:'13px',color:'#0f172a',marginBottom:'10px'}}>📎 Upload Documents — AI Auto-Fill</div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'12px',marginBottom:'10px'}}>
+          <div style={{fontWeight:800,fontSize:'13px',color:'#0f172a',marginBottom:'4px'}}>📎 Upload Documents — AI Auto-Fill</div>
+          <div style={{fontSize:'11px',color:'#64748b',marginBottom:'10px'}}>Trade License, Commercial License and VAT — AI fills details automatically. WCI — AI extracts policy number, insurer and expiry.</div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'12px',marginBottom:'10px'}}>
             {[
-              {key:'trade',      label:'Trade License',      icon:'📄'},
-              {key:'commercial', label:'Commercial License',  icon:'📋'},
-              {key:'vat',        label:'VAT Certificate',    icon:'🧾'},
+              {key:'trade',      label:'Trade License',               icon:'📄'},
+              {key:'commercial', label:'Commercial License',           icon:'📋'},
+              {key:'vat',        label:'VAT Certificate',             icon:'🧾'},
+              {key:'wci',        label:'Workmen Comp. Insurance',     icon:'🛡️'},
             ].map(({key,label,icon}) => {
               const has = !!(draft.attachments||{})[key];
               return (
                 <label key={key} style={{
                   border: `2px dashed ${has?'#b8972a':'#cbd5e1'}`,
                   background: has ? 'rgba(184,151,42,0.05)' : '#f8fafc',
-                  borderRadius:'10px', padding:'18px 12px', textAlign:'center',
+                  borderRadius:'10px', padding:'16px 10px', textAlign:'center',
                   cursor:'pointer', transition:'all .15s', display:'block',
                 }}>
                   <input type="file" accept="image/*,application/pdf" style={{display:'none'}}
                     onChange={e=>handleDocUpload(e,key)}/>
-                  <div style={{fontSize:'28px',marginBottom:'6px'}}>{icon}</div>
-                  <div style={{fontWeight:700,fontSize:'12px',color:'#0f172a'}}>{label}</div>
+                  <div style={{fontSize:'26px',marginBottom:'5px'}}>{icon}</div>
+                  <div style={{fontWeight:700,fontSize:'11px',color:'#0f172a'}}>{label}</div>
                   <div style={{fontSize:'10px',color:'#64748b',marginTop:'2px'}}>PDF · JPG · PNG</div>
-                  {has && <div style={{fontSize:'10px',color:'#b8972a',fontWeight:700,marginTop:'4px'}}>✓ {(draft.attachments[key].name||'').slice(0,22)}</div>}
+                  {has && <div style={{fontSize:'10px',color:'#b8972a',fontWeight:700,marginTop:'4px'}}>✓ {(draft.attachments[key].name||'').slice(0,20)}</div>}
                 </label>
               );
             })}
@@ -4587,6 +4651,84 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
             </Field>
           </Grid>
 
+          {/* ── WCI Section ── */}
+          <div style={{fontWeight:700,fontSize:'12px',color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'12px',paddingBottom:'8px',borderBottom:'1px solid #e2e8f0',marginTop:'4px'}}>
+            🛡️ Workmen Compensation Insurance
+          </div>
+          <Grid cols={4}>
+            <Field label="Policy Number">
+              <input value={draft.wci_policy_no||''} onChange={e=>setDraft(d=>({...d,wci_policy_no:e.target.value}))} placeholder="e.g. WCI/2025/00123" style={S.input}/>
+            </Field>
+            <Field label="Insurer / Insurance Co.">
+              <input value={draft.wci_insurer||''} onChange={e=>setDraft(d=>({...d,wci_insurer:e.target.value}))} placeholder="e.g. ADNIC, AXA, Daman…" style={S.input}/>
+            </Field>
+            <Field label="Policy Start Date">
+              <input type="date" value={draft.wci_start||''} onChange={e=>setDraft(d=>({...d,wci_start:e.target.value}))} style={S.input}/>
+            </Field>
+            <Field label="Policy Expiry Date">
+              <input type="date" value={draft.wci_expiry||''} onChange={e=>setDraft(d=>({...d,wci_expiry:e.target.value}))}
+                style={{...S.input, ...(draft.wci_expiry ? (()=>{const diff=(new Date(draft.wci_expiry)-new Date())/86400000; return diff<0?{borderColor:'#dc2626',background:'#fef2f2'}:diff<90?{borderColor:'#f59e0b',background:'#fffbeb'}:{};})() : {})}}/>
+              {draft.wci_expiry && (()=>{
+                const diff = Math.ceil((new Date(draft.wci_expiry)-new Date())/86400000);
+                if (diff < 0)   return <div style={{fontSize:'10px',color:'#dc2626',fontWeight:700,marginTop:'2px'}}>⚠ EXPIRED {Math.abs(diff)}d ago</div>;
+                if (diff < 90)  return <div style={{fontSize:'10px',color:'#b45309',fontWeight:700,marginTop:'2px'}}>⚠ Expiring in {diff} days</div>;
+                return <div style={{fontSize:'10px',color:'#166534',marginTop:'2px'}}>✓ Valid ({diff} days)</div>;
+              })()}
+            </Field>
+          </Grid>
+
+          {/* ── Other Documents ── */}
+          <div style={{fontWeight:700,fontSize:'12px',color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'10px',paddingBottom:'8px',borderBottom:'1px solid #e2e8f0',marginTop:'4px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <span>📁 Other Documents</span>
+            <button style={{...S.btnSm,fontSize:'11px',display:'flex',alignItems:'center',gap:'4px'}} onClick={addOtherDoc}>
+              + Add Document
+            </button>
+          </div>
+          {(draft.other_docs||[]).length === 0 && (
+            <div style={{fontSize:'12px',color:'#94a3b8',marginBottom:'12px',padding:'10px 14px',background:'#f8fafc',borderRadius:'8px',border:'1px dashed #e2e8f0'}}>
+              No other documents added. Click <strong>+ Add Document</strong> to attach additional certificates, agreements or any other files.
+            </div>
+          )}
+          {(draft.other_docs||[]).map((doc, idx) => (
+            <div key={idx} style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr auto',gap:'10px',alignItems:'end',marginBottom:'10px',padding:'12px 14px',background:'#f8fafc',borderRadius:'8px',border:'1px solid #e2e8f0'}}>
+              <Field label="Document Name *">
+                <input value={doc.doc_name||''} placeholder="e.g. ISO Certificate, Bank Guarantee…"
+                  onChange={e=>{const o=[...(draft.other_docs||[])];o[idx]={...o[idx],doc_name:e.target.value};setDraft(d=>({...d,other_docs:o}));}}
+                  style={S.input}/>
+              </Field>
+              <Field label="Expiry Date (if applicable)">
+                <input type="date" value={doc.expiry||''}
+                  onChange={e=>{const o=[...(draft.other_docs||[])];o[idx]={...o[idx],expiry:e.target.value};setDraft(d=>({...d,other_docs:o}));}}
+                  style={S.input}/>
+                {doc.expiry && (()=>{
+                  const diff = Math.ceil((new Date(doc.expiry)-new Date())/86400000);
+                  if (diff < 0)  return <div style={{fontSize:'10px',color:'#dc2626',fontWeight:700,marginTop:'2px'}}>⚠ EXPIRED</div>;
+                  if (diff < 90) return <div style={{fontSize:'10px',color:'#b45309',fontWeight:700,marginTop:'2px'}}>⚠ {diff}d remaining</div>;
+                  return null;
+                })()}
+              </Field>
+              <Field label="Upload File">
+                <label style={{
+                  display:'flex', alignItems:'center', gap:'8px',
+                  border: `1px dashed ${doc.file_name?'#b8972a':'#cbd5e1'}`,
+                  background: doc.file_name ? 'rgba(184,151,42,0.05)' : '#fff',
+                  borderRadius:'6px', padding:'7px 10px', cursor:'pointer', fontSize:'12px',
+                  color: doc.file_name ? '#b8972a' : '#64748b',
+                }}>
+                  <input type="file" accept="image/*,application/pdf" style={{display:'none'}}
+                    onChange={e=>handleOtherDocUpload(e, idx)}/>
+                  {doc.file_name
+                    ? <><span style={{fontSize:'14px'}}>📎</span><span style={{fontWeight:600}}>{doc.file_name.slice(0,24)}{doc.file_name.length>24?'…':''}</span></>
+                    : <><span>📂</span><span>Choose file (PDF · JPG · PNG)</span></>
+                  }
+                </label>
+              </Field>
+              <div style={{paddingBottom:'2px'}}>
+                <button style={{...S.btnSm,color:'#dc2626',padding:'7px 10px'}} onClick={()=>removeOtherDoc(idx)} title="Remove this document">✕</button>
+              </div>
+            </div>
+          ))}
+
           <div style={{display:'flex',gap:'10px',marginTop:'16px',paddingTop:'14px',borderTop:'1px solid #e2e8f0'}}>
             <button style={S.btnPri} onClick={save} disabled={saving}>{saving?'Saving…':'💾 Save Supplier'}</button>
             <button style={S.btnSec} onClick={()=>{setDraft(null);setAiStatus('');setAiMsg('');}}>Cancel</button>
@@ -4627,7 +4769,7 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
         <MultiSelect options={stateOpts}   selected={stateF}   onChange={setStateF}   placeholder="All states"   width="160px"/>
         <span style={{fontSize:'12px',color:'#64748b',marginLeft:'auto'}}>{filtered.length} supplier{filtered.length!==1?'s':''}</span>
         <button style={S.btnSec} onClick={exportCSV2}>⬇ Export CSV</button>
-        <button style={S.btnPri} onClick={()=>{setAiStatus('');setAiMsg('');setDraft({name:'',supplier_code:'',supplier_services:'',address_state:'',license_number:'',license_expiry:'',vat_number:'',icv_score:'',contact_name:'',contact_email:'',contact_phone:'',contact_phone2:'',remarks:'',attachments:{}});}}>+ Add Supplier</button>
+        <button style={S.btnPri} onClick={()=>{setAiStatus('');setAiMsg('');setDraft({name:'',supplier_code:'',supplier_services:'',address_state:'',license_number:'',license_expiry:'',vat_number:'',icv_score:'',contact_name:'',contact_email:'',contact_phone:'',contact_phone2:'',remarks:'',wci_policy_no:'',wci_insurer:'',wci_expiry:'',wci_start:'',other_docs:[],attachments:{}});}}>+ Add Supplier</button>
       </div>
 
       {/* Table */}
@@ -4636,21 +4778,19 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
           <table style={{width:'100%',borderCollapse:'collapse',minWidth:'1400px'}}>
             <thead>
               <tr>
-                {['SR','Supplier Code','Vendor Name','Supplier Services','Address State','License #','License Expiry','VAT #','ICV','Email','Contact Person','Mob #','Mob # 2','Remarks',''].map(h=>(
+                {['SR','Supplier Code','Vendor Name','Supplier Services','Address State','License #','License Expiry','VAT #','ICV','WCI Expiry','Docs','Email','Contact Person','Mob #','Mob # 2','Remarks',''].map(h=>(
                   <th key={h} style={{...S.th,whiteSpace:'nowrap',position:'sticky',top:0,zIndex:12,background:'#f8fafc'}}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.length===0&&(
-                <tr><td colSpan={15} style={{padding:'40px',textAlign:'center',color:'#94a3b8'}}>
+                <tr><td colSpan={17} style={{padding:'40px',textAlign:'center',color:'#94a3b8'}}>
                   {suppliers.length===0 ? 'No suppliers yet — click + Add Supplier to get started.' : 'No suppliers match the filters.'}
                 </td></tr>
               )}
               {filtered.map((s,i)=>{
                 const es = expiryStyle(s.license_expiry);
-                const atts = s.attachments || {};
-                const attCount = Object.keys(atts).length;
                 return (
                   <tr key={s.id} className="hr-row">
                     <td style={{...S.td,color:'#94a3b8',fontSize:'11px',textAlign:'center',width:36}}>{i+1}</td>
@@ -4659,7 +4799,6 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
                     </td>
                     <td style={{...S.td,fontWeight:700,maxWidth:'240px'}}>
                       <div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.name}</div>
-                      {attCount>0&&<div style={{fontSize:'10px',color:'#b8972a',marginTop:'2px'}}>📎 {attCount} doc{attCount>1?'s':''}</div>}
                     </td>
                     <td style={{...S.td,fontSize:'12px'}}>{s.supplier_services||'—'}</td>
                     <td style={{...S.td,fontSize:'12px'}}>{s.address_state||'—'}</td>
@@ -4671,6 +4810,28 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
                     </td>
                     <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap'}}>{s.vat_number||'—'}</td>
                     <td style={{...S.td,textAlign:'center',fontSize:'12px'}}>{s.icv_score||'—'}</td>
+                    <td style={{...S.td,whiteSpace:'nowrap'}}>
+                      {s.wci_expiry ? (()=>{
+                        const es2 = expiryStyle(s.wci_expiry);
+                        return <span style={{...es2,padding:'2px 8px',borderRadius:6,fontSize:'11px'}} title={`Policy: ${s.wci_policy_no||'—'} · ${s.wci_insurer||'—'}`}>🛡 {fmtDate(s.wci_expiry)}</span>;
+                      })() : <span style={{color:'#94a3b8',fontSize:'11px'}}>—</span>}
+                    </td>
+                    <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px'}}>
+                      {(()=>{
+                        const atts = s.attachments || {};
+                        const attCount = Object.keys(atts).filter(k=>!['trade','commercial','vat','wci'].includes(k)).length + Object.keys(atts).filter(k=>['trade','commercial','vat','wci'].includes(k)).length;
+                        const otherCount = (s.other_docs||[]).length;
+                        const total = attCount + otherCount;
+                        if (!total) return <span style={{color:'#94a3b8'}}>—</span>;
+                        const labels = [];
+                        if (atts.trade)      labels.push('TL');
+                        if (atts.commercial) labels.push('CL');
+                        if (atts.vat)        labels.push('VAT');
+                        if (atts.wci)        labels.push('WCI');
+                        if (otherCount > 0)  labels.push(`+${otherCount}`);
+                        return <span style={{color:'#b8972a',fontWeight:700}}>📎 {labels.join(' · ')}</span>;
+                      })()}
+                    </td>
                     <td style={{...S.td,fontSize:'11px',maxWidth:'160px'}}>
                       {s.contact_email ? <a href={`mailto:${s.contact_email}`} style={{color:'#0369a1'}}>{s.contact_email}</a> : '—'}
                     </td>
@@ -4682,7 +4843,7 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
                     </td>
                     <td style={{...S.td,whiteSpace:'nowrap'}}>
                       <div style={{display:'flex',gap:'4px'}}>
-                        <button style={S.btnSm} onClick={()=>{setAiStatus('');setAiMsg('');setDraft({...s,attachments:s.attachments||{}});}}>Edit</button>
+                        <button style={S.btnSm} onClick={()=>{setAiStatus('');setAiMsg('');setDraft({...s,attachments:s.attachments||{},other_docs:s.other_docs||[]});}}>Edit</button>
                         <button style={{...S.btnSm,color:'#dc2626'}} onClick={()=>setDeleteId(s.id)}>Del</button>
                       </div>
                     </td>
