@@ -4877,7 +4877,26 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
       {/* Table */}
       <div style={{...S.card,marginTop:0,borderRadius:'0 0 10px 10px'}}>
         <div className="tbl-box" style={{maxHeight:'calc(100vh - var(--stk-2) - 220px)'}}>
-          <table style={{width:'100%',borderCollapse:'collapse',minWidth:'1400px'}}>
+          <table style={{borderCollapse:'collapse',tableLayout:'fixed',width:'max-content',minWidth:'100%'}}>
+            <colgroup>
+              <col style={{width:36}}/>{/* SR */}
+              <col style={{width:90}}/>{/* Supplier Code */}
+              <col style={{width:280}}/>{/* Vendor Name */}
+              <col style={{width:140}}/>{/* Supplier Services */}
+              <col style={{width:110}}/>{/* Address State */}
+              <col style={{width:110}}/>{/* License # */}
+              <col style={{width:120}}/>{/* License Expiry */}
+              <col style={{width:155}}/>{/* VAT # */}
+              <col style={{width:60}}/>{/* ICV */}
+              <col style={{width:120}}/>{/* WCI Expiry */}
+              <col style={{width:130}}/>{/* Docs */}
+              <col style={{width:200}}/>{/* Email */}
+              <col style={{width:200}}/>{/* Contact Person */}
+              <col style={{width:130}}/>{/* Mob # */}
+              <col style={{width:130}}/>{/* Mob # 2 */}
+              <col style={{width:160}}/>{/* Remarks */}
+              <col style={{width:90}}/>{/* Actions */}
+            </colgroup>
             <thead>
               <tr>
                 {['SR','Supplier Code','Vendor Name','Supplier Services','Address State','License #','License Expiry','VAT #','ICV','WCI Expiry','Docs','Email','Contact Person','Mob #','Mob # 2','Remarks',''].map(h=>(
@@ -4894,16 +4913,14 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
               {filtered.map((s,i)=>{
                 const es = expiryStyle(s.license_expiry);
                 return (
-                  <tr key={s.id} className="hr-row">
-                    <td style={{...S.td,color:'#94a3b8',fontSize:'11px',textAlign:'center',width:36}}>{i+1}</td>
+                  <tr key={s.id} className="hr-row" style={{height:'36px'}}>
+                    <td style={{...S.td,color:'#94a3b8',fontSize:'11px',textAlign:'center',whiteSpace:'nowrap'}}>{i+1}</td>
                     <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap'}}>
                       <span style={{background:'#f1f5f9',padding:'2px 7px',borderRadius:5,fontWeight:700,color:'#0f172a'}}>{s.supplier_code||'—'}</span>
                     </td>
-                    <td style={{...S.td,fontWeight:700,maxWidth:'240px'}}>
-                      <div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.name}</div>
-                    </td>
-                    <td style={{...S.td,fontSize:'12px'}}>{s.supplier_services||'—'}</td>
-                    <td style={{...S.td,fontSize:'12px'}}>{s.address_state||'—'}</td>
+                    <td style={{...S.td,fontWeight:700,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.name}</td>
+                    <td style={{...S.td,fontSize:'12px',whiteSpace:'nowrap'}}>{s.supplier_services||'—'}</td>
+                    <td style={{...S.td,fontSize:'12px',whiteSpace:'nowrap'}}>{s.address_state||'—'}</td>
                     <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap'}}>{s.license_number||'—'}</td>
                     <td style={{...S.td,whiteSpace:'nowrap'}}>
                       {s.license_expiry
@@ -4911,7 +4928,7 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
                         : <span style={{color:'#94a3b8'}}>—</span>}
                     </td>
                     <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap'}}>{s.vat_number||'—'}</td>
-                    <td style={{...S.td,textAlign:'center',fontSize:'12px'}}>{s.icv_score||'—'}</td>
+                    <td style={{...S.td,textAlign:'center',fontSize:'12px',whiteSpace:'nowrap'}}>{s.icv_score||'—'}</td>
                     <td style={{...S.td,whiteSpace:'nowrap'}}>
                       {s.wci_expiry ? (()=>{
                         const es2 = expiryStyle(s.wci_expiry);
@@ -4921,28 +4938,23 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
                     <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px'}}>
                       {(()=>{
                         const atts = s.attachments || {};
-                        const attCount = Object.keys(atts).filter(k=>!['trade','commercial','vat','wci'].includes(k)).length + Object.keys(atts).filter(k=>['trade','commercial','vat','wci'].includes(k)).length;
                         const otherCount = (s.other_docs||[]).length;
-                        const total = attCount + otherCount;
-                        if (!total) return <span style={{color:'#94a3b8'}}>—</span>;
                         const labels = [];
                         if (atts.trade)      labels.push('TL');
                         if (atts.commercial) labels.push('CL');
                         if (atts.vat)        labels.push('VAT');
                         if (atts.wci)        labels.push('WCI');
                         if (otherCount > 0)  labels.push(`+${otherCount}`);
-                        return <span style={{color:'#b8972a',fontWeight:700}}>📎 {labels.join(' · ')}</span>;
+                        return labels.length ? <span style={{color:'#b8972a',fontWeight:700}}>📎 {labels.join(' · ')}</span> : <span style={{color:'#94a3b8'}}>—</span>;
                       })()}
                     </td>
-                    <td style={{...S.td,fontSize:'11px',maxWidth:'160px'}}>
+                    <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
                       {s.contact_email ? <a href={`mailto:${s.contact_email}`} style={{color:'#0369a1'}}>{s.contact_email}</a> : '—'}
                     </td>
-                    <td style={{...S.td,fontSize:'12px'}}>{s.contact_name||'—'}</td>
+                    <td style={{...S.td,fontSize:'12px',whiteSpace:'nowrap'}}>{s.contact_name||'—'}</td>
                     <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap'}}>{s.contact_phone||'—'}</td>
                     <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap'}}>{s.contact_phone2||'—'}</td>
-                    <td style={{...S.td,fontSize:'11px',color:'#64748b',maxWidth:'140px'}}>
-                      <div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.remarks||'—'}</div>
-                    </td>
+                    <td style={{...S.td,fontSize:'11px',color:'#64748b',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.remarks||'—'}</td>
                     <td style={{...S.td,whiteSpace:'nowrap'}}>
                       <div style={{display:'flex',gap:'4px'}}>
                         <button style={S.btnSm} onClick={()=>{setAiStatus('');setAiMsg('');setShowBanner(false);setDraft({...s,attachments:s.attachments||{},other_docs:s.other_docs||[]});}}>Edit</button>
