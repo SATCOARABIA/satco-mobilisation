@@ -4962,13 +4962,24 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
   };
 
   const sendTestAlert = async () => {
-    if (!window.confirm('Send a test alert email to ' + alertSettings?.alert_email + '?')) return;
+    if (!window.confirm('Send a test alert email to ' + (alertSettings?.alert_email||'admin@satcoarabiaengg.com') + '?')) return;
     try {
-      // Call without Authorization header — the API endpoint handles auth via env variable server-side
       const res = await fetch('/api/supplier-expiry-check', { method: 'GET' });
-      const d = await res.json();
-      alert(res.ok ? '✓ Test alert sent: ' + (d.message || d.issues + ' issues found') : '✗ ' + (d.error || 'Failed'));
-    } catch (e) { alert('✗ ' + e.message); }
+      const text = await res.text();
+      let d;
+      try { d = JSON.parse(text); } catch(_) {
+        // API returned HTML — likely env vars not set or file not deployed
+        if (text.includes('Missing env') || text.includes('SUPABASE') || text.includes('RESEND')) {
+          alert('✗ Missing environment variables on Vercel.\n\nGo to: Vercel Dashboard → satco-mobilisation → Settings → Environment Variables\n\nAdd: SUPABASE_SERVICE_KEY, RESEND_API_KEY, SUPABASE_URL, CRON_SECRET');
+        } else if (res.status === 404) {
+          alert('✗ API not found (404).\n\nThe api/supplier-expiry-check.js file has not been deployed yet.\n\nPush the supplier-expiry-check.js file to GitHub: api/ folder in your satco-mobilisation repo.');
+        } else {
+          alert('✗ Server error ' + res.status + ':\n' + text.slice(0, 300));
+        }
+        return;
+      }
+      alert(res.ok ? '✓ ' + (d.message || (d.issues + ' issues found — email sent to ' + (alertSettings?.alert_email||''))) : '✗ ' + (d.error || JSON.stringify(d)));
+    } catch (e) { alert('✗ Network error: ' + e.message); }
   };
 
   const serviceOpts = useMemo(() => [...new Set(suppliers.map(s=>s.supplier_services).filter(Boolean))].sort().map(v=>({value:v,label:v})), [suppliers]);
