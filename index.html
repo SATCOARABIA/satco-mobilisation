@@ -2703,6 +2703,21 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                       });
                       // full_name: only if draft currently has no name
                       if (result.full_name && !draft.full_name && !allUpdates.full_name) allUpdates.full_name = result.full_name;
+                      // ── Work Permit (MOHRE) ──────────────────────────────
+                      if (detectedType.includes('work_permit') || result.wp_no || result.wp_employer) {
+                        // Passport cross-check warning
+                        const scannedPP = result.passport_no || '';
+                        const existingPP = (draft.passport_no || allUpdates.passport_no || '').toUpperCase();
+                        if (scannedPP && existingPP && scannedPP.toUpperCase() !== existingPP) {
+                          allUpdates._wpPassportWarn = `WP passport (${scannedPP}) ≠ candidate passport (${existingPP}) — please verify`;
+                        }
+                        if (result.wp_no       && !allUpdates.wp_no)         allUpdates.wp_no         = result.wp_no;
+                        if (result.wp_employer && !allUpdates.wp_employer)   allUpdates.wp_employer   = result.wp_employer;
+                        const wpExp = result.wp_card_expiry || result.wp_expiry;
+                        if (wpExp              && !allUpdates.wp_expiry)     allUpdates.wp_expiry     = wpExp;
+                        const wpIss = result.wp_issue_date || result.issue_date;
+                        if (wpIss              && !allUpdates.wp_issue_date) allUpdates.wp_issue_date = wpIss;
+                      }
                       // CICPA gate pass / security pass — never touch name or designation
                       if (detectedType.includes('cicpa') || result.cicpa_pass_no) {
                         if (result.cicpa_pass_no && !allUpdates.security_pass_no)
@@ -2736,6 +2751,11 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
             {draft._scanResult&&Array.isArray(draft._scanResult)&&(
               <div style={{marginTop:'10px'}}>
                 <div style={{color:'#4ade80',fontWeight:700,fontSize:'13px',marginBottom:'6px'}}>✓ {draft._scanResult.length} document(s) scanned — fields filled below</div>
+                {draft._wpPassportWarn&&(
+                  <div style={{background:'#fef3c7',border:'1px solid #f59e0b',borderRadius:'6px',padding:'8px 12px',marginBottom:'6px',fontSize:'12px',color:'#92400e',fontWeight:600}}>
+                    ⚠ Passport Mismatch: {draft._wpPassportWarn}
+                  </div>
+                )}
                 {draft._scanResult.map((r,i)=>(
                   <div key={i} style={{background:'#1e293b',borderRadius:'5px',padding:'6px 10px',marginBottom:'4px',fontSize:'11px',color:'#94a3b8'}}>
                     <span style={{color:'#b8972a',fontWeight:700}}>{r.file}</span>
@@ -2837,7 +2857,12 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
               )}
             </Field>
           </Grid>
-          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Work Permit (Upload via Documents panel — AI reads automatically)</div>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0',display:'flex',alignItems:'center',gap:'8px'}}>
+            Work Permit
+            <span style={{fontSize:'10px',fontWeight:600,color:'#b8972a',textTransform:'none',letterSpacing:0,background:'#fffbeb',padding:'2px 8px',borderRadius:4,border:'1px solid #fde68a'}}>
+              📂 Upload via the button above — AI fills these fields automatically
+            </span>
+          </div>
           <Grid cols={4}>
             <Field label="WP Card No">
               <input value={draft.wp_no||''} onChange={e=>setDraft(d=>({...d,wp_no:e.target.value}))} placeholder="e.g. 141920969" style={S.input}/>
