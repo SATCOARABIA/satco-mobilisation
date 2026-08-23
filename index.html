@@ -373,6 +373,12 @@ CREATE INDEX IF NOT EXISTS idx_mob_reg_status  ON mob_register(status);
 CREATE INDEX IF NOT EXISTS idx_mob_reg_name    ON mob_register(full_name);
 CREATE INDEX IF NOT EXISTS idx_mob_reg_eid     ON mob_register(emirates_id);
 CREATE INDEX IF NOT EXISTS idx_mob_reg_pass    ON mob_register(passport_no);
+ALTER TABLE mob_requirements ADD COLUMN IF NOT EXISTS wp_required boolean DEFAULT false;
+ALTER TABLE mob_requirements ADD COLUMN IF NOT EXISTS cicpa_required boolean DEFAULT false;
+ALTER TABLE mob_requirements ADD COLUMN IF NOT EXISTS adnoc_medical_required boolean DEFAULT false;
+ALTER TABLE mob_requirements ADD COLUMN IF NOT EXISTS medical_required boolean DEFAULT false;
+ALTER TABLE mob_requirements ADD COLUMN IF NOT EXISTS hse_required boolean DEFAULT false;
+ALTER TABLE mob_requirements ADD COLUMN IF NOT EXISTS h2s_required boolean DEFAULT false;
 ALTER TABLE mob_suppliers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mob_candidates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mob_requirements ENABLE ROW LEVEL SECURITY;
@@ -1856,6 +1862,14 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
         {/* Check badges — scrollable row, no wrap */}
         <div style={{display:'flex',gap:'3px',alignItems:'center',flex:1,overflowX:'auto',flexWrap:'nowrap'}}>
           {(c._pr?.checks||[]).map((chk,i)=><ReqBadge key={i} chk={chk}/>)}
+          {/* WP status always shown if plan has wp_required but also show as info badge always */}
+          {!plan?.wp_required&&(()=>{
+            const wpDone = !!c.wp_no && !!c.wp_expiry && new Date(c.wp_expiry)>new Date();
+            const wpExpired = !!c.wp_no && !!c.wp_expiry && new Date(c.wp_expiry)<=new Date();
+            if(wpDone) return <span style={{fontSize:'9px',fontWeight:700,padding:'2px 5px',borderRadius:4,background:'#dbeafe',color:'#1e40af',flexShrink:0,whiteSpace:'nowrap'}} title={`WP: ${c.wp_no} exp ${c.wp_expiry}`}>📄 WP ✓</span>;
+            if(wpExpired) return <span style={{fontSize:'9px',fontWeight:700,padding:'2px 5px',borderRadius:4,background:'#fef3c7',color:'#92400e',flexShrink:0,whiteSpace:'nowrap'}} title="Work permit expired">📄 WP exp</span>;
+            return <span style={{fontSize:'9px',fontWeight:600,padding:'2px 5px',borderRadius:4,background:'#f1f5f9',color:'#94a3b8',flexShrink:0,whiteSpace:'nowrap'}}>no WP</span>;
+          })()}
         </div>
         {/* First missing action hint */}
         {c._pr?.missing?.length>0&&(
@@ -3171,7 +3185,7 @@ function RequirementsTab({requirements, onSave}) {
       notes: [po.remarks, po.po_value?`PO Value: ${po.currency||'AED'} ${Number(po.po_value).toLocaleString()}`:''].filter(Boolean).join(' · ') || d.notes || '',
     }));
   };
-  const blank=()=>setDraft({customer_name:'',po_reference:'',location:'',requirement_date:todayStr(),_lines:'',notes:''});
+  const blank=()=>setDraft({customer_name:'',po_reference:'',location:'',requirement_date:todayStr(),_lines:'',notes:'',wp_required:false,cicpa_required:false,adnoc_medical_required:false,medical_required:false,hse_required:false,h2s_required:false});
   const save=()=>{
     if(!draft.customer_name||!draft.location)return alert('Customer and location required');
     const positions=(draft._lines||'').split('\n').map(l=>{const[p,q]=l.split(':').map(s=>s.trim());return p?{designation:p,qty:parseInt(q)||0}:null;}).filter(Boolean);
@@ -3240,6 +3254,24 @@ function RequirementsTab({requirements, onSave}) {
             <textarea value={draft._lines||''} onChange={e=>setDraft(d=>({...d,_lines:e.target.value}))} placeholder={"Pipe Fabricator: 50\nScaffolder: 50\nPipe Fitter: 20\nMech Helper: 30"} style={{...S.input,height:'100px',resize:'vertical',fontFamily:'monospace',marginTop:'2px'}}/>
           </Field>
           <Field label="Notes"><input value={draft.notes||''} onChange={e=>setDraft(d=>({...d,notes:e.target.value}))} style={{...S.input,marginTop:'8px'}}/></Field>
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'12px 0 8px'}}>Site Requirements — tick all that apply for this location</div>
+          <div style={{display:'flex',gap:'8px',flexWrap:'wrap',marginBottom:'12px'}}>
+            {[
+              {key:'wp_required',             label:'Work Permit',      icon:'📄'},
+              {key:'cicpa_required',          label:'CICPA Gate Pass',  icon:'🔒'},
+              {key:'adnoc_medical_required',  label:'ADNOC Medical',    icon:'🏥'},
+              {key:'medical_required',        label:'Site Medical',     icon:'💊'},
+              {key:'hse_required',            label:'HSE Passport',     icon:'🦺'},
+              {key:'h2s_required',            label:'H2S Training',     icon:'⚗️'},
+            ].map(({key,label,icon})=>(
+              <label key={key} style={{display:'flex',gap:'6px',alignItems:'center',cursor:'pointer',
+                background:draft[key]?'#eff6ff':'#f8fafc',padding:'6px 12px',borderRadius:6,
+                border:`1.5px solid ${draft[key]?'#2563eb':'#e2e8f0'}`}}>
+                <input type="checkbox" checked={!!draft[key]} onChange={e=>setDraft(d=>({...d,[key]:e.target.checked}))} style={{width:14,height:14,accentColor:'#2563eb'}}/>
+                <span style={{fontSize:'12px',fontWeight:draft[key]?700:400,color:draft[key]?'#1e40af':'#374151'}}>{icon} {label}</span>
+              </label>
+            ))}
+          </div>
           <div style={{display:'flex',gap:'8px',marginTop:'12px'}}>
             <button style={S.btnPri} onClick={save}>Save</button>
             <button style={S.btnSec} onClick={()=>setDraft(null)}>Cancel</button>
@@ -3249,18 +3281,29 @@ function RequirementsTab({requirements, onSave}) {
       <div style={{...S.card,overflow:'hidden'}}>
         <div className="drag-scroll" style={{overflowX:'auto'}}>
         <table style={{width:'100%',borderCollapse:'collapse'}}>
-          <thead><tr>{['Customer','Location','PO Ref','Date','Breakdown','Total','Notes',''].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>{['Customer','Location','PO Ref','Date','Breakdown','Total','Requirements','Notes',''].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>
-            {requirements.length===0&&<tr><td colSpan={8} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No requirements yet.</td></tr>}
-            {requirements.map(r=><tr key={r.id} className="hr-row">
+            {requirements.length===0&&<tr><td colSpan={9} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No requirements yet.</td></tr>}
+            {requirements.map(r=><tr key={r.id} className="hr-row" style={{cursor:'pointer'}} onDoubleClick={e=>handleRowDblClick(r,e)} onClick={e=>handleRowClick(r,e)}>
               <td style={{...S.td,fontWeight:700}}>{r.customer_name}</td>
               <td style={S.td}>{r.location}</td>
               <td style={{...S.td,fontFamily:'monospace',fontSize:'11px'}}>{r.po_reference||'—'}</td>
               <td style={S.td}>{fmtDate(r.requirement_date)}</td>
               <td style={S.td}>{(r.positions||[]).map((p,i)=><div key={i} style={{fontSize:'12px'}}><strong>{p.qty}</strong> × {p.designation}</div>)}</td>
               <td style={{...S.td,fontWeight:800,fontSize:'18px',textAlign:'center'}}>{r.total_headcount}</td>
+              <td style={S.td}>
+                <div style={{display:'flex',gap:'4px',flexWrap:'wrap'}}>
+                  {r.wp_required&&<span style={{background:'#fef3c7',color:'#92400e',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:4,border:'1px solid #fde68a'}}>📄 WP</span>}
+                  {r.cicpa_required&&<span style={{background:'#fee2e2',color:'#991b1b',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:4,border:'1px solid #fca5a5'}}>🔒 CICPA</span>}
+                  {r.adnoc_medical_required&&<span style={{background:'#dcfce7',color:'#166534',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:4,border:'1px solid #86efac'}}>🏥 ADNOC Med</span>}
+                  {r.medical_required&&<span style={{background:'#ede9fe',color:'#5b21b6',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:4,border:'1px solid #c4b5fd'}}>💊 Medical</span>}
+                  {r.hse_required&&<span style={{background:'#e0f2fe',color:'#075985',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:4,border:'1px solid #7dd3fc'}}>🦺 HSE</span>}
+                  {r.h2s_required&&<span style={{background:'#fce7f3',color:'#9d174d',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:4,border:'1px solid #fbcfe8'}}>⚗️ H2S</span>}
+                  {!r.wp_required&&!r.cicpa_required&&!r.adnoc_medical_required&&!r.medical_required&&!r.hse_required&&!r.h2s_required&&<span style={{color:'#94a3b8',fontSize:'11px'}}>—</span>}
+                </div>
+              </td>
               <td style={S.td}>{r.notes||'—'}</td>
-              <td style={S.td}><button style={S.btnSm} onClick={()=>setDraft({...r,_lines:(r.positions||[]).map(p=>`${p.designation}: ${p.qty}`).join('\n')})}>Edit</button></td>
+              <td style={S.td}><button style={S.btnSm} onClick={e=>{e.stopPropagation();setDraft({...r,_lines:(r.positions||[]).map(p=>`${p.designation}: ${p.qty}`).join('\n')});}}>Edit</button></td>
             </tr>)}
           </tbody>
         </table>
@@ -3720,7 +3763,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
     if (e.target.closest('button')) return;
     clearTimeout(clickTimer.current);
     setDocPanel(null);
-    setDraft({...r});
+    setDraft({...r, _lines:(r.positions||[]).map(p=>`${p.designation}: ${p.qty}`).join('\n')});
     setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);
   };
 
