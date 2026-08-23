@@ -2330,7 +2330,10 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
   const filtered = useMemo(()=> {
     const list = candidates.filter(c=>{
       if (excludeOnSite && (activeCandIds.has(c.id)||activeNames.has((c.full_name||'').toLowerCase().trim()))) return false;
-      if (suppF.size && !suppF.has(c.supplier_name||'')) return false;
+      if (suppF.size) {
+        const candSupplierKey = c.source==='satco_own' ? 'SATCO Arabia' : (c.supplier_name||'');
+        if (!suppF.has(candSupplierKey)) return false;
+      }
       if (desigF.size && !desigF.has(normalizeDesig(c.designation))) return false;
       if (cicpaLocF.size && !cicpaLocF.has(canonicalCicpa(c.cicpa_location))) return false;
       if (readyF.size) {
@@ -2388,8 +2391,10 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
   const supplierOpts = useMemo(() => {
     const map = new Map();
     candidates.forEach(c => {
-      if (!c.supplier_name) return;
-      map.set(c.supplier_name, (map.get(c.supplier_name)||0)+1);
+      // SATCO own employees group under 'SATCO Arabia'; supplier employees under their supplier_name
+      const key = c.source==='satco_own' ? 'SATCO Arabia' : (c.supplier_name||'');
+      if (!key) return;
+      map.set(key, (map.get(key)||0)+1);
     });
     return [...map.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([v,cnt])=>({value:v,label:v,count:cnt}));
   }, [candidates]);
@@ -4962,24 +4967,84 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
   };
 
   const sendTestAlert = async () => {
-    if (!window.confirm('Send a test alert email to ' + (alertSettings?.alert_email||'admin@satcoarabiaengg.com') + '?')) return;
+    const toEmail = alertSettings?.alert_email || 'admin@satcoarabiaengg.com';
+    if (!window.confirm('Run expiry check and send alert email to ' + toEmail + '?')) return;
     try {
-      const res = await fetch('/api/supplier-expiry-check', { method: 'GET' });
-      const text = await res.text();
-      let d;
-      try { d = JSON.parse(text); } catch(_) {
-        // API returned HTML — likely env vars not set or file not deployed
-        if (text.includes('Missing env') || text.includes('SUPABASE') || text.includes('RESEND')) {
-          alert('✗ Missing environment variables on Vercel.\n\nGo to: Vercel Dashboard → satco-mobilisation → Settings → Environment Variables\n\nAdd: SUPABASE_SERVICE_KEY, RESEND_API_KEY, SUPABASE_URL, CRON_SECRET');
-        } else if (res.status === 404) {
-          alert('✗ API not found (404).\n\nThe api/supplier-expiry-check.js file has not been deployed yet.\n\nPush the supplier-expiry-check.js file to GitHub: api/ folder in your satco-mobilisation repo.');
-        } else {
-          alert('✗ Server error ' + res.status + ':\n' + text.slice(0, 300));
+      const warnDays     = alertSettings?.warn_days  ?? 90;
+      const criticalDays = alertSettings?.alert_days ?? 15;
+      const today = new Date(); today.setHours(0,0,0,0);
+
+      function daysLeft(d) {
+        if (!d) return null;
+        const dt = new Date(d); dt.setHours(0,0,0,0);
+        return Math.ceil((dt - today) / 86400000);
+      }
+      function st(days) {
+        if (days===null||days>warnDays) return null;
+        if (days<0)             return {level:'EXPIRED', color:'#dc2626', emoji:'🔴'};
+        if (days<=criticalDays) return {level:'CRITICAL',color:'#dc2626', emoji:'🔴'};
+        return                         {level:'WARNING', color:'#d97706', emoji:'🟡'};
+      }
+
+      // Load suppliers + candidates via existing db connection
+      const [suppRes, candRes] = await Promise.all([
+        db.from('mob_suppliers').select('*'),
+        db.from('mob_candidates').select('full_name,designation,supplier_name,source,passport_no,passport_expiry,emirates_id,eid_expiry,wp_no,wp_expiry,security_pass_no,cicpa_status,adnoc_medical_status,active').eq('active',true)
+      ]);
+
+      const issues = {suppliers:[], candidates:[]};
+
+      for (const s of (suppRes.data||[])) {
+        const docs = [
+          {label:'Trade / Commercial License',    date:s.license_expiry, ref:s.license_number||'—'},
+          {label:'Workmen Comp. Insurance (WCI)', date:s.wci_expiry,     ref:s.wci_policy_no||'—'},
+        ];
+        for (const od of (Array.isArray(s.other_docs)?s.other_docs:[])) {
+          if (od.expiry) docs.push({label:od.doc_name||'Other Doc', date:od.expiry, ref:'—'});
         }
+        for (const {label,date,ref} of docs) {
+          const days=daysLeft(date); const s2=st(days);
+          if (s2) issues.suppliers.push({name:s.name,code:s.supplier_code||'—',doc:label,ref,days,status:s2,expiry:date});
+        }
+      }
+
+      for (const c of (candRes.data||[])) {
+        const docs = [
+          {label:'Passport',    date:c.passport_expiry, ref:c.passport_no||'—'},
+          {label:'Emirates ID', date:c.eid_expiry,      ref:c.emirates_id||'—'},
+          {label:'Work Permit', date:c.wp_expiry,       ref:c.wp_no||'—'},
+        ];
+        if (c.cicpa_status==='confiscated') issues.candidates.push({name:c.full_name,doc:'CICPA',ref:c.security_pass_no||'—',days:-1,status:{level:'EXPIRED',color:'#dc2626',emoji:'🔴'},expiry:'Confiscated'});
+        for (const {label,date,ref} of docs) {
+          const days=daysLeft(date); const s2=st(days);
+          if (s2) issues.candidates.push({name:c.full_name,title:c.designation||'—',supp:c.source==='satco_own'?'SATCO Arabia':(c.supplier_name||'—'),doc:label,ref,days,status:s2,expiry:date});
+        }
+      }
+
+      const total = issues.suppliers.length + issues.candidates.length;
+      if (total===0) {
+        alert('✓ All documents are valid — nothing expiring within ' + warnDays + ' days.\n\nNo email sent (email is only sent when something is expiring).');
         return;
       }
-      alert(res.ok ? '✓ ' + (d.message || (d.issues + ' issues found — email sent to ' + (alertSettings?.alert_email||''))) : '✗ ' + (d.error || JSON.stringify(d)));
-    } catch (e) { alert('✗ Network error: ' + e.message); }
+
+      // Build summary for confirm dialog
+      const suppLines = issues.suppliers.map(i=>`  ${i.status.emoji} ${i.name} — ${i.doc} (${i.days<0?'EXPIRED':'expires '+i.expiry})`).join('\n');
+      const candLines = issues.candidates.map(i=>`  ${i.status.emoji} ${i.name} — ${i.doc} (${i.days<0?'EXPIRED':'expires '+i.expiry})`).join('\n');
+      const preview = (issues.suppliers.length?'SUPPLIERS:\n'+suppLines:'') + (issues.candidates.length?'\n\nCANDIDATES:\n'+candLines:'');
+      if (!window.confirm('Found ' + total + ' expiring document(s):\n\n' + preview + '\n\nSend email to ' + toEmail + '?')) return;
+
+      // Send via API (which handles Resend email)
+      const res = await fetch('/api/supplier-expiry-check', {method:'GET'});
+      const text = await res.text();
+      let d; try{d=JSON.parse(text);}catch(_){d=null;}
+      if (d && res.ok) {
+        alert('✓ Email sent to ' + toEmail + '!\n' + (d.message||''));
+      } else if (res.status===401) {
+        alert('✓ Check complete: ' + total + ' issue(s) found.\n\nEmail could not be sent automatically (API auth issue).\n\nIssues found:\n' + preview);
+      } else {
+        alert('✓ Check complete: ' + total + ' issue(s) found.\n\n' + preview + '\n\nNote: Email send failed — check RESEND_API_KEY in Vercel env vars.');
+      }
+    } catch(e) { alert('✗ Error: ' + e.message); }
   };
 
   const serviceOpts = useMemo(() => [...new Set(suppliers.map(s=>s.supplier_services).filter(Boolean))].sort().map(v=>({value:v,label:v})), [suppliers]);
