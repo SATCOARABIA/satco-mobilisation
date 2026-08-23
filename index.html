@@ -2854,11 +2854,43 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
             <Field label="Phone"><input value={draft.phone||''} onChange={e=>setDraft(d=>({...d,phone:e.target.value}))} style={S.input}/></Field>
           </Grid>
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>Documents</div>
+          {/* ── Expiry Alert Banner ── */}
+          {(()=>{
+            const alerts=[];
+            const today=new Date(); today.setHours(0,0,0,0);
+            const diff=d=>{if(!d)return null;const dt=new Date(d);dt.setHours(0,0,0,0);return Math.ceil((dt-today)/86400000);};
+            const check=(label,date,ref)=>{const d=diff(date);if(d===null)return;if(d<0)alerts.push({label,ref,days:d,color:'#dc2626',bg:'#fee2e2',icon:'🔴',txt:`EXPIRED ${Math.abs(d)}d ago`});else if(d<=30)alerts.push({label,ref,days:d,color:'#dc2626',bg:'#fee2e2',icon:'🔴',txt:`${d}d left — CRITICAL`});else if(d<=90)alerts.push({label,ref,days:d,color:'#92400e',bg:'#fef3c7',icon:'🟡',txt:`${d}d left`});};
+            check('Passport',draft.passport_expiry,draft.passport_no);
+            check('Emirates ID',draft.eid_expiry,draft.emirates_id);
+            check('Work Permit',draft.wp_expiry,draft.wp_no);
+            if(draft.cicpa_status==='confiscated')alerts.push({label:'CICPA Gate Pass',ref:draft.security_pass_no||'—',days:-1,color:'#dc2626',bg:'#fee2e2',icon:'🔴',txt:'CONFISCATED'});
+            if(!alerts.length)return null;
+            return(
+              <div style={{background:'#fef2f2',border:'2px solid #fca5a5',borderRadius:'8px',padding:'10px 14px',marginBottom:'12px'}}>
+                <div style={{fontWeight:800,fontSize:'12px',color:'#991b1b',marginBottom:'6px'}}>⚠ Document Expiry Alerts — Action Required</div>
+                <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+                  {alerts.map((a,i)=>(
+                    <span key={i} style={{background:a.bg,color:a.color,fontSize:'11px',fontWeight:700,padding:'3px 10px',borderRadius:5,border:`1px solid ${a.color}`,whiteSpace:'nowrap'}}>
+                      {a.icon} {a.label}{a.ref&&a.ref!=='—'?` (${a.ref})`:''} — {a.txt}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
           <Grid cols={4}>
             <Field label="Passport No"><input value={draft.passport_no||''} onChange={e=>setDraft(d=>({...d,passport_no:e.target.value}))} style={S.input}/></Field>
-            <Field label="Passport Expiry"><input type="date" value={draft.passport_expiry||''} onChange={e=>setDraft(d=>({...d,passport_expiry:e.target.value}))} style={S.input}/></Field>
+            <Field label="Passport Expiry">
+              <input type="date" value={draft.passport_expiry||''} onChange={e=>setDraft(d=>({...d,passport_expiry:e.target.value}))}
+                style={{...S.input,...(draft.passport_expiry?(()=>{const d=Math.ceil((new Date(draft.passport_expiry)-new Date())/86400000);return d<0?{borderColor:'#dc2626',background:'#fef2f2'}:d<90?{borderColor:'#f59e0b'}:{};})():{})}}/>
+              {draft.passport_expiry&&(()=>{const d=Math.ceil((new Date(draft.passport_expiry)-new Date())/86400000);return d<0?<div style={{fontSize:'10px',color:'#dc2626',fontWeight:700,marginTop:'2px'}}>🔴 EXPIRED {Math.abs(d)}d ago</div>:d<30?<div style={{fontSize:'10px',color:'#dc2626',fontWeight:700,marginTop:'2px'}}>🔴 Expiring in {d} days — CRITICAL</div>:d<90?<div style={{fontSize:'10px',color:'#b45309',fontWeight:700,marginTop:'2px'}}>🟡 Expiring in {d} days</div>:null;})()}
+            </Field>
             <Field label="Emirates ID"><input value={draft.emirates_id||''} onChange={e=>setDraft(d=>({...d,emirates_id:e.target.value}))} style={S.input}/></Field>
-            <Field label="EID Expiry"><input type="date" value={draft.eid_expiry||''} onChange={e=>setDraft(d=>({...d,eid_expiry:e.target.value}))} style={S.input}/></Field>
+            <Field label="EID Expiry">
+              <input type="date" value={draft.eid_expiry||''} onChange={e=>setDraft(d=>({...d,eid_expiry:e.target.value}))}
+                style={{...S.input,...(draft.eid_expiry?(()=>{const d=Math.ceil((new Date(draft.eid_expiry)-new Date())/86400000);return d<0?{borderColor:'#dc2626',background:'#fef2f2'}:d<90?{borderColor:'#f59e0b'}:{};})():{})}}/>
+              {draft.eid_expiry&&(()=>{const d=Math.ceil((new Date(draft.eid_expiry)-new Date())/86400000);return d<0?<div style={{fontSize:'10px',color:'#dc2626',fontWeight:700,marginTop:'2px'}}>🔴 EXPIRED {Math.abs(d)}d ago</div>:d<30?<div style={{fontSize:'10px',color:'#dc2626',fontWeight:700,marginTop:'2px'}}>🔴 Expiring in {d} days — CRITICAL</div>:d<90?<div style={{fontSize:'10px',color:'#b45309',fontWeight:700,marginTop:'2px'}}>🟡 Expiring in {d} days</div>:null;})()}
+            </Field>
           </Grid>
           <Grid cols={4}>
             <Field label="Visa Issued Emirate">
@@ -3041,7 +3073,26 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                 title="Click to view documents · Double-click to edit">
                 {/* Name — frozen */}
                 <td className="frozen-col" style={{...S.td,fontWeight:700,borderLeft:docPanel?.entity?.id===c.id?'3px solid #2563eb':'3px solid transparent',borderRight:'2px solid #e2e8f0',background:rowBg,paddingTop:'4px',paddingBottom:'4px',whiteSpace:'nowrap'}}>
-                  <span style={{color:'#2563eb',cursor:'pointer',textTransform:'uppercase',letterSpacing:'0.2px'}} onClick={e=>{e.stopPropagation();personHistory(c);}}>{c.full_name}</span>
+                  <div style={{display:'flex',alignItems:'center',gap:'5px'}}>
+                    <span style={{color:'#2563eb',cursor:'pointer',textTransform:'uppercase',letterSpacing:'0.2px'}} onClick={e=>{e.stopPropagation();personHistory(c);}}>{c.full_name}</span>
+                    {(()=>{
+                      const today=new Date();today.setHours(0,0,0,0);
+                      const d=dt=>{if(!dt)return null;const x=new Date(dt);x.setHours(0,0,0,0);return Math.ceil((x-today)/86400000);};
+                      const pp=d(c.passport_expiry),ei=d(c.eid_expiry),wp=d(c.wp_expiry);
+                      const expired=[pp,ei,wp].some(x=>x!==null&&x<0)||c.cicpa_status==='confiscated';
+                      const critical=[pp,ei,wp].some(x=>x!==null&&x>=0&&x<=30);
+                      const warning=[pp,ei,wp].some(x=>x!==null&&x>30&&x<=90);
+                      const labels=[];
+                      if(pp!==null&&pp<0)labels.push('PP exp');else if(pp!==null&&pp<=90)labels.push(`PP ${pp}d`);
+                      if(ei!==null&&ei<0)labels.push('EID exp');else if(ei!==null&&ei<=90)labels.push(`EID ${ei}d`);
+                      if(wp!==null&&wp<0)labels.push('WP exp');else if(wp!==null&&wp<=90)labels.push(`WP ${wp}d`);
+                      if(c.cicpa_status==='confiscated')labels.push('CICPA!');
+                      if(!labels.length)return null;
+                      return <span title={labels.join(' · ')} style={{background:expired||critical?'#fee2e2':warning?'#fef3c7':'#f1f5f9',color:expired||critical?'#dc2626':warning?'#92400e':'#64748b',fontSize:'9px',fontWeight:800,padding:'1px 5px',borderRadius:3,cursor:'default',whiteSpace:'nowrap',flexShrink:0}}>
+                        {expired||critical?'🔴':warning?'🟡':'⚪'} {labels[0]}{labels.length>1?` +${labels.length-1}`:''}
+                      </span>;
+                    })()}
+                  </div>
                 </td>
                 {/* Emp No — second column */}
                 <td style={{...S.td,fontFamily:'monospace',fontSize:'12px',fontWeight:700,color:'#0369a1',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.supplier_emp_no||'—'}</td>
