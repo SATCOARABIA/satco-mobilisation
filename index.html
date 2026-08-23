@@ -304,7 +304,7 @@ CREATE TABLE IF NOT EXISTS mob_supplier_alert_settings (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   alert_email text NOT NULL DEFAULT 'admin@satcoarabiaengg.com',
   warn_days   int  NOT NULL DEFAULT 90,
-  alert_days  int  NOT NULL DEFAULT 30,
+  alert_days  int  NOT NULL DEFAULT 15,
   enabled     boolean DEFAULT true,
   updated_at  timestamptz DEFAULT now()
 );
@@ -4570,8 +4570,8 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
     setAlertSaving(true);
     const payload = {
       alert_email: alertSettings.alert_email,
-      warn_days:   parseInt(alertSettings.warn_days)  || 90,
-      alert_days:  parseInt(alertSettings.alert_days) || 30,
+      warn_days:   parseInt(alertSettings.warn_days)  ?? 90,
+      alert_days:  parseInt(alertSettings.alert_days) ?? 15,
       enabled:     alertSettings.enabled,
       updated_at:  new Date().toISOString(),
     };
