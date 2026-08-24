@@ -379,6 +379,10 @@ ALTER TABLE mob_requirements ADD COLUMN IF NOT EXISTS adnoc_medical_required boo
 ALTER TABLE mob_requirements ADD COLUMN IF NOT EXISTS medical_required boolean DEFAULT false;
 ALTER TABLE mob_requirements ADD COLUMN IF NOT EXISTS hse_required boolean DEFAULT false;
 ALTER TABLE mob_requirements ADD COLUMN IF NOT EXISTS h2s_required boolean DEFAULT false;
+ALTER TABLE mob_requirements ADD COLUMN IF NOT EXISTS wci_required boolean DEFAULT false;
+ALTER TABLE mob_requirements ADD COLUMN IF NOT EXISTS sti_required boolean DEFAULT false;
+ALTER TABLE mob_requirements ADD COLUMN IF NOT EXISTS others_required boolean DEFAULT false;
+ALTER TABLE mob_requirements ADD COLUMN IF NOT EXISTS others_label text;
 ALTER TABLE mob_suppliers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mob_candidates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mob_requirements ENABLE ROW LEVEL SECURITY;
@@ -3248,7 +3252,7 @@ function RequirementsTab({requirements, onSave}) {
       notes: [po.remarks, po.po_value?`PO Value: ${po.currency||'AED'} ${Number(po.po_value).toLocaleString()}`:''].filter(Boolean).join(' · ') || d.notes || '',
     }));
   };
-  const blank=()=>setDraft({customer_name:'',po_reference:'',location:'',requirement_date:todayStr(),_lines:'',notes:'',wp_required:false,cicpa_required:false,adnoc_medical_required:false,medical_required:false,hse_required:false,h2s_required:false});
+  const blank=()=>setDraft({customer_name:'',po_reference:'',location:'',requirement_date:todayStr(),_lines:'',notes:'',wp_required:false,cicpa_required:false,adnoc_medical_required:false,medical_required:false,hse_required:false,h2s_required:false,wci_required:false,sti_required:false,others_required:false,others_label:''});
   const save=()=>{
     if(!draft.customer_name||!draft.location)return alert('Customer and location required');
     const positions=(draft._lines||'').split('\n').map(l=>{const[p,q]=l.split(':').map(s=>s.trim());return p?{designation:p,qty:parseInt(q)||0}:null;}).filter(Boolean);
@@ -3325,7 +3329,9 @@ function RequirementsTab({requirements, onSave}) {
               {key:'adnoc_medical_required',  label:'ADNOC Medical',    icon:'🏥'},
               {key:'medical_required',        label:'Site Medical',     icon:'💊'},
               {key:'hse_required',            label:'HSE Passport',     icon:'🦺'},
-              {key:'h2s_required',            label:'H2S Training',     icon:'⚗️'},
+              {key:'h2s_required',            label:'H2S Training',         icon:'⚗️'},
+              {key:'wci_required',            label:'Workmen Compensation',  icon:'🛡️'},
+              {key:'sti_required',            label:'STI Certificate',       icon:'🏗️'},
             ].map(({key,label,icon})=>(
               <label key={key} style={{display:'flex',gap:'6px',alignItems:'center',cursor:'pointer',
                 background:draft[key]?'#eff6ff':'#f8fafc',padding:'6px 12px',borderRadius:6,
@@ -3334,6 +3340,17 @@ function RequirementsTab({requirements, onSave}) {
                 <span style={{fontSize:'12px',fontWeight:draft[key]?700:400,color:draft[key]?'#1e40af':'#374151'}}>{icon} {label}</span>
               </label>
             ))}
+            {/* Others — free-text requirement */}
+            <label style={{display:'flex',gap:'6px',alignItems:'center',cursor:'pointer',
+              background:draft.others_required?'#eff6ff':'#f8fafc',padding:'6px 12px',borderRadius:6,
+              border:`1.5px solid ${draft.others_required?'#2563eb':'#e2e8f0'}`}}>
+              <input type="checkbox" checked={!!draft.others_required} onChange={e=>setDraft(d=>({...d,others_required:e.target.checked,others_label:e.target.checked?d.others_label:''}))} style={{width:14,height:14,accentColor:'#2563eb'}}/>
+              <span style={{fontSize:'12px',fontWeight:draft.others_required?700:400,color:draft.others_required?'#1e40af':'#374151'}}>📝 Others</span>
+            </label>
+            {draft.others_required&&(
+              <input value={draft.others_label||''} onChange={e=>setDraft(d=>({...d,others_label:e.target.value}))}
+                placeholder="Specify requirement…" style={{...S.input,width:'220px',padding:'5px 10px',fontSize:'12px'}}/>
+            )}
           </div>
           <div style={{display:'flex',gap:'8px',marginTop:'12px'}}>
             <button style={S.btnPri} onClick={save}>Save</button>
@@ -3362,7 +3379,10 @@ function RequirementsTab({requirements, onSave}) {
                   {r.medical_required&&<span style={{background:'#ede9fe',color:'#5b21b6',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:4,border:'1px solid #c4b5fd'}}>💊 Medical</span>}
                   {r.hse_required&&<span style={{background:'#e0f2fe',color:'#075985',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:4,border:'1px solid #7dd3fc'}}>🦺 HSE</span>}
                   {r.h2s_required&&<span style={{background:'#fce7f3',color:'#9d174d',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:4,border:'1px solid #fbcfe8'}}>⚗️ H2S</span>}
-                  {!r.wp_required&&!r.cicpa_required&&!r.adnoc_medical_required&&!r.medical_required&&!r.hse_required&&!r.h2s_required&&<span style={{color:'#94a3b8',fontSize:'11px'}}>—</span>}
+                  {r.wci_required&&<span style={{background:'#f0fdf4',color:'#166534',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:4,border:'1px solid #86efac'}}>🛡️ WCI</span>}
+                  {r.sti_required&&<span style={{background:'#fef9c3',color:'#854d0e',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:4,border:'1px solid #fde68a'}}>🏗️ STI</span>}
+                  {r.others_required&&<span style={{background:'#f8fafc',color:'#475569',fontSize:'10px',fontWeight:700,padding:'2px 6px',borderRadius:4,border:'1px solid #cbd5e1'}}>📝 {r.others_label||'Others'}</span>}
+                  {!r.wp_required&&!r.cicpa_required&&!r.adnoc_medical_required&&!r.medical_required&&!r.hse_required&&!r.h2s_required&&!r.wci_required&&!r.sti_required&&!r.others_required&&<span style={{color:'#94a3b8',fontSize:'11px'}}>—</span>}
                 </div>
               </td>
               <td style={S.td}>{r.notes||'—'}</td>
