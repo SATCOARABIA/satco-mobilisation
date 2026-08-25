@@ -416,6 +416,48 @@ ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS wp_no text;
 ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS wp_employer text;
 ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS wp_expiry date;
 ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS wp_issue_date date;
+
+-- Extra mob_register columns to store candidate-snapshot fields permanently
+ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS wp_no text;
+ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS wp_employer text;
+ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS wp_issue_date date;
+ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS medical_record_no text;
+
+-- Trigger: when mob_candidates is updated, backfill linked mob_register rows
+-- (non-demobilised only). Keeps mob records in sync automatically.
+CREATE OR REPLACE FUNCTION sync_candidate_to_mob()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE mob_register SET
+    supplier_emp_no      = COALESCE(mob_register.supplier_emp_no, NEW.supplier_emp_no),
+    nationality          = COALESCE(mob_register.nationality, NEW.nationality),
+    passport_no          = COALESCE(mob_register.passport_no, NEW.passport_no),
+    passport_expiry      = COALESCE(mob_register.passport_expiry, NEW.passport_expiry),
+    emirates_id          = COALESCE(mob_register.emirates_id, NEW.emirates_id),
+    eid_expiry           = COALESCE(mob_register.eid_expiry, NEW.eid_expiry),
+    visa_no              = COALESCE(mob_register.visa_no, NEW.visa_no),
+    visa_location        = COALESCE(mob_register.visa_location, NEW.visa_location),
+    visa_expiry          = COALESCE(mob_register.visa_expiry, NEW.visa_expiry),
+    wp_no                = COALESCE(mob_register.wp_no, NEW.wp_no),
+    wp_employer          = COALESCE(mob_register.wp_employer, NEW.wp_employer),
+    wp_expiry            = COALESCE(mob_register.wp_expiry, NEW.wp_expiry),
+    wp_issue_date        = COALESCE(mob_register.wp_issue_date, NEW.wp_issue_date),
+    cicpa_pass_no        = COALESCE(mob_register.cicpa_pass_no, NEW.security_pass_no),
+    cicpa_expiry_date    = COALESCE(mob_register.cicpa_expiry_date, NEW.security_pass_expiry),
+    adnoc_medical_status = COALESCE(mob_register.adnoc_medical_status, NEW.adnoc_medical_status),
+    adnoc_medical_date   = COALESCE(mob_register.adnoc_medical_date, NEW.adnoc_medical_date),
+    medical_expiry       = COALESCE(mob_register.medical_expiry, NEW.medical_expiry),
+    medical_record_no    = COALESCE(mob_register.medical_record_no, NEW.medical_record_no)
+  WHERE candidate_id = NEW.id
+    AND status NOT IN ('demobilised','rejected');
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_sync_candidate_to_mob ON mob_candidates;
+CREATE TRIGGER trg_sync_candidate_to_mob
+  AFTER UPDATE ON mob_candidates
+  FOR EACH ROW EXECUTE FUNCTION sync_candidate_to_mob();
 `;
 
 const ALL_SQL = SETUP_SQL + '\n' + MAIN_SQL;
@@ -1821,12 +1863,25 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
         eid_expiry:      c.eid_expiry||null,
         visa_no:         c.visa_no||null,
         visa_type:       c.visa_type||null,
-        visa_location:   c.visa_location||null,
-        visa_expiry:     c.visa_expiry||null,
-        phone:           c.phone||null,
-        customer_name:   planContext.customer_name||null,
-        location:        planContext.location||null,
-        loa_id:          planContext.loa_id||null,
+        visa_location:        c.visa_location||null,
+        visa_expiry:          c.visa_expiry||null,
+        phone:                c.phone||null,
+        // Work Permit from candidate card
+        wp_no:                c.wp_no||null,
+        wp_employer:          c.wp_employer||null,
+        wp_expiry:            c.wp_expiry||null,
+        wp_issue_date:        c.wp_issue_date||null,
+        // CICPA from candidate card
+        cicpa_pass_no:        c.security_pass_no||null,
+        cicpa_expiry_date:    c.security_pass_expiry||null,
+        // ADNOC Medical from candidate card
+        adnoc_medical_status: c.adnoc_medical_status||null,
+        adnoc_medical_date:   c.adnoc_medical_date||null,
+        medical_expiry:       c.medical_expiry||null,
+        medical_record_no:    c.medical_record_no||null,
+        customer_name:        planContext.customer_name||null,
+        location:             planContext.location||null,
+        loa_id:               planContext.loa_id||null,
         medical_done:false, hse_passport_done:false, h2s_done:false,
         extra_trainings:[], status:'pending', notes:'',
       }));
@@ -3971,20 +4026,37 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
     if (!candId) { setDraft(d=>({...d,candidate_id:null})); return; }
     const c = candidates.find(x=>x.id===candId);
     if (!c) return;
-    setDraft(d=>({...d, candidate_id:c.id, full_name:c.full_name, designation:c.designation||d.designation,
-      source:c.source||'supplier', supplier_name:c.supplier_name, supplier_emp_no:c.supplier_emp_no,
-      nationality:c.nationality, date_of_birth:c.date_of_birth,
-      passport_no:c.passport_no, passport_expiry:c.passport_expiry||d.passport_expiry,
-      emirates_id:c.emirates_id, eid_expiry:c.eid_expiry||d.eid_expiry,
-      visa_no:c.visa_no, visa_type:c.visa_type||d.visa_type,
-      visa_location:c.visa_location, visa_expiry:c.visa_expiry||d.visa_expiry,
-      phone:c.phone||d.phone,
-      // Pre-fill CICPA from candidate record
-      cicpa_pass_no: c.security_pass_no||d.cicpa_pass_no||'',
-      cicpa_expiry_date: c.security_pass_expiry||d.cicpa_expiry_date||'',
-      // Pre-fill ADNOC Medical from candidate record
+    setDraft(d=>({...d,
+      candidate_id:       c.id,
+      full_name:          c.full_name,
+      designation:        c.designation||d.designation,
+      source:             c.source||'supplier',
+      supplier_name:      c.supplier_name||d.supplier_name,
+      supplier_emp_no:    c.supplier_emp_no||d.supplier_emp_no,
+      nationality:        c.nationality||d.nationality,
+      date_of_birth:      c.date_of_birth||d.date_of_birth,
+      passport_no:        c.passport_no||d.passport_no,
+      passport_expiry:    c.passport_expiry||d.passport_expiry,
+      emirates_id:        c.emirates_id||d.emirates_id,
+      eid_expiry:         c.eid_expiry||d.eid_expiry,
+      visa_no:            c.visa_no||d.visa_no,
+      visa_type:          c.visa_type||d.visa_type,
+      visa_location:      c.visa_location||d.visa_location,
+      visa_expiry:        c.visa_expiry||d.visa_expiry,
+      phone:              c.phone||d.phone,
+      // Work Permit from candidate card
+      wp_no:              c.wp_no||d.wp_no||'',
+      wp_employer:        c.wp_employer||d.wp_employer||'',
+      wp_expiry:          c.wp_expiry||d.wp_expiry||'',
+      wp_issue_date:      c.wp_issue_date||d.wp_issue_date||'',
+      // CICPA from candidate record
+      cicpa_pass_no:      c.security_pass_no||d.cicpa_pass_no||'',
+      cicpa_expiry_date:  c.security_pass_expiry||d.cicpa_expiry_date||'',
+      // ADNOC Medical from candidate record
       adnoc_medical_status: c.adnoc_medical_status||d.adnoc_medical_status||'',
       adnoc_medical_date:   c.adnoc_medical_date||d.adnoc_medical_date||'',
+      medical_expiry:       c.medical_expiry||d.medical_expiry||'',
+      medical_record_no:    c.medical_record_no||d.medical_record_no||'',
     }));
   };
 
@@ -4317,7 +4389,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
               const cicpaExp=r.cicpa_expiry_date||cand.security_pass_expiry||'';
               return {
                 'SI No':i+1,
-                'Employee Number':r.supplier_emp_no||'',
+                'Employee Number':r.supplier_emp_no||cand.supplier_emp_no||'',
                 'Employee Name':r.full_name||'',
                 'Designation':r.designation||'',
                 'Supplier / Company':r.supplier_name||(r.source==='satco_own'?'SATCO Arabia':'')||'',
@@ -6451,23 +6523,40 @@ function App() {
     }
 
     sessionStorage.setItem('satco_mob_prefill', JSON.stringify({
-      candidate_id:   candidate.id,
-      full_name:      candidate.full_name,
-      designation:    planContext.designation || candidate.designation,
-      source:         candidate.source||'supplier',
-      supplier_name:  candidate.supplier_name,
-      supplier_emp_no:candidate.supplier_emp_no,
-      nationality:    candidate.nationality,
-      date_of_birth:  candidate.date_of_birth,
-      passport_no:    candidate.passport_no,    passport_expiry: candidate.passport_expiry||'',
-      emirates_id:    candidate.emirates_id,    eid_expiry:      candidate.eid_expiry||'',
-      visa_no:        candidate.visa_no,        visa_type:       candidate.visa_type||'',
-      visa_location:  candidate.visa_location,  visa_expiry:     candidate.visa_expiry||'',
-      phone:          candidate.phone||'',
-      // Pre-fill from plan — user sees these already filled
-      customer_name:  planContext.customer_name || '',
-      location:       planContext.location       || '',
-      loa_id:         planContext.loa_id         || '',
+      candidate_id:       candidate.id,
+      full_name:          candidate.full_name,
+      designation:        planContext.designation || candidate.designation,
+      source:             candidate.source||'supplier',
+      supplier_name:      candidate.supplier_name,
+      supplier_emp_no:    candidate.supplier_emp_no,
+      nationality:        candidate.nationality,
+      date_of_birth:      candidate.date_of_birth,
+      passport_no:        candidate.passport_no,
+      passport_expiry:    candidate.passport_expiry||'',
+      emirates_id:        candidate.emirates_id,
+      eid_expiry:         candidate.eid_expiry||'',
+      visa_no:            candidate.visa_no,
+      visa_type:          candidate.visa_type||'',
+      visa_location:      candidate.visa_location,
+      visa_expiry:        candidate.visa_expiry||'',
+      phone:              candidate.phone||'',
+      // Work Permit — copy from candidate card
+      wp_no:              candidate.wp_no||'',
+      wp_employer:        candidate.wp_employer||'',
+      wp_expiry:          candidate.wp_expiry||'',
+      wp_issue_date:      candidate.wp_issue_date||'',
+      // CICPA — copy from candidate card
+      cicpa_pass_no:      candidate.security_pass_no||'',
+      cicpa_expiry_date:  candidate.security_pass_expiry||'',
+      // ADNOC Medical — copy from candidate card
+      adnoc_medical_status: candidate.adnoc_medical_status||'',
+      adnoc_medical_date:   candidate.adnoc_medical_date||'',
+      medical_expiry:       candidate.medical_expiry||'',
+      medical_record_no:    candidate.medical_record_no||'',
+      // Pre-fill from plan
+      customer_name:      planContext.customer_name || '',
+      location:           planContext.location       || '',
+      loa_id:             planContext.loa_id         || '',
       medical_done:false, hse_passport_done:false, h2s_done:false, extra_trainings:[], status:'pending', notes:'',
     }));
     setTab('mobilisation');
