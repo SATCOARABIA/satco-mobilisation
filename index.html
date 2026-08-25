@@ -2551,12 +2551,25 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
       if (m) updates.nationality = m[1];
     }
 
-    const { error } = await db.from('mob_candidates').update({...updates, updated_at: new Date().toISOString()}).eq('id', docPanel.entity.id);
+    const savePayload = {...updates, updated_at: new Date().toISOString()};
+    let { error } = await db.from('mob_candidates').update(savePayload).eq('id', docPanel.entity.id);
+    // Retry without new columns if they don't exist yet in DB
+    if (error && error.message && (error.message.includes('does not exist') || error.message.includes('column'))) {
+      const safePayload = {...savePayload};
+      ['medical_record_no','medical_comments','medical_expiry','medical_fitness_type'].forEach(c=>delete safePayload[c]);
+      const r2 = await db.from('mob_candidates').update(safePayload).eq('id', docPanel.entity.id);
+      if (r2.error) { alert('Save error: ' + r2.error.message); return; }
+      // Still update local state with all fields including new ones
+      await onRefresh?.();
+      setDocPanel(d => d ? {...d, entity:{...d.entity,...updates}} : d);
+      alert('Saved. Run SQL migration in Setup tab to permanently store medical record no and expiry.');
+      return;
+    }
     if (error) { alert(error.message); return; }
     await onRefresh?.();
     setDocPanel(d => d ? {...d, entity:{...d.entity,...updates}} : d);
     const filled = Object.keys(updates).join(', ');
-    alert(`✓ Updated: ${filled}`);
+    alert('Updated: ' + filled);
   };
 
   // ── Export all portal fields as Excel ─────────────────────────────────────
@@ -2601,6 +2614,9 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
         'CICPA Remarks':         c.cicpa_remarks || '',
         'ADNOC Medical':         c.adnoc_medical_status || '',
         'ADNOC Medical Date':    fD(c.adnoc_medical_date),
+        'Medical Record No':     c.medical_record_no || '',
+        'Medical Expiry':        fD(c.medical_expiry),
+        'Medical Comments':      c.medical_comments || '',
         'Work Permit No':        mob?.wp_no || '',
         'WP Applied Date':       fD(mob?.wp_applied_date),
         'WP Approved Date':      fD(mob?.wp_approved_date),
@@ -6159,11 +6175,27 @@ function App() {
     if(hasUpdatedAt) clean.updated_at=new Date().toISOString();
     // Strip internal UI state fields (anything starting with _)
     Object.keys(clean).forEach(k=>{ if(k.startsWith('_')) delete clean[k]; });
-    // Convert empty strings to null — Postgres rejects "" for date/uuid/numeric columns
+    // Convert empty strings to null
     Object.keys(clean).forEach(k=>{ if(clean[k]==='') clean[k]=null; });
-    const{error}=draft.id
+    let {error}=draft.id
       ?await db.from(table).update(clean).eq('id',draft.id)
       :await db.from(table).insert(clean);
+    // If save failed due to unknown column (column not yet migrated), retry stripping that column
+    if(error && error.message && error.message.includes('column') && error.message.includes('does not exist')){
+      const colMatch = error.message.match(/column "?([\w]+)"? of/i) || error.message.match(/"([\w]+)" does not exist/i);
+      if(colMatch){
+        const badCols = ['medical_record_no','medical_comments','medical_expiry','medical_fitness_type',
+                         'adnoc_medical_status','adnoc_medical_date'];
+        const retry={...clean};
+        badCols.forEach(c=>delete retry[c]);
+        const r2=draft.id
+          ?await db.from(table).update(retry).eq('id',draft.id)
+          :await db.from(table).insert(retry);
+        if(r2.error){alert('Save error: '+r2.error.message+'. Run SQL migration in Supabase to add missing columns.');return;}
+        alert('Saved (some new fields not stored yet — run SQL migration in Setup tab to enable medical record no & expiry).');
+        await loadAll(); onDone?.(); return;
+      }
+    }
     if(error){alert(error.message);return;}
     await loadAll();
     onDone?.();
