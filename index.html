@@ -6727,72 +6727,58 @@ function App() {
   const loaUsed = useMemo(()=>{
     const m={};
 
-    // Helper: does a CICPA location string match an LOA location string?
-    const cicpaMatchesLoa = (cicpaLoc, loaLoc) => {
-      if (!cicpaLoc || !loaLoc) return false;
-      const c = canonicalCicpa(cicpaLoc).toLowerCase();
-      const l = loaLoc.toLowerCase();
-      // Extract meaningful words (>3 chars) from canonical cicpa name and check if LOA location contains them
-      const words = c.split(/[^a-z0-9]+/).filter(w=>w.length>3);
-      return words.length>0 && words.some(w=>l.includes(w));
-    };
+    // ── Pass 1: mob register records only ─────────────────────────────────────
+    // Count each active mob record exactly once against one LOA
+    const mobCandIds = new Set(); // track candidate_ids already counted
 
-    // Track which candidate IDs have already been counted to avoid double-counting
-    const counted = new Set();
+    data.mobList
+      .filter(r => r.status !== 'demobilised' && r.status !== 'rejected')
+      .forEach(r => {
+        // Find the matching LOA — explicit loa_id wins, otherwise fuzzy location+customer
+        let loaId = r.loa_id || null;
+        if (!loaId && r.location && r.customer_name) {
+          const rLoc  = r.location.toLowerCase().trim();
+          const rCust = r.customer_name.toLowerCase().trim();
+          const loa = data.loaList.find(l => {
+            const lLoc  = (l.location||'').toLowerCase().trim();
+            const lCust = (l.customer_name||'').toLowerCase().trim();
+            return (rCust===lCust || rCust.includes(lCust) || lCust.includes(rCust)) &&
+                   (rLoc===lLoc   || rLoc.includes(lLoc)   || lLoc.includes(rLoc));
+          });
+          if (loa) loaId = loa.id;
+        }
+        if (loaId) {
+          m[loaId] = (m[loaId] || 0) + 1;
+          if (r.candidate_id) mobCandIds.add(r.candidate_id);
+        }
+      });
 
-    // ── Pass 1: count mob_register records (mobilised + pending) ──────────────
-    data.mobList.filter(r=>r.status!=='demobilised'&&r.status!=='rejected').forEach(r=>{
-      // Attempt 1: explicit loa_id — count once and stop
-      if (r.loa_id) {
-        m[r.loa_id]=(m[r.loa_id]||0)+1;
-        if (r.candidate_id) counted.add(r.candidate_id);
-        return; // stop here — do not fall through to fuzzy matching
-      }
-      // Attempt 2: fuzzy customer + location match (only if no loa_id)
-      const rLoc  = (r.location||'').toLowerCase().trim();
-      const rCust = (r.customer_name||'').toLowerCase().trim();
-      const match2 = rLoc && rCust ? data.loaList.find(l=>{
-        const lLoc  = (l.location||'').toLowerCase().trim();
-        const lCust = (l.customer_name||'').toLowerCase().trim();
-        return (lCust===rCust||lCust.includes(rCust)||rCust.includes(lCust)) &&
-               (lLoc===rLoc  ||lLoc.includes(rLoc)  ||rLoc.includes(lLoc));
-      }) : null;
-      // Attempt 3: CICPA location fallback (only if Attempt 2 also failed)
-      const match = match2 || (r.cicpa_location ? data.loaList.find(l=>cicpaMatchesLoa(r.cicpa_location, l.location)) : null);
-      // Count once only — whichever match succeeded first
-      if (match) {
-        m[match.id]=(m[match.id]||0)+1;
-        if (r.candidate_id) counted.add(r.candidate_id);
-      }
-    });
-
-    // ── Pass 2: count candidates with active CICPA who have NO mob record at all ──
-    // Covers supervisors / visitors (e.g. Shaik) who hold a site CICPA but are not mobilised
-    // Build set of all candidate_ids that appear in ANY non-demobilised mob record
-    const mobCandIds = new Set(
-      data.mobList
-        .filter(r=>r.status!=='demobilised'&&r.status!=='rejected'&&r.candidate_id)
-        .map(r=>r.candidate_id)
-    );
-    // Also build set of names for unlinked mob records (no candidate_id)
+    // ── Pass 2: candidates with active CICPA but NO mob record ────────────────
+    // e.g. supervisors/visitors who consume an LOA slot via their CICPA pass
     const mobNames = new Set(
       data.mobList
-        .filter(r=>r.status!=='demobilised'&&r.status!=='rejected'&&!r.candidate_id)
-        .map(r=>(r.full_name||'').toLowerCase().trim())
+        .filter(r => r.status !== 'demobilised' && r.status !== 'rejected' && !r.candidate_id)
+        .map(r => (r.full_name||'').toLowerCase().trim())
     );
 
-    data.candidates.filter(c=>
-      c.active &&
-      c.cicpa_status==='active' &&
-      c.security_pass_no &&
-      !mobCandIds.has(c.id) &&   // not in mob register by id
-      !mobNames.has((c.full_name||'').toLowerCase().trim()) // not in mob register by name
-    ).forEach(c=>{
-      const match = data.loaList.find(l=>cicpaMatchesLoa(c.cicpa_location, l.location));
-      if (match) {
-        m[match.id]=(m[match.id]||0)+1;
-      }
-    });
+    data.candidates
+      .filter(c =>
+        c.active &&
+        c.cicpa_status === 'active' &&
+        c.security_pass_no &&
+        c.cicpa_location &&
+        !mobCandIds.has(c.id) &&
+        !mobNames.has((c.full_name||'').toLowerCase().trim())
+      )
+      .forEach(c => {
+        const cLoc = canonicalCicpa(c.cicpa_location).toLowerCase();
+        const loa = data.loaList.find(l => {
+          const lLoc = (l.location||'').toLowerCase();
+          // Match if LOA location contains any word from the canonical CICPA site name
+          return cLoc.split(/[^a-z0-9]+/).filter(w=>w.length>3).some(w => lLoc.includes(w));
+        });
+        if (loa) m[loa.id] = (m[loa.id] || 0) + 1;
+      });
 
     return m;
   },[data.mobList, data.loaList, data.candidates]);
