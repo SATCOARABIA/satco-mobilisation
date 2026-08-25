@@ -3806,15 +3806,21 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
   };
 
   const siteRoster = useMemo(() => {
+    // Build candidate lookup for enriching mob rows with WP/CICPA from candidate profile
+    const candById = {};
+    candidates.forEach(c => { if (c.id) candById[c.id] = c; });
     const map = {};
     mobList.filter(m => m.status === 'mobilised' || m.status === 'pending').forEach(m => {
       const key = m.location || 'No Site Assigned';
       if (!map[key]) map[key] = { location: key, customer: m.customer_name || '', mobilised: [], pending: [] };
-      if (m.status === 'mobilised') map[key].mobilised.push(m);
-      else map[key].pending.push(m);
+      // Enrich row: merge candidate WP/CICPA fields so roster can display them
+      const cand = m.candidate_id ? candById[m.candidate_id] : null;
+      const enriched = { ...m, _cand: cand };
+      if (m.status === 'mobilised') map[key].mobilised.push(enriched);
+      else map[key].pending.push(enriched);
     });
     return Object.values(map).sort((a,b) => b.mobilised.length - a.mobilised.length);
-  }, [mobList]);
+  }, [mobList, candidates]);
 
   const quickDemob = async (record) => {
     const date = new Date().toISOString().slice(0,10);
@@ -4640,10 +4646,37 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
                         <tr key={r.id} style={{background:i%2===0?'#fff':'#f8fafc',borderBottom:'1px solid #f1f5f9'}}>
                           <td style={{...S.td,fontWeight:700,whiteSpace:'nowrap'}}>{r.full_name}</td>
                           <td style={{...S.td,whiteSpace:'nowrap'}}>{r.designation||'—'}</td>
-                          <td style={{...S.td,whiteSpace:'nowrap',color:'#64748b',fontSize:'11px'}}>{r.supplier_name||'SATCO'} · {r.supplier_emp_no||'—'}</td>
+                          <td style={{...S.td,whiteSpace:'nowrap',color:'#64748b',fontSize:'11px'}}>{r.supplier_name||(r._cand?.source==='satco_own'?'SATCO Arabia':r._cand?.supplier_name)||'—'} · {r.supplier_emp_no||r._cand?.supplier_emp_no||'—'}</td>
                           <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px'}}>{r.mobilisation_date?fmtDate(r.mobilisation_date):'—'}</td>
-                          <td style={{...S.td,whiteSpace:'nowrap',fontWeight:700,fontSize:'11px',color:r.wp_approved_date?'#166534':'#dc2626'}}>{r.wp_approved_date?`✓ ${r.wp_no||'OK'}`:'⚠ Pending'}</td>
-                          <td style={{...S.td,whiteSpace:'nowrap',fontWeight:700,fontSize:'11px',color:r.cicpa_pass_no?'#166534':'#dc2626'}}>{r.cicpa_pass_no?`✓ ${r.cicpa_pass_no}`:'—'}</td>
+                          {(()=>{
+                            const cand = r._cand;
+                            const mobWpDone  = !!r.wp_approved_date;
+                            const candWpOk   = cand && !!cand.wp_no && !!cand.wp_expiry && new Date(cand.wp_expiry) > new Date();
+                            const wpDone     = mobWpDone || candWpOk;
+                            const wpRef      = mobWpDone ? (r.wp_no||'Approved') : candWpOk ? (cand.wp_no) : null;
+                            const isSatco    = candWpOk && (cand.wp_employer||'').toUpperCase().includes('SATCO');
+                            const wpColor    = wpDone ? (isSatco||mobWpDone ? '#166534' : '#b45309') : '#dc2626';
+                            const wpBg       = wpDone ? (isSatco||mobWpDone ? '#dcfce7' : '#fef3c7') : '#fee2e2';
+                            return <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'3px',paddingBottom:'3px'}}>
+                              <span style={{background:wpBg,color:wpColor,fontWeight:700,fontSize:'10px',padding:'2px 7px',borderRadius:4,display:'inline-block',whiteSpace:'nowrap'}}
+                                title={wpRef||''}>
+                                {wpDone ? `✓ ${wpRef||'WP OK'}` : '⚠ No WP'}
+                              </span>
+                            </td>;
+                          })()}
+                          {(()=>{
+                            const cand = r._cand;
+                            const mobCicpa  = r.cicpa_pass_no;
+                            const candCicpa = cand?.security_pass_no;
+                            const cicpaNo   = mobCicpa || candCicpa;
+                            const cicpaOk   = !!cicpaNo && (cand ? cand.cicpa_status === 'active' : true);
+                            return <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'3px',paddingBottom:'3px'}}>
+                              <span style={{background:cicpaOk?'#dcfce7':'#f1f5f9',color:cicpaOk?'#166534':'#94a3b8',fontWeight:700,fontSize:'10px',padding:'2px 7px',borderRadius:4,display:'inline-block',whiteSpace:'nowrap'}}
+                                title={cicpaNo||''}>
+                                {cicpaOk ? `✓ ${cicpaNo}` : '—'}
+                              </span>
+                            </td>;
+                          })()}
                           <td style={{...S.td,whiteSpace:'nowrap'}}>
                             <div style={{display:'flex',gap:'4px'}}>
                               <button style={{...S.btnSm,padding:'3px 8px',fontSize:'11px'}} onClick={()=>{setDraft({...r});setMobView('list');setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),100);}}>Edit</button>
