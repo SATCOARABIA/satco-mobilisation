@@ -6742,25 +6742,24 @@ function App() {
 
     // ── Pass 1: count mob_register records (mobilised + pending) ──────────────
     data.mobList.filter(r=>r.status!=='demobilised'&&r.status!=='rejected').forEach(r=>{
-      // Attempt 1: explicit loa_id
+      // Attempt 1: explicit loa_id — count once and stop
       if (r.loa_id) {
         m[r.loa_id]=(m[r.loa_id]||0)+1;
         if (r.candidate_id) counted.add(r.candidate_id);
-        return;
+        return; // stop here — do not fall through to fuzzy matching
       }
-      // Attempt 2: fuzzy customer + location match
+      // Attempt 2: fuzzy customer + location match (only if no loa_id)
       const rLoc  = (r.location||'').toLowerCase().trim();
       const rCust = (r.customer_name||'').toLowerCase().trim();
-      let match = rLoc && rCust ? data.loaList.find(l=>{
+      const match2 = rLoc && rCust ? data.loaList.find(l=>{
         const lLoc  = (l.location||'').toLowerCase().trim();
         const lCust = (l.customer_name||'').toLowerCase().trim();
         return (lCust===rCust||lCust.includes(rCust)||rCust.includes(lCust)) &&
                (lLoc===rLoc  ||lLoc.includes(rLoc)  ||rLoc.includes(lLoc));
       }) : null;
-      // Attempt 3: CICPA location on the mob record
-      if (!match && r.cicpa_location) {
-        match = data.loaList.find(l=>cicpaMatchesLoa(r.cicpa_location, l.location));
-      }
+      // Attempt 3: CICPA location fallback (only if Attempt 2 also failed)
+      const match = match2 || (r.cicpa_location ? data.loaList.find(l=>cicpaMatchesLoa(r.cicpa_location, l.location)) : null);
+      // Count once only — whichever match succeeded first
       if (match) {
         m[match.id]=(m[match.id]||0)+1;
         if (r.candidate_id) counted.add(r.candidate_id);
@@ -6795,11 +6794,6 @@ function App() {
       }
     });
 
-    // DEBUG — log what was counted
-    console.log('[loaUsed] mob records counted:', data.mobList.filter(r=>r.status!=='demobilised'&&r.status!=='rejected').map(r=>({name:r.full_name,status:r.status,loa_id:r.loa_id,location:r.location,cicpa:r.cicpa_location})));
-    console.log('[loaUsed] result:', JSON.stringify(m));
-    const loaNames={}; data.loaList.forEach(l=>{loaNames[l.id]=l.location;});
-    Object.entries(m).forEach(([id,cnt])=>console.log('[loaUsed]',loaNames[id],'=',cnt));
     return m;
   },[data.mobList, data.loaList, data.candidates]);
 
