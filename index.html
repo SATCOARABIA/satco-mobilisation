@@ -404,6 +404,10 @@ ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS wp_action_on_demob text;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS cicpa_returned boolean DEFAULT false;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS wp_expiry date;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS medical_expiry date;
+ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS medical_record_no text;
+ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS medical_expiry date;
+ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS medical_fitness_type text;
+ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS medical_comments text;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS adnoc_medical_status text;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS adnoc_medical_date date;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS hse_passport_expiry date;
@@ -816,9 +820,11 @@ Return ONLY a valid JSON object with these fields (include only what is visible)
   "eid_expiry": "YYYY-MM-DD if Emirates ID expiry",
   "visa_expiry": "YYYY-MM-DD if visa expiry",
   "visa_type": "visa type or category",
-  "medical_result": "Fit or Unfit (for medical certificates)",
-  "medical_date": "YYYY-MM-DD exam or issue date (for medical)",
-  "medical_expiry": "YYYY-MM-DD expiry if shown (for medical)",
+  "medical_result": "Overall fitness verdict: extract EXACTLY one of: Fit to Offshore/Onshore, Fit Onshore only, Fit Food Handler, Fit SCBA, Unfit, Temporarily Unfit — based on which checkbox is ticked on the certificate. If simply Fit with no qualifier write Fit.",
+  "medical_date": "YYYY-MM-DD date of examination / issue date shown on the medical certificate",
+  "medical_expiry": "YYYY-MM-DD expiry date of the medical certificate (the Expiry field, NOT the exam date — typically 3 years after exam). CRITICAL: this is different from medical_date.",
+  "medical_record_no": "Medical record or report number shown on the certificate (e.g. NNMC0871699, MR No, Record No, Certificate No)",
+  "medical_fitness_comments": "Any comments, restrictions, or special conditions noted on the medical certificate",
   "training_name": "exact name of the training or certificate (for training certs)",
   "training_date": "YYYY-MM-DD date of training or issue",
   "training_expiry": "YYYY-MM-DD expiry date if shown",
@@ -1114,7 +1120,9 @@ function DocumentPanel({entity, entityType, onClose, onApplyAiData}) {
     if (aiData.cicpa_pass_no)     fields.push('CICPA Pass No');
     if (aiData.cicpa_expiry)      fields.push('CICPA Expiry');
     if (dt.includes('medical') || aiData.medical_result) fields.push('Medical Done ✓', aiData.medical_result||'');
-    if (dt.includes('medical') && aiData.medical_date)   fields.push('Medical Date');
+    if (dt.includes('medical') && aiData.medical_date)   fields.push('Exam Date');
+    if (dt.includes('medical') && aiData.medical_expiry) fields.push('Expiry: '+aiData.medical_expiry);
+    if (dt.includes('medical') && aiData.medical_record_no) fields.push('Record: '+aiData.medical_record_no);
     if (dt==='hse_passport'||(aiData.training_name||'').toLowerCase().includes('hse')) fields.push('HSE Passport ✓');
     if (dt==='h2s_certificate'||(aiData.training_name||'').toLowerCase().includes('h2s')) fields.push('H2S Training ✓');
     if (aiData.training_name)     fields.push(`Training: ${aiData.training_name}`);
@@ -2505,9 +2513,21 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
     }
     // Medical / ADNOC Medical
     else if (dt.includes('medical') || aiData.medical_result || aiData.medical_date) {
-      if (aiData.medical_result) updates.adnoc_medical_status = aiData.medical_result;
-      if (aiData.medical_date)   updates.adnoc_medical_date   = aiData.medical_date;
-      if (aiData.issue_date && !aiData.medical_date) updates.adnoc_medical_date = aiData.issue_date;
+      // Fitness verdict -> adnoc_medical_status
+      if (aiData.medical_result)           updates.adnoc_medical_status  = aiData.medical_result;
+      // Exam / issue date -> adnoc_medical_date
+      const md = aiData.medical_date || aiData.issue_date;
+      if (md)                              updates.adnoc_medical_date    = md;
+      // Expiry date (CRITICAL: different from exam date)
+      if (aiData.medical_expiry)           updates.medical_expiry        = aiData.medical_expiry;
+      // Medical record / report number
+      if (aiData.medical_record_no)        updates.medical_record_no     = aiData.medical_record_no;
+      // Fitness type (Fit to Offshore/Onshore etc)
+      if (aiData.medical_fitness_comments) updates.medical_comments      = aiData.medical_fitness_comments;
+      // Also mark medical_done = true on the candidate
+      updates.medical_done = true;
+      // Sync result to medical_result field too
+      if (aiData.medical_result)           updates.medical_result        = aiData.medical_result;
     }
     // Fallback: fill whatever recognised document fields exist — never overwrite designation or existing name
     else {
@@ -2780,10 +2800,16 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                         if (result.site_location && !allUpdates.cicpa_location) allUpdates.cicpa_location = result.site_location;
                       }
                       // ADNOC Medical / medical certificate
-                      if (detectedType.includes('medical') || result.medical_result || result.medical_date) {
-                        if (result.medical_result && !allUpdates.adnoc_medical_status) allUpdates.adnoc_medical_status = result.medical_result;
+                      if (detectedType.includes('medical') || result.medical_result || result.medical_date || result.medical_record_no) {
+                        if (result.medical_result && !allUpdates.adnoc_medical_status)  allUpdates.adnoc_medical_status = result.medical_result;
+                        if (result.medical_result && !allUpdates.medical_result)        allUpdates.medical_result       = result.medical_result;
                         const md = result.medical_date || result.issue_date;
-                        if (md && !allUpdates.adnoc_medical_date) allUpdates.adnoc_medical_date = md;
+                        if (md && !allUpdates.adnoc_medical_date)                       allUpdates.adnoc_medical_date   = md;
+                        if (md && !allUpdates.medical_date)                             allUpdates.medical_date         = md;
+                        if (result.medical_expiry && !allUpdates.medical_expiry)        allUpdates.medical_expiry       = result.medical_expiry;
+                        if (result.medical_record_no && !allUpdates.medical_record_no)  allUpdates.medical_record_no    = result.medical_record_no;
+                        if (result.medical_fitness_comments && !allUpdates.medical_comments) allUpdates.medical_comments = result.medical_fitness_comments;
+                        allUpdates.medical_done = true;
                       }
                       allResults.push({file:file.name, docType:detectedType, result});
                     }
@@ -3161,8 +3187,31 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                 <Cell col={c.security_pass_no?secCol:{bg:'#f1f5f9',color:'#94a3b8',icon:'—'}} text={c.security_pass_no||'—'} title="Security Pass No"/>
                 {/* Security Pass Expiry */}
                 <Cell col={c.security_pass_expiry?secCol:{bg:'#f1f5f9',color:'#94a3b8',icon:'—'}} text={c.security_pass_expiry?fmtDate(c.security_pass_expiry):'—'} title="Security Pass Expiry"/>
-                {/* ADNOC Medical */}
-                <Cell col={adnCol} text={c.adnoc_medical_status||'Not done'} title={`ADNOC Medical: ${fmtDate(c.adnoc_medical_date)}`}/>
+                {/* ADNOC Medical — record no, expiry, fitness verdict */}
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
+                  {c.adnoc_medical_status ? (()=>{
+                    const exp = c.medical_expiry;
+                    const days = exp ? Math.ceil((new Date(exp)-new Date())/86400000) : null;
+                    const expired  = days!==null && days<0;
+                    const expiring = days!==null && days>=0 && days<=90;
+                    const isUnfit  = (c.adnoc_medical_status||'').toLowerCase().includes('unfit');
+                    const bg = isUnfit?'#fee2e2':expired?'#fef2f2':expiring?'#fef3c7':'#dcfce7';
+                    const col= isUnfit?'#991b1b':expired?'#dc2626':expiring?'#92400e':'#166534';
+                    return (
+                      <div style={{background:bg,borderRadius:5,padding:'3px 7px',minWidth:'90px'}}>
+                        <div style={{fontWeight:800,fontSize:'11px',color:col}}>
+                          {isUnfit?'Unfit':expired?'EXPIRED':c.adnoc_medical_status}
+                        </div>
+                        {c.medical_record_no&&<div style={{fontSize:'10px',color:'#475569',marginTop:'1px'}}>#{c.medical_record_no}</div>}
+                        {exp&&<div style={{fontSize:'10px',color:expired?'#dc2626':expiring?'#b45309':'#475569',fontWeight:expired||expiring?700:400}}>
+                          Exp: {fmtDate(exp)}{days!==null?` (${days<0?Math.abs(days)+'d ago':days+'d'})`:'' }
+                        </div>}
+                        {!exp&&c.adnoc_medical_date&&<div style={{fontSize:'10px',color:'#94a3b8'}}>Exam: {fmtDate(c.adnoc_medical_date)}</div>}
+                      </div>
+                    );
+                  })()
+                  : <span style={{color:'#94a3b8',fontSize:'11px'}}>Not done</span>}
+                </td>
                 {/* CICPA Location — which O&G field CICPA this candidate holds */}
                 <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
                   {c.cicpa_status==='confiscated'
@@ -3925,11 +3974,14 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
       }
     }
     // Medical
-    if (dt.includes('medical') || aiData.medical_result || aiData.medical_date) {
-      updates.medical_done = true;
-      if (aiData.medical_result) updates.medical_result = aiData.medical_result;
+    if (dt.includes('medical') || aiData.medical_result || aiData.medical_date || aiData.medical_record_no) {
+      updates.medical_done   = true;
+      if (aiData.medical_result)           updates.medical_result   = aiData.medical_result;
       const md = aiData.medical_date || aiData.issue_date;
-      if (md) updates.medical_date = md;
+      if (md)                              updates.medical_date     = md;
+      if (aiData.medical_expiry)           updates.medical_expiry   = aiData.medical_expiry;
+      if (aiData.medical_record_no)        updates.medical_record_no= aiData.medical_record_no;
+      if (aiData.medical_fitness_comments) updates.medical_comments = aiData.medical_fitness_comments;
     }
     // HSE Passport
     else if (dt === 'hse_passport' || tn.includes('hse passport') || tn.includes('hse induction')) {
@@ -4327,9 +4379,34 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
               <input type="checkbox" checked={!!draft.medical_done} onChange={e=>setDraft(d=>({...d,medical_done:e.target.checked}))} style={{width:16,height:16}}/> Medical Done
             </label>
             {draft.medical_done&&<>
-              <div style={{width:'150px'}}><Field label="Date"><input type="date" value={draft.medical_date||''} onChange={e=>setDraft(d=>({...d,medical_date:e.target.value}))} style={S.input}/></Field></div>
-              <div style={{width:'150px'}}><Field label="Expiry Date"><input type="date" value={draft.medical_expiry||''} onChange={e=>setDraft(d=>({...d,medical_expiry:e.target.value}))} style={S.input}/></Field></div>
-              <div style={{width:'140px'}}><Field label="Result"><select value={draft.medical_result||''} onChange={e=>setDraft(d=>({...d,medical_result:e.target.value}))} style={S.input}><option value="">Select…</option><option>Fit</option><option>Unfit</option><option>Pending</option></select></Field></div>
+              <div style={{width:'150px'}}><Field label="Exam Date"><input type="date" value={draft.medical_date||''} onChange={e=>setDraft(d=>({...d,medical_date:e.target.value}))} style={S.input}/></Field></div>
+              <div style={{width:'160px'}}><Field label="Expiry Date">
+                <input type="date" value={draft.medical_expiry||''} onChange={e=>setDraft(d=>({...d,medical_expiry:e.target.value}))}
+                  style={{...S.input,...(draft.medical_expiry?(()=>{const d=Math.ceil((new Date(draft.medical_expiry)-new Date())/86400000);return d<0?{borderColor:'#dc2626',background:'#fef2f2'}:d<=60?{borderColor:'#f59e0b'}:{};})():{})}}/>
+                {draft.medical_expiry&&(()=>{const d=Math.ceil((new Date(draft.medical_expiry)-new Date())/86400000);return d<0?<div style={{fontSize:'10px',color:'#dc2626',fontWeight:700}}>EXPIRED {Math.abs(d)}d ago</div>:d<=30?<div style={{fontSize:'10px',color:'#dc2626',fontWeight:700}}>Exp in {d}d - CRITICAL</div>:d<=90?<div style={{fontSize:'10px',color:'#b45309',fontWeight:700}}>Exp in {d}d</div>:null;})()}
+              </Field></div>
+              <div style={{width:'160px'}}><Field label="Fitness Result">
+                <select value={draft.medical_result||''} onChange={e=>setDraft(d=>({...d,medical_result:e.target.value}))}
+                  style={{...S.input,borderColor:draft.medical_result==='Fit'||draft.medical_result==='Fit to Offshore/Onshore'?'#166534':draft.medical_result==='Unfit'?'#dc2626':undefined,fontWeight:draft.medical_result?700:400,color:draft.medical_result==='Unfit'?'#dc2626':draft.medical_result&&draft.medical_result!=='Pending'?'#166534':'inherit'}}>
+                  <option value="">Select...</option>
+                  <option>Fit to Offshore/Onshore</option>
+                  <option>Fit Onshore only</option>
+                  <option>Fit Food Handler</option>
+                  <option>Fit SCBA</option>
+                  <option>Fit</option>
+                  <option>Temporarily Unfit</option>
+                  <option>Unfit</option>
+                  <option>Pending</option>
+                </select>
+              </Field></div>
+              <div style={{width:'170px'}}><Field label="Medical Record No">
+                <input value={draft.medical_record_no||''} onChange={e=>setDraft(d=>({...d,medical_record_no:e.target.value}))}
+                  placeholder="e.g. NNMC0871699" style={S.input}/>
+              </Field></div>
+              <div style={{width:'200px'}}><Field label="Comments / Restrictions">
+                <input value={draft.medical_comments||''} onChange={e=>setDraft(d=>({...d,medical_comments:e.target.value}))}
+                  placeholder="Any special conditions" style={S.input}/>
+              </Field></div>
             </>}
           </div>
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Standard O&G Trainings</div>
@@ -5189,7 +5266,7 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
       // Load suppliers + candidates via existing db connection
       const [suppRes, candRes] = await Promise.all([
         db.from('mob_suppliers').select('*'),
-        db.from('mob_candidates').select('full_name,designation,supplier_name,source,passport_no,passport_expiry,emirates_id,eid_expiry,wp_no,wp_expiry,security_pass_no,cicpa_status,adnoc_medical_status,active').eq('active',true)
+        db.from('mob_candidates').select('full_name,designation,supplier_name,source,passport_no,passport_expiry,emirates_id,eid_expiry,wp_no,wp_expiry,security_pass_no,cicpa_status,adnoc_medical_status,adnoc_medical_date,medical_expiry,medical_record_no,active').eq('active',true)
       ]);
 
       const issues = {suppliers:[], candidates:[]};
