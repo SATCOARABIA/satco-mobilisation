@@ -33,7 +33,7 @@
   .drag-scroll table { cursor: grab; }
   .drag-scroll.dragging table { cursor: grabbing; }
   .drag-scroll::before {
-    content: '← Hold and drag to scroll →';
+    content: '← Hold and drag to scroll →  ·  Double-click any row to edit';
     display: block; font-size: 11px; font-weight: 700; color: #94a3b8;
     padding: 4px 12px; background: #f8fafc; border-bottom: 1px solid #e2e8f0;
     text-align: center; letter-spacing: 0.3px;
@@ -59,6 +59,7 @@
   .sticky-toolbar { position: sticky; top: var(--stk-1); z-index: 20; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
   .sticky-filterbar { position: sticky; top: var(--stk-2); z-index: 19; background: #fff; border-bottom: 1px solid #e2e8f0; }
 
+  .hr-row { cursor: pointer; }
   .hr-row:hover { background: #f8fafc !important; }
   .hr-row:hover td { background: inherit; }
   input:focus, select:focus, textarea:focus { outline: 2px solid #b8972a; outline-offset: 1px; }
@@ -927,9 +928,9 @@ Return ONLY the JSON. No explanation, no markdown, no backticks.`;
 const S = {
   page:   { minHeight:'100vh', background:'#f1f5f9' },
   wrap:   { maxWidth:'1600px', margin:'0 auto', padding:'0 16px 40px' },
-  card:   { background:'#fff', borderRadius:'10px', border:'1px solid #e2e8f0', marginBottom:'16px', overflow:'hidden' },
+  card:   { background:'#fff', borderRadius:'10px', border:'1px solid #e2e8f0', marginBottom:'16px' },
   th:     { padding:'8px 10px', textAlign:'left', fontSize:'11px', fontWeight:700, color:'#64748b', textTransform:'uppercase', letterSpacing:'0.5px', borderBottom:'2px solid #e2e8f0', whiteSpace:'nowrap', background:'#f8fafc' },
-  td:     { padding:'8px 10px', fontSize:'12.5px', color:'#0f172a', verticalAlign:'top', borderBottom:'1px solid #f1f5f9' },
+  td:     { padding:'8px 10px', fontSize:'12.5px', color:'#0f172a', verticalAlign:'middle', borderBottom:'1px solid #f1f5f9', whiteSpace:'nowrap' },
   input:  { padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'13px', width:'100%', background:'#fff' },
   label:  { display:'block', fontSize:'11px', fontWeight:700, color:'#64748b', marginBottom:'3px', textTransform:'uppercase', letterSpacing:'0.4px' },
   btnPri: { padding:'8px 18px', background:'#0f172a', color:'#fff', border:'none', borderRadius:'6px', fontWeight:700, fontSize:'13px', cursor:'pointer', whiteSpace:'nowrap' },
@@ -1475,9 +1476,13 @@ function Dashboard({data, loaUsed, setTab, setFilterStatus, hrMobActive=new Set(
   const active     = mobList.filter(m=>m.status==='mobilised').length;
   const pending    = mobList.filter(m=>m.status==='pending').length;
   const demobbed   = mobList.filter(m=>m.status==='demobilised').length;
-  const noWP       = mobList.filter(m=>!m.wp_approved_date&&!['rejected','demobilised'].includes(m.status)).length;
-  const noCICPA    = mobList.filter(m=>!m.cicpa_pass_no&&!['rejected','demobilised'].includes(m.status)).length;
-  const medPending = mobList.filter(m=>!m.medical_done&&!['rejected','demobilised'].includes(m.status)).length;
+  // For stats, enrich with candidate fallback first
+  const _statsCandById = {}; candidates.forEach(c=>{ if(c.id) _statsCandById[c.id]=c; });
+  const _statsCand = m => m.candidate_id ? (_statsCandById[m.candidate_id]||{}) :
+    (candidates.find(x=>(x.full_name||'').toLowerCase().trim()===(m.full_name||'').toLowerCase().trim())||{});
+  const noWP       = mobList.filter(m=>!['rejected','demobilised'].includes(m.status)&&!(m.wp_approved_date||(m.wp_no||_statsCand(m).wp_no))).length;
+  const noCICPA    = mobList.filter(m=>!['rejected','demobilised'].includes(m.status)&&!(m.cicpa_pass_no||_statsCand(m).security_pass_no)).length;
+  const medPending = mobList.filter(m=>!['rejected','demobilised'].includes(m.status)&&!(m.adnoc_medical_status||_statsCand(m).adnoc_medical_status)).length;
 
   // Available candidates — check mob_register, name fallback AND HR portal mob_demob
   const activeCandIds  = new Set(mobList.filter(m=>m.status==='mobilised').map(m=>m.candidate_id).filter(Boolean));
@@ -1495,16 +1500,31 @@ function Dashboard({data, loaUsed, setTab, setFilterStatus, hrMobActive=new Set(
   const ALERT_DAYS = 60; // show alert if expiring within 60 days
   const allExpiries = [];
 
-  mobList.filter(m=>!['rejected','demobilised'].includes(m.status)).forEach(r => {
+  // Build candidate lookup for expiry alert enrichment
+  const _dashCandById = {}; candidates.forEach(c=>{ if(c.id) _dashCandById[c.id]=c; });
+  const _dashEnrich = r => {
+    const c = r.candidate_id ? (_dashCandById[r.candidate_id]||{}) :
+      (candidates.find(x=>(x.full_name||'').toLowerCase().trim()===(r.full_name||'').toLowerCase().trim())||{});
+    return { ...r,
+      cicpa_expiry_date: r.cicpa_expiry_date  ||c.security_pass_expiry||null,
+      wp_expiry:         r.wp_expiry           ||c.wp_expiry           ||null,
+      medical_expiry:    r.medical_expiry      ||c.medical_expiry      ||null,
+      passport_expiry:   r.passport_expiry     ||c.passport_expiry     ||null,
+      eid_expiry:        r.eid_expiry          ||c.eid_expiry          ||null,
+    };
+  };
+
+  mobList.filter(m=>!['rejected','demobilised'].includes(m.status)).forEach(r_raw => {
+    const r = _dashEnrich(r_raw);
     const add = (type, date, label, critical) => {
       const d = daysUntil(date);
       if (date && d !== null && d <= ALERT_DAYS) {
         allExpiries.push({ person: r.full_name, type, label, date, daysLeft: d, expired: d < 0, critical: !!critical, record: r });
       }
     };
-    add('CICPA Gate Pass',   r.cicpa_expiry_date||r._cand?.security_pass_expiry,   'CICPA Gate Pass',      true);
-    add('Work Permit',       r.wp_expiry||r._cand?.wp_expiry,            'Work Permit',          true);
-    add('Medical',           r.medical_expiry||r._cand?.medical_expiry,       'Medical Certificate',  true);
+    add('CICPA Gate Pass',   r.cicpa_expiry_date,   'CICPA Gate Pass',      true);
+    add('Work Permit',       r.wp_expiry,            'Work Permit',          true);
+    add('Medical',           r.medical_expiry,       'Medical Certificate',  true);
     add('HSE Passport',      r.hse_passport_expiry,  'HSE Passport',         false);
     add('H2S Training',      r.h2s_expiry,           'H2S Certificate',      false);
     // Extra trainings
@@ -1776,7 +1796,7 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
   // Maps candidate_id -> full mob record for already-mobilised candidates
   const planCandMobMap = useMemo(()=>{
     const m={};
-    mobList.filter(r=>(r.status==='mobilised'||r.status==='pending')&&r.candidate_id).forEach(r=>{
+    mobList.filter(r=>r.status==='mobilised'&&r.candidate_id).forEach(r=>{
       // Keep the most recent record per candidate
       if(!m[r.candidate_id]||new Date(r.mobilisation_date||0)>=new Date((m[r.candidate_id].mobilisation_date)||0))
         m[r.candidate_id]=r;
@@ -1961,14 +1981,14 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
         border:`1.5px solid ${isSel?'#2563eb':conflicted?'#fde68a':'#e2e8f0'}`,
         borderRadius:'6px',padding:'6px 10px',
         display:'flex',alignItems:'center',gap:'8px',cursor:'pointer',
-        minHeight:'34px',overflow:'hidden',
+        minHeight:'34px',
       }}
         onClick={()=>toggleSelect(c.id)}>
         {showCheck&&<input type="checkbox" checked={isSel} readOnly style={{width:14,height:14,flexShrink:0,accentColor:'#2563eb'}}/>}
         {/* Name + subtitle — fixed width */}
-        <div style={{width:'200px',flexShrink:0,overflow:'hidden'}}>
-          <div style={{fontWeight:700,fontSize:'11px',color:'#0f172a',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',textTransform:'uppercase'}}>{c.full_name}</div>
-          <div style={{fontSize:'9px',color:'#64748b',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+        <div style={{minWidth:'200px',flexShrink:0}}>
+          <div style={{fontWeight:700,fontSize:'11px',color:'#0f172a',whiteSpace:'nowrap',textTransform:'uppercase'}}>{c.full_name}</div>
+          <div style={{fontSize:'9px',color:'#64748b',whiteSpace:'nowrap'}}>
             {c.designation||'—'} · {c.supplier_emp_no||'—'}
             {conflicted&&<span style={{color:'#b45309',fontWeight:700}}> · ⚠ {assigned.planName}</span>}
             {isAssigned&&<span style={{color:'#166534',fontWeight:700}}> · ✓ This plan</span>}
@@ -1991,7 +2011,7 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
         </div>
         {/* First missing action hint */}
         {c._pr?.missing?.length>0&&(
-          <div style={{fontSize:'10px',color:'#b45309',flexShrink:0,whiteSpace:'nowrap',maxWidth:'180px',overflow:'hidden',textOverflow:'ellipsis'}}>→ {c._pr.missing[0]?.action}</div>
+          <div style={{fontSize:'10px',color:'#b45309',flexShrink:0,whiteSpace:'nowrap'}}>→ {c._pr.missing[0]?.action}</div>
         )}
       </div>
     );
@@ -2280,7 +2300,7 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
             </div>
           )}
           {/* Scrollable candidate list */}
-          <div style={{...S.card,overflow:'hidden'}}>
+          <div style={{...S.card}}>
 
             {/* ── Search bar ── */}
             <div style={{padding:'8px 12px',borderBottom:'1px solid #e2e8f0',background:'#fff',display:'flex',gap:'8px',alignItems:'center'}}>
@@ -2349,7 +2369,7 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
                             <div key={c.id} style={{background:'#f0fdf4',border:'1.5px solid #4ade80',borderRadius:'6px',padding:'6px 10px',display:'flex',alignItems:'center',gap:'8px',minHeight:'34px'}}>
                               <span style={{fontSize:'18px'}}>✅</span>
                               <div style={{width:'200px',flexShrink:0}}>
-                                <div style={{fontWeight:700,fontSize:'11px',color:'#166534',textTransform:'uppercase',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c.full_name}</div>
+                                <div style={{fontWeight:700,fontSize:'11px',color:'#166534',textTransform:'uppercase',whiteSpace:'nowrap'}}>{c.full_name}</div>
                                 <div style={{fontSize:'9px',color:'#64748b',whiteSpace:'nowrap'}}>{c.designation||'—'} · {c.supplier_emp_no||'—'}</div>
                               </div>
                               <div style={{flex:1}}>
@@ -3255,7 +3275,7 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
         </div>
       )}
 
-      <div style={{...S.card,overflow:'hidden'}}>
+      <div style={{...S.card}}>
         <div className="tbl-box drag-scroll" style={{maxHeight:'calc(100vh - var(--stk-2) - 32px)',overflowX:'auto',overflowY:'auto'}}>
         <table style={{width:'max-content',minWidth:'100%',borderCollapse:'collapse',tableLayout:'fixed'}}>
           <colgroup>
@@ -3340,7 +3360,7 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                 {/* Emp No — second column */}
                 <td style={{...S.td,fontFamily:'monospace',fontSize:'12px',fontWeight:700,color:'#0369a1',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.supplier_emp_no||'—'}</td>
                 {/* Supplier — third column */}
-                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',fontSize:'12px',fontWeight:c.source==='satco_own'?700:400,color:c.source==='satco_own'?'#2563eb':'inherit',paddingTop:'4px',paddingBottom:'4px'}}>{c.source==='satco_own'?'SATCO Arabia':c.supplier_name||'—'}</td>
+                <td style={{...S.td,whiteSpace:'nowrap',fontSize:'12px',fontWeight:c.source==='satco_own'?700:400,color:c.source==='satco_own'?'#2563eb':'inherit',paddingTop:'4px',paddingBottom:'4px'}}>{c.source==='satco_own'?'SATCO Arabia':c.supplier_name||'—'}</td>
                 {/* Status */}
                 <td style={{...S.td,paddingTop:'3px',paddingBottom:'3px',whiteSpace:'nowrap'}}>
                   <span style={{background:isOnSite?'#dcfce7':'#eff6ff',color:isOnSite?'#166534':'#2563eb',fontSize:'10px',fontWeight:800,padding:'2px 7px',borderRadius:4,display:'inline-block'}}>
@@ -3355,7 +3375,7 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                     {site?<span title={site} style={{background:'#dcfce7',color:'#166534',padding:'1px 7px',borderRadius:4,fontSize:'10px',fontWeight:800}}>🏗 {label}</span>:<span style={{color:'#94a3b8'}}>—</span>}
                   </td>
                 );})()}
-                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px'}}>{c.designation||'—'}</td>
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.designation||'—'}</td>
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.nationality||'—'}</td>
                 <td style={{...S.td,fontSize:'12px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.date_of_birth?fmtDOB(c.date_of_birth):'—'}</td>
                 {/* Passport — red X if missing, colored expiry */}
@@ -3624,7 +3644,7 @@ function RequirementsTab({requirements, onSave}) {
           </div>
         </div>
       )}
-      <div style={{...S.card,overflow:'hidden'}}>
+      <div style={{...S.card}}>
         <div className="drag-scroll" style={{overflowX:'auto'}}>
         <table style={{width:'100%',borderCollapse:'collapse'}}>
           <thead><tr>{['Customer','Location','PO Ref','Date','Breakdown','Total','Requirements','Notes',''].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
@@ -3696,7 +3716,7 @@ function LoaTab({loaList, usedMap, onSave}) {
           <div style={{display:'flex',gap:'8px'}}><button style={S.btnGold} onClick={save}>Save LOA</button><button style={S.btnSec} onClick={()=>setDraft(null)}>Cancel</button></div>
         </div>
       )}
-      <div style={{...S.card,overflow:'hidden'}}>
+      <div style={{...S.card}}>
         <div className="drag-scroll" style={{overflowX:'auto'}}>
         <table style={{width:'100%',borderCollapse:'collapse'}}>
           <thead><tr>{['Customer','Location','LOA Ref','Date','Total','Used','Remaining','Alert At','Notes',''].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
@@ -3704,7 +3724,9 @@ function LoaTab({loaList, usedMap, onSave}) {
             {loaList.length===0&&<tr><td colSpan={10} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No LOA registered. Click <strong>+ Register LOA</strong>.</td></tr>}
             {loaList.map(l=>{
               const used=usedMap[l.id]||0, rem=l.total_count-used, low=rem<(l.alert_threshold||10);
-              return <tr key={l.id} style={{background:low?'#fffbeb':'#fff'}} className="hr-row">
+              return <tr key={l.id} style={{background:low?'#fffbeb':'#fff',cursor:'pointer'}} className="hr-row"
+                onDoubleClick={e=>{if(e.target.closest('button'))return;setDraft({...l});setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);}}
+                title="Double-click to edit">
                 <td style={{...S.td,fontWeight:700}}>{l.customer_name}</td>
                 <td style={S.td}>{l.location}</td>
                 <td style={{...S.td,fontFamily:'monospace',fontSize:'11px'}}>{l.loa_reference||'—'}</td>
@@ -4310,8 +4332,8 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
       return {
         'S.No':                  i + 1,
         'Name':                  r.full_name || '',
-        'Supplier Emp No':       r.supplier_emp_no || '',
-        'Supplier':              r.supplier_name || (r.source==='satco_own'?'SATCO Arabia':''),
+        'Supplier Emp No':       r.supplier_emp_no || cand.supplier_emp_no || '',
+        'Supplier':              r.supplier_name || (r.source==='satco_own'||cand.source==='satco_own'?'SATCO Arabia':cand.supplier_name) || '',
         'Designation':           r.designation || '',
         'Source':                r.source || '',
         'Nationality':           r.nationality||cand.nationality||'',
@@ -4342,7 +4364,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
         'Medical Done':          r.medical_done ? 'Yes' : 'No',
         'Medical Date':          fD(r.medical_date),
         'Medical Result':        r.medical_result || '',
-        'Medical Expiry':        fD(r.medical_expiry),
+        'Medical Expiry':        fD(r.medical_expiry||cand.medical_expiry),
         'HSE Passport':          r.hse_passport_done ? 'Yes' : 'No',
         'HSE Date':              fD(r.hse_passport_date),
         'HSE Expiry':            fD(r.hse_passport_expiry),
@@ -4354,13 +4376,13 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
         'CICPA Pass No':         r.cicpa_pass_no||cand.security_pass_no||'',
         'CICPA Applied Date':    fD(r.cicpa_applied_date),
         'CICPA Approved Date':   fD(r.cicpa_approved_date),
-        'CICPA Expiry':          fD(r.cicpa_expiry_date),
+        'CICPA Expiry':          fD(r.cicpa_expiry_date||cand.security_pass_expiry),
         'CICPA Returned':        r.cicpa_returned ? 'Yes' : 'No',
         'Extra Trainings (Done)':extraDone,
         'Extra Trainings (All)': extraAll,
         'Client Submitted Date': fD(r.client_submitted_date),
         'Camp Notified Date':    fD(r.camp_notified_date),
-        'Phone':                 r.phone || '',
+        'Phone':                 r.phone||cand.phone||'',
         'Notes':                 r.notes || '',
       };
     });
@@ -4861,7 +4883,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
                       ))}
                     </tr></thead>
                     <tbody>
-                      {site.mobilised.map((r,i)=>(
+                      {site.mobilised.map((r_raw,i)=>{ const r=candMerge(r_raw); return (
                         <tr key={r.id} style={{background:i%2===0?'#fff':'#f8fafc',borderBottom:'1px solid #f1f5f9'}}>
                           <td style={{...S.td,fontWeight:700,whiteSpace:'nowrap'}}>{r.full_name}</td>
                           <td style={{...S.td,whiteSpace:'nowrap'}}>{r.designation||'—'}</td>
@@ -4886,7 +4908,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
                           {(()=>{
                             const cand = r._cand;
                             const mobCicpa  = r.cicpa_pass_no;
-                            const candCicpa = cand?.security_pass_no;
+                            const candCicpa = cand?.security_pass_no||'';
                             const cicpaNo   = mobCicpa || candCicpa;
                             const cicpaOk   = !!cicpaNo && (cand ? cand.cicpa_status === 'active' : true);
                             return <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'3px',paddingBottom:'3px'}}>
@@ -4903,7 +4925,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
                             </div>
                           </td>
                         </tr>
-                      ))}
+                      ); })}
                     </tbody>
                   </table>
                 </div>
@@ -4963,7 +4985,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
         </>)}
       </div>
 
-      <div style={{...S.card,overflow:'hidden',borderRadius:'0 0 10px 10px',marginTop:0}}>
+      <div style={{...S.card,borderRadius:'0 0 10px 10px',marginTop:0}}>
         <div className="tbl-box drag-scroll" style={{maxHeight:'calc(100vh - var(--stk-2) - 32px)',overflowX:'auto',overflowY:'auto'}}>
         <table style={{width:'max-content',minWidth:'100%',borderCollapse:'collapse',tableLayout:'fixed'}}>
           <colgroup>
@@ -5022,15 +5044,15 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
                     style={{width:14,height:14,accentColor:'#dc2626',cursor:'pointer'}}/>
                 </td>
                 {/* Name — frozen */}
-                <td className="frozen-col" style={{...S.td,fontWeight:700,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',borderLeft:mobSel.has(r.id)?'3px solid #dc2626':docPanel?.entity?.id===r.id?'3px solid #2563eb':'3px solid transparent',borderRight:'2px solid #e2e8f0',background:rowBg,paddingTop:'4px',paddingBottom:'4px'}}>
-                  <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.full_name}</span>
+                <td className="frozen-col" style={{...S.td,fontWeight:700,whiteSpace:'nowrap',borderLeft:mobSel.has(r.id)?'3px solid #dc2626':docPanel?.entity?.id===r.id?'3px solid #2563eb':'3px solid transparent',borderRight:'2px solid #e2e8f0',background:rowBg,paddingTop:'4px',paddingBottom:'4px'}}>
+                  <span style={{whiteSpace:'nowrap'}}>{r.full_name}</span>
                 </td>
                 {/* Designation */}
-                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px',fontSize:'12px'}}>{r.designation||'—'}</td>
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px',fontSize:'12px'}}>{r.designation||'—'}</td>
                 {/* Emp No */}
                 <td style={{...S.td,whiteSpace:'nowrap',fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:'#0369a1',paddingTop:'4px',paddingBottom:'4px'}}>{r.supplier_emp_no||'—'}</td>
                 {/* Supplier */}
-                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px',fontSize:'12px'}}>{r.supplier_name||(r.source==='satco_own'?'SATCO Arabia':'—')}</td>
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px',fontSize:'12px'}}>{r.supplier_name||(r.source==='satco_own'?'SATCO Arabia':'—')}</td>
                 {/* Nationality */}
                 <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px'}}>{r.nationality||r._cand?.nationality||'—'}</td>
                 {/* Passport */}
@@ -5143,7 +5165,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
   );
 }
 // ── Letters Tab ───────────────────────────────────────────────────────────────
-function LettersTab({mobList}) {
+function LettersTab({mobList, candidates=[]}) {
   const [letterType,setLetterType] = useState('client');
   const [fCust,setFCust]   = useState(new Set());
   const [fLoc,setFLoc]     = useState(new Set());
@@ -5158,6 +5180,38 @@ function LettersTab({mobList}) {
   const customerOptsL = useMemo(()=>customers.map(c=>({value:c,label:c})),[customers]);
   const locationOptsL = useMemo(()=>locations.map(l=>({value:l,label:l})),[locations]);
 
+  // Build candidate lookup + merge helper for letters tab
+  const candByIdL = useMemo(()=>{ const m={}; candidates.forEach(c=>{ if(c.id) m[c.id]=c; }); return m; },[candidates]);
+  const candMergeL = r => {
+    const c = r.candidate_id ? (candByIdL[r.candidate_id]||{}) :
+      (candidates.find(x=>(x.full_name||'').toLowerCase().trim()===(r.full_name||'').toLowerCase().trim())||{});
+    return {
+      ...r, _cand:c,
+      supplier_emp_no:   r.supplier_emp_no   ||c.supplier_emp_no   ||'',
+      supplier_name:     r.supplier_name      ||(c.source==='satco_own'?'SATCO Arabia':c.supplier_name)||'',
+      nationality:       r.nationality         ||c.nationality        ||'',
+      date_of_birth:     r.date_of_birth       ||c.date_of_birth      ||'',
+      passport_no:       r.passport_no         ||c.passport_no        ||'',
+      passport_expiry:   r.passport_expiry     ||c.passport_expiry    ||'',
+      emirates_id:       r.emirates_id         ||c.emirates_id        ||'',
+      eid_expiry:        r.eid_expiry          ||c.eid_expiry         ||'',
+      visa_no:           r.visa_no             ||c.visa_no            ||'',
+      visa_location:     r.visa_location       ||c.visa_location      ||'',
+      visa_expiry:       r.visa_expiry         ||c.visa_expiry        ||'',
+      phone:             r.phone               ||c.phone              ||'',
+      wp_no:             r.wp_no               ||c.wp_no              ||'',
+      wp_employer:       r.wp_employer         ||c.wp_employer        ||'',
+      wp_expiry:         r.wp_expiry           ||c.wp_expiry          ||'',
+      wp_issue_date:     r.wp_issue_date       ||c.wp_issue_date      ||'',
+      cicpa_pass_no:     r.cicpa_pass_no       ||c.security_pass_no  ||'',
+      cicpa_expiry_date: r.cicpa_expiry_date   ||c.security_pass_expiry||'',
+      adnoc_medical_status: r.adnoc_medical_status||c.adnoc_medical_status||'',
+      adnoc_medical_date:   r.adnoc_medical_date  ||c.adnoc_medical_date  ||'',
+      medical_expiry:    r.medical_expiry      ||c.medical_expiry     ||'',
+      medical_record_no: r.medical_record_no   ||c.medical_record_no  ||'',
+    };
+  };
+
   const pool = useMemo(()=>{
     const base = letterType==='client'
       ? mobList.filter(m=>m.wp_approved_date&&m.status!=='rejected'&&m.status!=='demobilised')
@@ -5166,8 +5220,8 @@ function LettersTab({mobList}) {
       if(fCust.size&&!fCust.has(m.customer_name||''))return false;
       if(fLoc.size&&!fLoc.has(m.location||''))return false;
       return matchSearch(m,search);
-    });
-  },[mobList,letterType,fCust,fLoc,search]);
+    }).map(candMergeL);
+  },[mobList,candidates,candByIdL,letterType,fCust,fLoc,search]);
 
   const toggle=id=>{const s=new Set(selected);s.has(id)?s.delete(id):s.add(id);setSelected(s);};
   const toggleAll=()=>selected.size===pool.length?setSelected(new Set()):setSelected(new Set(pool.map(r=>r.id)));
@@ -5202,7 +5256,9 @@ function LettersTab({mobList}) {
       'Phone Number': '+971565032032',
       'Security Pass Expiry': r.cicpa_expiry_date ? new Date(r.cicpa_expiry_date).toLocaleDateString('en-GB') : '',
       'Security Pass No': r.cicpa_pass_no||'',
-      'Adnoc Medical Status': r.medical_done && r.medical_expiry ? new Date(r.medical_expiry).toLocaleDateString('en-GB') : (r.medical_done ? (r.medical_result||'Fit') : ''),
+      'Adnoc Medical Status': r.adnoc_medical_status||'',
+      'Medical Cert Expiry': r.medical_expiry ? new Date(r.medical_expiry).toLocaleDateString('en-GB') : '',
+      'Med Report No': r.medical_record_no||'',
     }));
 
     const ws = XLSX.utils.json_to_sheet(rows, {header: hdrs});
@@ -5218,15 +5274,15 @@ function LettersTab({mobList}) {
 
     // ── Sheet 2: Pending Actions ──────────────────────────────────────────────
     const pendingRows = selRows
-      .filter(r => !r.emirates_id || !r.passport_no || !r.cicpa_pass_no || !r.medical_done)
+      .filter(r => !r.emirates_id || !r.passport_no || !r.cicpa_pass_no || !r.adnoc_medical_status)
       .map(r => {
         const missing = [];
-        if(!r.emirates_id)    missing.push('Emirates ID');
-        if(!r.eid_expiry)     missing.push('EID Expiry');
-        if(!r.passport_no)    missing.push('Passport No');
-        if(!r.cicpa_pass_no)  missing.push('CICPA Pass No');
-        if(!r.medical_done)   missing.push('Medical');
-        return {'Employee Name':r.full_name,'Designation':r.designation||'','Customer':r.customer_name||'','Location':r.location||'','Missing / Action Required':missing.join(', ')};
+        if(!r.emirates_id)         missing.push('Emirates ID');
+        if(!r.eid_expiry)          missing.push('EID Expiry');
+        if(!r.passport_no)         missing.push('Passport No');
+        if(!r.cicpa_pass_no)       missing.push('CICPA Pass No');
+        if(!r.adnoc_medical_status)missing.push('ADNOC Medical');
+        return {'Employee Name':r.full_name,'Designation':r.designation||'','Supplier':r.supplier_name||'','Customer':r.customer_name||'','Location':r.location||'','Missing / Action Required':missing.join(', ')};
       });
 
     if(pendingRows.length){
@@ -5245,8 +5301,8 @@ function LettersTab({mobList}) {
   const generateLetter=()=>{
     if(!selRows.length)return alert('Select at least one person');
     const dateStr=new Date(date).toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'});
-    const clientRows=selRows.map((r,i)=>`<tr><td style="text-align:center">${i+1}</td><td>${COMPANY_SHORT}</td><td style="text-align:center">${r.supplier_emp_no||'—'}</td><td>${r.full_name}</td><td>${r.designation||'—'}</td><td style="text-align:center">${r.date_of_birth?fmtDOB(r.date_of_birth):'—'}</td><td>${r.nationality||'—'}</td><td style="text-align:center;font-family:monospace">${r.emirates_id||'—'}</td></tr>`).join('');
-    const campRows=selRows.map((r,i)=>`<tr><td style="text-align:center">${i+1}</td><td style="text-align:center;font-family:monospace">${r.supplier_emp_no||'—'}</td><td>${r.full_name}</td><td>${r.designation||'—'}</td><td>${r.nationality||'—'}</td><td>${COMPANY_SHORT}</td><td>${r.notes||''}</td></tr>`).join('');
+    const clientRows=selRows.map((r,i)=>`<tr><td style="text-align:center">${i+1}</td><td>${r.supplier_name||COMPANY_SHORT}</td><td style="text-align:center">${r.supplier_emp_no||'—'}</td><td>${r.full_name}</td><td>${r.designation||'—'}</td><td style="text-align:center">${r.date_of_birth?fmtDOB(r.date_of_birth):'—'}</td><td>${r.nationality||'—'}</td><td style="text-align:center;font-family:monospace">${r.emirates_id||'—'}</td></tr>`).join('');
+    const campRows=selRows.map((r,i)=>`<tr><td style="text-align:center">${i+1}</td><td style="text-align:center;font-family:monospace">${r.supplier_emp_no||'—'}</td><td>${r.full_name}</td><td>${r.designation||'—'}</td><td>${r.nationality||'—'}</td><td>${r.supplier_name||COMPANY_SHORT}</td><td>${r.notes||''}</td></tr>`).join('');
 
     const clientTable=`<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:13px;"><thead style="background:#f0f0f0"><tr><th>S.L.</th><th>Company Name</th><th>Employee Number</th><th>Employee Name</th><th>Designation</th><th>DOB</th><th>Nationality</th><th>Emirates ID Number</th></tr></thead><tbody>${clientRows}</tbody></table>`;
     const campTable=`<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:13px;"><thead style="background:#f0f0f0"><tr><th>S.L.</th><th>Emp. No.</th><th>Name</th><th>Designation</th><th>Nationality</th><th>Company</th><th>Remarks</th></tr></thead><tbody>${campRows}</tbody></table>`;
@@ -5980,12 +6036,14 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
               {filtered.map((s,i)=>{
                 const es = expiryStyle(s.license_expiry);
                 return (
-                  <tr key={s.id} className="hr-row" style={{height:'36px'}}>
+                  <tr key={s.id} className="hr-row" style={{height:'36px',cursor:'pointer'}}
+                    onDoubleClick={e=>{if(e.target.closest('button'))return;setDraft({...s,attachments:s.attachments||{},other_docs:s.other_docs||[]});}}
+                    title="Double-click to edit">
                     <td style={{...S.td,color:'#94a3b8',fontSize:'11px',textAlign:'center',whiteSpace:'nowrap'}}>{i+1}</td>
                     <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap'}}>
                       <span style={{background:'#f1f5f9',padding:'2px 7px',borderRadius:5,fontWeight:700,color:'#0f172a'}}>{s.supplier_code||'—'}</span>
                     </td>
-                    <td style={{...S.td,fontWeight:700,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.name}</td>
+                    <td style={{...S.td,fontWeight:700,whiteSpace:'nowrap'}}>{s.name}</td>
                     <td style={{...S.td,fontSize:'12px',whiteSpace:'nowrap'}}>{s.supplier_services||'—'}</td>
                     <td style={{...S.td,fontSize:'12px',whiteSpace:'nowrap'}}>{s.address_state||'—'}</td>
                     <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap'}}>{s.license_number||'—'}</td>
@@ -6015,13 +6073,13 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
                         return labels.length ? <span style={{color:'#b8972a',fontWeight:700}}>📎 {labels.join(' · ')}</span> : <span style={{color:'#94a3b8'}}>—</span>;
                       })()}
                     </td>
-                    <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                    <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap'}}>
                       {s.contact_email ? <a href={`mailto:${s.contact_email}`} style={{color:'#0369a1'}}>{s.contact_email}</a> : '—'}
                     </td>
                     <td style={{...S.td,fontSize:'12px',whiteSpace:'nowrap'}}>{s.contact_name||'—'}</td>
                     <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap'}}>{s.contact_phone||'—'}</td>
                     <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',whiteSpace:'nowrap'}}>{s.contact_phone2||'—'}</td>
-                    <td style={{...S.td,fontSize:'11px',color:'#64748b',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.remarks||'—'}</td>
+                    <td style={{...S.td,fontSize:'11px',color:'#64748b',whiteSpace:'nowrap'}}>{s.remarks||'—'}</td>
                     <td style={{...S.td,whiteSpace:'nowrap'}}>
                       <div style={{display:'flex',gap:'4px'}}>
                         <button style={S.btnSm} onClick={()=>{setAiStatus('');setAiMsg('');setShowBanner(false);setDraft({...s,attachments:s.attachments||{},other_docs:s.other_docs||[]});}}>Edit</button>
@@ -6273,7 +6331,9 @@ function ConfigTab({locConfigs, suppliers, onSave}) {
             {suppliers.length===0&&<tr><td colSpan={8} style={{padding:'16px',textAlign:'center',color:'#94a3b8'}}>No suppliers yet — use the 🏭 Suppliers tab to add them.</td></tr>}
             {suppliers.map(s=>{
               const es = s.license_expiry && (new Date(s.license_expiry)-new Date())/86400000 < 0 ? {color:'#dc2626',fontWeight:700} : s.license_expiry && (new Date(s.license_expiry)-new Date())/86400000 < 90 ? {color:'#b45309',fontWeight:700} : {};
-              return (<tr key={s.id} className="hr-row">
+              return (<tr key={s.id} className="hr-row" style={{cursor:'pointer'}}
+                onDoubleClick={e=>{if(e.target.closest('button'))return;setThDraft({...s});}}
+                title="Double-click to edit">
                 <td style={{...S.td,fontFamily:'monospace',fontSize:'11px'}}>{s.supplier_code||'—'}</td>
                 <td style={{...S.td,fontWeight:700}}>{s.name}</td>
                 <td style={{...S.td,fontSize:'11px'}}>{s.supplier_services||'—'}</td>
@@ -6342,7 +6402,9 @@ function ConfigTab({locConfigs, suppliers, onSave}) {
           <thead><tr>{['Location','Required Trainings','Updated',''].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
           <tbody>
             {locConfigs.length===0&&<tr><td colSpan={4} style={{padding:'16px',textAlign:'center',color:'#94a3b8'}}>No location configs yet.</td></tr>}
-            {locConfigs.map(l=><tr key={l.id} className="hr-row">
+            {locConfigs.map(l=><tr key={l.id} className="hr-row" style={{cursor:'pointer'}}
+              onDoubleClick={e=>{if(e.target.closest('button'))return;setLocDraft({...l,_lines:(l.trainings||[]).map(t=>t.name).join('\n')});}}
+              title="Double-click to edit">
               <td style={{...S.td,fontWeight:700}}>{l.location}</td>
               <td style={S.td}>{(l.trainings||[]).map((t,i)=><span key={i} style={{display:'inline-block',background:'#eff6ff',color:'#1e40af',fontSize:'11px',fontWeight:700,padding:'2px 8px',borderRadius:10,marginRight:'4px',marginBottom:'3px'}}>{t.name}</span>)}</td>
               <td style={{...S.td,fontSize:'11px',color:'#94a3b8'}}>{fmtDate(l.updated_at)}</td>
@@ -6684,7 +6746,7 @@ function App() {
             {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
             {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} requirements={data.requirements} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} onRefresh={loadAll} initialStatus={filterStatus} tabSearch={tabSearch} bulkMobFilter={bulkMobFilter} onClearBulkFilter={()=>setBulkMobFilter(null)}/>}
             {tab==='suppliers'    &&<SuppliersTab suppliers={data.suppliers} onRefresh={loadAll}/>}
-            {tab==='letters'      &&<LettersTab mobList={data.mobList}/>}
+            {tab==='letters'      &&<LettersTab mobList={data.mobList} candidates={data.candidates}/>}
             {tab==='config'       &&<ConfigTab locConfigs={data.locConfigs} suppliers={data.suppliers} onSave={onSave}/>}
           </>}
         </div>
