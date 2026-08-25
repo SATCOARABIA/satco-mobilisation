@@ -731,19 +731,35 @@ async function pdfToJpeg(file) {
   }
   const ab = await file.arrayBuffer();
   const pdf = await window.pdfjsLib.getDocument({ data: ab }).promise;
-  const page = await pdf.getPage(1);
-  // Scale so longest side ≈ 1500px
-  const vp0 = page.getViewport({ scale: 1 });
-  const scale = Math.min(1500 / Math.max(vp0.width, vp0.height), 2);
-  const vp = page.getViewport({ scale });
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(vp.width); canvas.height = Math.round(vp.height);
-  await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+  // Render up to first 2 pages and stitch vertically — catches fitness cert on page 2
+  const pagesToRender = Math.min(pdf.numPages, 2);
+  const canvases = [];
+  let totalHeight = 0, maxWidth = 0;
+  for (let i = 1; i <= pagesToRender; i++) {
+    const page = await pdf.getPage(i);
+    const vp0 = page.getViewport({ scale: 1 });
+    const scale = Math.min(1400 / Math.max(vp0.width, vp0.height), 2);
+    const vp = page.getViewport({ scale });
+    const c = document.createElement('canvas');
+    c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+    await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+    canvases.push(c);
+    totalHeight += c.height + 8;
+    maxWidth = Math.max(maxWidth, c.width);
+  }
+  // Stitch pages vertically on one canvas
+  const combined = document.createElement('canvas');
+  combined.width = maxWidth; combined.height = totalHeight;
+  const ctx = combined.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, maxWidth, totalHeight);
+  let y = 0;
+  for (const c of canvases) { ctx.drawImage(c, 0, y); y += c.height + 8; }
   return new Promise((resolve, reject) => {
-    canvas.toBlob(blob => {
+    combined.toBlob(blob => {
       if (!blob) { reject(new Error('PDF rasterization failed')); return; }
-      resolve(new File([blob], file.name.replace(/\.pdf$/i, '_p1.jpg'), { type: 'image/jpeg' }));
-    }, 'image/jpeg', 0.82);
+      resolve(new File([blob], file.name.replace(/\.pdf$/i, '_p1-2.jpg'), { type: 'image/jpeg' }));
+    }, 'image/jpeg', 0.80);
   });
 }
 
@@ -821,9 +837,9 @@ Return ONLY a valid JSON object with these fields (include only what is visible)
   "visa_expiry": "YYYY-MM-DD if visa expiry",
   "visa_type": "visa type or category",
   "medical_result": "Overall fitness verdict: extract EXACTLY one of: Fit to Offshore/Onshore, Fit Onshore only, Fit Food Handler, Fit SCBA, Unfit, Temporarily Unfit — based on which checkbox is ticked on the certificate. If simply Fit with no qualifier write Fit.",
-  "medical_date": "YYYY-MM-DD date of examination / issue date shown on the medical certificate",
-  "medical_expiry": "YYYY-MM-DD expiry date of the medical certificate (the Expiry field, NOT the exam date — typically 3 years after exam). CRITICAL: this is different from medical_date.",
-  "medical_record_no": "Medical record or report number shown on the certificate (e.g. NNMC0871699, MR No, Record No, Certificate No)",
+  "medical_date": "YYYY-MM-DD Date of examination on the medical report (the field labeled Date of examination, e.g. 24-08-2026 becomes 2026-08-24). This is when the exam was conducted.",
+  "medical_expiry": "YYYY-MM-DD The EXPIRY field — a separate labeled field on the medical report header (labeled exactly Expiry, e.g. Expiry: 24-08-2029 becomes 2029-08-24). CRITICAL: this is NOT the Date of examination. On NNMC reports the right side of the header table shows: Job title / Expiry / Medical Record No. The Expiry is always approximately 3 years after the exam date. NEVER return the exam date here. Example: exam 24-08-2026, expiry 24-08-2029.",
+  "medical_record_no": "The Medical Record No field in the report header (labeled Medical Record No, e.g. NNMC0872765). On NNMC reports this is in the right column of the header, bottom row.",
   "medical_fitness_comments": "Any comments, restrictions, or special conditions noted on the medical certificate",
   "training_name": "exact name of the training or certificate (for training certs)",
   "training_date": "YYYY-MM-DD date of training or issue",
@@ -1453,6 +1469,8 @@ function Dashboard({data, loaUsed, setTab, setFilterStatus, hrMobActive=new Set(
     add('Passport',    c.passport_expiry);
     add('Emirates ID', c.eid_expiry);
     add('Visa',        c.visa_expiry);
+    add('Medical Cert',c.medical_expiry);
+    add('Security Pass',c.security_pass_expiry);
   });
 
   // Sort: expired first, then by days ascending
@@ -2419,7 +2437,7 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
     return [...map.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([v,cnt])=>({value:v,label:v,count:cnt}));
   }, [candidates]);
 
-  const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',passport_expiry:'',emirates_id:'',eid_expiry:'',visa_no:'',visa_type:'',visa_location:'',visa_expiry:'',phone:'',email:'',wp_no:'',wp_employer:'',wp_expiry:'',wp_issue_date:'',security_pass_no:'',security_pass_expiry:'',adnoc_medical_status:'',adnoc_medical_date:'',cicpa_location:'',cicpa_status:'not_issued',cicpa_remarks:'',remarks:'',active:true}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
+  const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',passport_expiry:'',emirates_id:'',eid_expiry:'',visa_no:'',visa_type:'',visa_location:'',visa_expiry:'',phone:'',email:'',wp_no:'',wp_employer:'',wp_expiry:'',wp_issue_date:'',security_pass_no:'',security_pass_expiry:'',adnoc_medical_status:'',adnoc_medical_date:'',medical_expiry:'',medical_record_no:'',medical_comments:'',medical_done:false,medical_result:'',cicpa_location:'',cicpa_status:'not_issued',cicpa_remarks:'',remarks:'',active:true}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
 
   const personHistory = (cand) => {
     const hist = mobList.filter(m => m.candidate_id === cand.id || m.full_name === cand.full_name);
@@ -2937,6 +2955,8 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
             check('Passport',draft.passport_expiry,draft.passport_no);
             check('Emirates ID',draft.eid_expiry,draft.emirates_id);
             check('Work Permit',draft.wp_expiry,draft.wp_no);
+            check('Medical Certificate',draft.medical_expiry,draft.medical_record_no||'');
+            if(draft.security_pass_expiry)check('Security Pass',draft.security_pass_expiry,draft.security_pass_no||'');
             if(draft.cicpa_status==='confiscated')alerts.push({label:'CICPA Gate Pass',ref:draft.security_pass_no||'—',days:-1,color:'#dc2626',bg:'#fee2e2',icon:'🔴',txt:'CONFISCATED'});
             if(!alerts.length)return null;
             return(
@@ -3073,10 +3093,12 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
               const warnings = [];
               const pp = docColor('passport', draft.passport_expiry, thresholds);
               const ei = docColor('eid', draft.eid_expiry, thresholds);
-              const ad = draft.adnoc_medical_date ? docColor('adnoc_medical', draft.adnoc_medical_date, thresholds) : null;
-              if (draft.passport_expiry  && pp.icon==='⚠') warnings.push(`Passport expiry ${fmtDate(draft.passport_expiry)} — ${daysUntil(draft.passport_expiry)} days left`);
-              if (draft.eid_expiry       && ei.icon==='⚠') warnings.push(`Emirates ID expiry ${fmtDate(draft.eid_expiry)} — ${daysUntil(draft.eid_expiry)} days left`);
-              if (draft.adnoc_medical_date && ad?.icon==='⚠') warnings.push(`ADNOC Medical ${fmtDate(draft.adnoc_medical_date)} — ${daysUntil(draft.adnoc_medical_date)} days left`);
+              // Use medical_expiry (certificate expiry) not adnoc_medical_date (exam date)
+              const medExpDate = draft.medical_expiry || null;
+              const ad = medExpDate ? docColor('adnoc_medical', medExpDate, thresholds) : null;
+              if (draft.passport_expiry && pp.icon==='⚠') warnings.push(`Passport expiry ${fmtDate(draft.passport_expiry)} — ${daysUntil(draft.passport_expiry)} days left`);
+              if (draft.eid_expiry      && ei.icon==='⚠') warnings.push(`Emirates ID expiry ${fmtDate(draft.eid_expiry)} — ${daysUntil(draft.eid_expiry)} days left`);
+              if (medExpDate && ad?.icon==='⚠') warnings.push(`Medical Certificate expiry ${fmtDate(medExpDate)} — ${daysUntil(medExpDate)} days left`);
               if (warnings.length > 0) {
                 const proceed = window.confirm(`⚠ Expiry Alert:\n\n${warnings.join('\n')}\n\nSave anyway?`);
                 if (!proceed) return;
