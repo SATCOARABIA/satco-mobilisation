@@ -5707,10 +5707,8 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
                 <button style={{...S.btnGrn,fontSize:'12px',padding:'7px 16px'}} onClick={async()=>{
                   const logEl = document.getElementById('backfill-log');
                   logEl.style.display='block';
-                  logEl.textContent = 'Fetching records…
-';
-                  const append = (msg) => { logEl.textContent += msg + '
-'; logEl.scrollTop=logEl.scrollHeight; };
+                  logEl.textContent = 'Fetching records...\n';
+                  const append = (msg) => { logEl.textContent += msg + '\n'; logEl.scrollTop=logEl.scrollHeight; };
                   try {
                     const {data:mob,error:e1} = await db.from('mob_register')
                       .select('id,full_name,candidate_id,cicpa_pass_no,cicpa_expiry_date,adnoc_medical_status,adnoc_medical_date');
@@ -5733,13 +5731,12 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
                       if(!r.adnoc_medical_date && cand.adnoc_medical_date) u.adnoc_medical_date=cand.adnoc_medical_date;
                       if(!Object.keys(u).length) continue;
                       const {error} = await db.from('mob_register').update({...u,updated_at:new Date().toISOString()}).eq('id',r.id);
-                      if(error){ append(`❌ ${r.full_name}: ${error.message}`); }
-                      else { updated++; append(`✓ ${r.full_name}: ${Object.keys(u).join(', ')}`); }
+                      if(error){ append('FAILED ' + r.full_name + ': ' + error.message); }
+                      else { updated++; append('OK ' + r.full_name + ': ' + Object.keys(u).join(', ')); }
                     }
-                    append(`
-✅ Done — ${updated} updated, ${skipped} no match found.`);
-                  } catch(err){ append('❌ Error: '+(err.message||JSON.stringify(err))); }
-                }}>▶ Run Backfill Now</button>
+                    append('\nDone: ' + updated + ' updated, ' + skipped + ' no candidate match.');
+                  } catch(err){ append('ERROR: '+(err.message||JSON.stringify(err))); }
+                }}>Run Backfill Now</button>
                 <span style={{fontSize:'11px',color:'#166534'}}>Safe to run multiple times</span>
               </div>
               <pre id="backfill-log" style={{display:'none',marginTop:'10px',background:'#0f172a',color:'#e2e8f0',borderRadius:'6px',padding:'10px 12px',fontSize:'11px',fontFamily:'monospace',maxHeight:'220px',overflowY:'auto',whiteSpace:'pre-wrap'}}></pre>
