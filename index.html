@@ -414,6 +414,7 @@ ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS adnoc_medical_status text;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS adnoc_medical_date date;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS hse_passport_expiry date;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS h2s_expiry date;
+ALTER TABLE mob_loa ADD COLUMN IF NOT EXISTS extra_used integer DEFAULT 0;
 ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS wp_no text;
 ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS wp_employer text;
 ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS wp_expiry date;
@@ -3834,7 +3835,7 @@ function RequirementsTab({requirements, onSave}) {
 // ── LOA Tab ───────────────────────────────────────────────────────────────────
 function LoaTab({loaList, usedMap, onSave}) {
   const [draft,setDraft]=useState(null);
-  const blank=()=>setDraft({customer_name:'',location:'',loa_reference:'',loa_date:todayStr(),total_count:'',alert_threshold:10,notes:''});
+  const blank=()=>setDraft({customer_name:'',location:'',loa_reference:'',loa_date:todayStr(),total_count:'',alert_threshold:10,notes:'',extra_used:0});
   const save=()=>{
     if(!draft.customer_name||!draft.location)return alert('Customer and location required');
     if(!draft.total_count||draft.total_count<1)return alert('LOA count required');
@@ -3861,7 +3862,11 @@ function LoaTab({loaList, usedMap, onSave}) {
               <div style={{fontSize:'11px',color:'#94a3b8',marginTop:'3px'}}>Shows warning banner when fewer than this many LOAs remain</div>
             </Field>
           </Grid>
-          <Field label="Notes"><input value={draft.notes||''} onChange={e=>setDraft(d=>({...d,notes:e.target.value}))} style={{...S.input,marginBottom:'14px'}}/></Field>
+          <Field label="Notes"><input value={draft.notes||''} onChange={e=>setDraft(d=>({...d,notes:e.target.value}))} style={{...S.input,marginBottom:'8px'}}/></Field>
+          <Field label="Extra Passes Used (supervisors/visitors not in mob register)">
+            <input type="number" min="0" value={draft.extra_used||0} onChange={e=>setDraft(d=>({...d,extra_used:+e.target.value}))} style={S.input}/>
+            <div style={{fontSize:'11px',color:'#94a3b8',marginTop:'3px'}}>Add SATCO staff who hold a CICPA pass for this site but are not mobilised (e.g. supervisors, visitors). Each counts toward the LOA quota.</div>
+          </Field>
           <div style={{display:'flex',gap:'8px'}}><button style={S.btnGold} onClick={save}>Save LOA</button><button style={S.btnSec} onClick={()=>setDraft(null)}>Cancel</button></div>
         </div>
       )}
@@ -3873,6 +3878,7 @@ function LoaTab({loaList, usedMap, onSave}) {
             {loaList.length===0&&<tr><td colSpan={10} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No LOA registered. Click <strong>+ Register LOA</strong>.</td></tr>}
             {loaList.map(l=>{
               const used=usedMap[l.id]||0, rem=l.total_count-used, low=rem<(l.alert_threshold||10);
+              const extraUsed=l.extra_used||0;
               return <tr key={l.id} style={{background:low?'#fffbeb':'#fff',cursor:'pointer'}} className="hr-row"
                 onDoubleClick={e=>{if(e.target.closest('button'))return;setDraft({...l});setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);}}
                 title="Double-click to edit">
@@ -6728,8 +6734,9 @@ function App() {
     const m={};
 
     // Count active mob_register rows against their LOA — one count per row, no more
+    // ONLY count records explicitly marked mobilised or pending — nothing else
     const activeMob = data.mobList.filter(r =>
-      r.status !== 'demobilised' && r.status !== 'rejected'
+      r.status === 'mobilised' || r.status === 'pending'
     );
 
     // Deduplicate by row id — each mob_register row counted exactly once
@@ -6754,23 +6761,14 @@ function App() {
       if (loaId) m[loaId] = (m[loaId] || 0) + 1;
     });
 
-    // Count candidates with active CICPA not in mob register
-    // Use strict: only count if candidate id NOT in any mob row AND full_name normalised NOT in mob rows
-    const mobIds = new Set(activeMob.map(r=>r.candidate_id).filter(Boolean));
-    const mobNms = new Set(activeMob.map(r=>(r.full_name||'').toLowerCase().replace(/\s+/g,' ').trim()).filter(Boolean));
-
-    data.candidates.filter(c=>
-      c.active && c.cicpa_status==='active' && c.security_pass_no && c.cicpa_location &&
-      !mobIds.has(c.id) &&
-      !mobNms.has((c.full_name||'').toLowerCase().replace(/\s+/g,' ').trim())
-    ).forEach(c=>{
-      const cNorm = canonicalCicpa(c.cicpa_location).toLowerCase().replace(/[^a-z0-9]/g,'');
-      const loa = data.loaList.find(l=>{
-        const lNorm = (l.location||'').toLowerCase().replace(/[^a-z0-9]/g,'');
-        return ['taziz','ruwais','habshan','enhancement'].some(kw=>cNorm.includes(kw)&&lNorm.includes(kw));
-      });
-      if (loa) m[loa.id]=(m[loa.id]||0)+1;
+    // Add any manually tracked extra passes (supervisors/visitors) from LOA record
+    data.loaList.forEach(l => {
+      if (l.extra_used && l.extra_used > 0) {
+        m[l.id] = (m[l.id] || 0) + l.extra_used;
+      }
     });
+
+    // Pass 2 removed — visitor/supervisor CICPA slots are tracked via LOA 'extra_used' field — visitor/supervisor CICPA slots are tracked via LOA 'extra_used' field
 
     return m;
   },[data.mobList, data.loaList, data.candidates]);
