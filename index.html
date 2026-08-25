@@ -6767,18 +6767,31 @@ function App() {
       }
     });
 
-    // ── Pass 2: count candidates with active CICPA for this LOA's site ────────
-    // Covers supervisors / visitors who have a gate pass but are NOT mobilised
+    // ── Pass 2: count candidates with active CICPA who have NO mob record at all ──
+    // Covers supervisors / visitors (e.g. Shaik) who hold a site CICPA but are not mobilised
+    // Build set of all candidate_ids that appear in ANY non-demobilised mob record
+    const mobCandIds = new Set(
+      data.mobList
+        .filter(r=>r.status!=='demobilised'&&r.status!=='rejected'&&r.candidate_id)
+        .map(r=>r.candidate_id)
+    );
+    // Also build set of names for unlinked mob records (no candidate_id)
+    const mobNames = new Set(
+      data.mobList
+        .filter(r=>r.status!=='demobilised'&&r.status!=='rejected'&&!r.candidate_id)
+        .map(r=>(r.full_name||'').toLowerCase().trim())
+    );
+
     data.candidates.filter(c=>
       c.active &&
       c.cicpa_status==='active' &&
-      c.security_pass_no &&          // must have an actual pass number
-      !counted.has(c.id)             // not already counted via mob register
+      c.security_pass_no &&
+      !mobCandIds.has(c.id) &&   // not in mob register by id
+      !mobNames.has((c.full_name||'').toLowerCase().trim()) // not in mob register by name
     ).forEach(c=>{
       const match = data.loaList.find(l=>cicpaMatchesLoa(c.cicpa_location, l.location));
       if (match) {
         m[match.id]=(m[match.id]||0)+1;
-        counted.add(c.id);
       }
     });
 
