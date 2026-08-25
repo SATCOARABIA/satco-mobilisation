@@ -6795,6 +6795,11 @@ function App() {
       }
     });
 
+    // DEBUG — log what was counted
+    console.log('[loaUsed] mob records counted:', data.mobList.filter(r=>r.status!=='demobilised'&&r.status!=='rejected').map(r=>({name:r.full_name,status:r.status,loa_id:r.loa_id,location:r.location,cicpa:r.cicpa_location})));
+    console.log('[loaUsed] result:', JSON.stringify(m));
+    const loaNames={}; data.loaList.forEach(l=>{loaNames[l.id]=l.location;});
+    Object.entries(m).forEach(([id,cnt])=>console.log('[loaUsed]',loaNames[id],'=',cnt));
     return m;
   },[data.mobList, data.loaList, data.candidates]);
 
