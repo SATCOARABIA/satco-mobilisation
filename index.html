@@ -3762,7 +3762,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
   const [search,setSearch]   = useState(tabSearch||'');
   const [fCust,setFCust]     = useState(new Set());
   const [fLoc,setFLoc]       = useState(new Set());
-  const [fStatus,setFStatus] = useState(()=>initialStatus?new Set([initialStatus]):new Set());
+  const [fStatus,setFStatus] = useState(()=>initialStatus?new Set([initialStatus]):new Set(['mobilised','pending']));
   const [fReady,setFReady]   = useState(new Set());
   const [mobSel, setMobSel] = useState(new Set());
 
@@ -4751,7 +4751,8 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
             <col style={{width:'38px'}}/>{/* ☑ */}
             <col style={{width:'170px'}}/>{/* Name */}
             <col style={{width:'130px'}}/>{/* Designation */}
-            <col style={{width:'120px'}}/>{/* Supplier/EmpNo */}
+            <col style={{width:'110px'}}/>{/* Emp No */}
+            <col style={{width:'180px'}}/>{/* Supplier */}
             <col style={{width:'130px'}}/>{/* Customer */}
             <col style={{width:'110px'}}/>{/* Location */}
             <col style={{width:'100px'}}/>{/* Work Permit */}
@@ -4776,10 +4777,10 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
               />
             </th>
             <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,background:'#f8fafc',borderRight:'2px solid #e2e8f0'}}>Name</th>
-            {['Designation','Supplier / EmpNo','Customer','Location','Work Permit','Medical','ADNOC Med','HSE','H2S','Extra','CICPA','Mob Date','Demob Date','Status','Readiness','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
+            {['Emp No','Supplier','Customer','Location','Work Permit','Medical','ADNOC Med','HSE','H2S','Extra','CICPA','Mob Date','Demob Date','Status','Readiness','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,whiteSpace:'nowrap'}}>{h}</th>)}
           </tr></thead>
           <tbody>
-            {filtered.length===0&&<tr><td colSpan={17} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No records. Use filters or click <strong>+ Add Person</strong>.</td></tr>}
+            {filtered.length===0&&<tr><td colSpan={18} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No records. Use filters or click <strong>+ Add Person</strong>.</td></tr>}
             {filtered.map((r,idx)=>{
               const ex=(r.extra_trainings||[]), exDone=ex.filter(t=>t.done).length;
               const cicpaExpiring = r.cicpa_expiry_date&&daysUntil(r.cicpa_expiry_date)<=30&&daysUntil(r.cicpa_expiry_date)>=0;
@@ -4800,11 +4801,12 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
                 <td className="frozen-col" style={{...S.td,fontWeight:700,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',borderLeft:mobSel.has(r.id)?'3px solid #dc2626':docPanel?.entity?.id===r.id?'3px solid #2563eb':'3px solid transparent',borderRight:'2px solid #e2e8f0',background:rowBg,paddingTop:'4px',paddingBottom:'4px'}}>
                   <div style={{display:'flex',alignItems:'center',gap:'5px',overflow:'hidden'}}>
                     <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.full_name}</span>
-                    <span style={{flexShrink:0,fontFamily:'monospace',fontSize:'9px',color:'#94a3b8'}}>{r.supplier_emp_no||''}</span>
+
                   </div>
                 </td>
                 <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px'}}>{r.designation||'—'}</td>
-                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px',fontSize:'12px'}}>{r.supplier_name||'SATCO'}</td>
+                <td style={{...S.td,whiteSpace:'nowrap',fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:'#0369a1',paddingTop:'4px',paddingBottom:'4px'}}>{r.supplier_emp_no||'—'}</td>
+                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px',fontSize:'12px'}}>{r.supplier_name||(r.source==='satco_own'?'SATCO Arabia':'—')}</td>
                 <td style={{...S.td,fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px',fontSize:'12px'}}>{r.customer_name}</td>
                 <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px'}}>{r.location}</td>
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
