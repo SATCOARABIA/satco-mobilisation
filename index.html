@@ -1088,6 +1088,18 @@ function DocumentPanel({entity, entityType, onClose, onApplyAiData}) {
     } catch(ex) { setErr(ex.message); }
   };
 
+  const downloadDoc = async doc => {
+    try {
+      const url = await getSignedUrl(doc.file_path);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = doc.file_name || doc.doc_label || 'document';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch(ex) { setErr(ex.message); }
+  };
+
   const deleteDoc = async doc => {
     if (!window.confirm(`Delete "${doc.doc_label}"?`)) return;
     await db.storage.from(DOC_BUCKET).remove([doc.file_path]);
@@ -1260,7 +1272,8 @@ function DocumentPanel({entity, entityType, onClose, onApplyAiData}) {
                   </div>
                 </div>
                 <div style={{display:'flex',gap:'4px',flexShrink:0,marginLeft:'8px'}}>
-                  <button style={{...S.btnSm,padding:'4px 8px'}} onClick={()=>viewDoc(doc)} title="Open">👁</button>
+                  <button style={{...S.btnSm,padding:'4px 8px'}} onClick={()=>viewDoc(doc)} title="Open in browser">👁</button>
+                  <button style={{...S.btnSm,padding:'4px 8px'}} onClick={()=>downloadDoc(doc)} title="Download">⬇</button>
                   <button style={{...S.btnSm,padding:'4px 8px',background:scanning===doc.id?'#f0fdf4':'#fff'}} onClick={()=>scanDoc(doc)} disabled={scanning===doc.id} title="Scan with AI">
                     {scanning===doc.id ? '⏳' : '✨'}
                   </button>
@@ -2533,8 +2546,22 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
     }
     // Medical / ADNOC Medical
     else if (dt.includes('medical') || aiData.medical_result || aiData.medical_date) {
+      // Normalize AI fitness verdict to a known status value
+      const normalizeMedStatus = raw => {
+        if (!raw) return null;
+        const r = raw.toLowerCase();
+        if (r.includes('unfit')) return 'Unfit';
+        if (r.includes('offshore') || r.includes('onshore')) {
+          if (r.includes('onshore only') || r.includes('onshore-only')) return 'Fit Onshore only';
+          return 'Fit to Offshore/Onshore';
+        }
+        if (r.includes('food')) return 'Fit';
+        if (r.includes('scba')) return 'Fit';
+        if (r.includes('fit')) return 'Fit';
+        return raw; // keep original if unrecognised
+      };
       // Fitness verdict -> adnoc_medical_status
-      if (aiData.medical_result)           updates.adnoc_medical_status  = aiData.medical_result;
+      if (aiData.medical_result)           updates.adnoc_medical_status  = normalizeMedStatus(aiData.medical_result);
       // Exam / issue date -> adnoc_medical_date
       const md = aiData.medical_date || aiData.issue_date;
       if (md)                              updates.adnoc_medical_date    = md;
@@ -2840,7 +2867,8 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                       }
                       // ADNOC Medical / medical certificate
                       if (detectedType.includes('medical') || result.medical_result || result.medical_date || result.medical_record_no) {
-                        if (result.medical_result && !allUpdates.adnoc_medical_status)  allUpdates.adnoc_medical_status = result.medical_result;
+                        const _normMed = raw => { if(!raw)return null; const r=raw.toLowerCase(); if(r.includes('unfit'))return 'Unfit'; if(r.includes('offshore')||r.includes('onshore')){if(r.includes('onshore only')||r.includes('onshore-only'))return 'Fit Onshore only'; return 'Fit to Offshore/Onshore';} if(r.includes('fit'))return 'Fit'; return raw; };
+                        if (result.medical_result && !allUpdates.adnoc_medical_status)  allUpdates.adnoc_medical_status = _normMed(result.medical_result);
                         if (result.medical_result && !allUpdates.medical_result)        allUpdates.medical_result       = result.medical_result;
                         const md = result.medical_date || result.issue_date;
                         if (md && !allUpdates.adnoc_medical_date)                       allUpdates.adnoc_medical_date   = md;
@@ -3080,11 +3108,18 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
               <select value={draft.adnoc_medical_status||''} onChange={e=>setDraft(d=>({...d,adnoc_medical_status:e.target.value}))} style={S.input}>
                 <option value="">—</option>
                 <option value="Fit">Fit</option>
+                <option value="Fit to Offshore/Onshore">Fit to Offshore/Onshore</option>
+                <option value="Fit Onshore only">Fit Onshore only</option>
                 <option value="Unfit">Unfit</option>
                 <option value="Pending">Pending</option>
               </select>
             </Field>
-            <Field label="ADNOC Medical Date"><input type="date" value={draft.adnoc_medical_date||''} onChange={e=>setDraft(d=>({...d,adnoc_medical_date:e.target.value}))} style={S.input}/></Field>
+            <Field label="Medical Cert Expiry">
+              <input type="date" value={draft.medical_expiry||''} onChange={e=>setDraft(d=>({...d,medical_expiry:e.target.value}))}
+                style={{...S.input,...(draft.medical_expiry?(()=>{const dd=Math.ceil((new Date(draft.medical_expiry)-new Date())/86400000);return dd<0?{borderColor:'#dc2626',background:'#fef2f2'}:dd<=60?{borderColor:'#f59e0b'}:{};})():{})}}/>
+              {draft.medical_expiry&&(()=>{const dd=Math.ceil((new Date(draft.medical_expiry)-new Date())/86400000);return dd<0?<div style={{fontSize:'10px',color:'#dc2626',fontWeight:700}}>EXPIRED {Math.abs(dd)}d ago</div>:dd<=30?<div style={{fontSize:'10px',color:'#dc2626',fontWeight:700}}>Exp in {dd}d - CRITICAL</div>:dd<=90?<div style={{fontSize:'10px',color:'#b45309',fontWeight:700}}>Exp in {dd}d</div>:null;})()}
+              {draft.adnoc_medical_date&&<div style={{fontSize:'10px',color:'#94a3b8',marginTop:'2px'}}>Exam: {fmtDate(draft.adnoc_medical_date)}</div>}
+            </Field>
           </Grid>
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>Contact</div>
           <Grid cols={3}>
@@ -3318,6 +3353,9 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'2px',paddingBottom:'2px'}}>
                   <div style={{display:'flex',gap:'3px',alignItems:'center'}}>
                     <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px'}} onClick={e=>{e.stopPropagation();personHistory(c);}}>History</button>
+                    <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px',background:docPanel?.entity?.id===c.id?'#dbeafe':'#fff',color:docPanel?.entity?.id===c.id?'#2563eb':'#0f172a'}}
+                      onClick={e=>{e.stopPropagation();setDraft(null);setDocPanel(docPanel?.entity?.id===c.id?null:{entity:c,entityType:'candidate'});}}
+                      title="View & upload documents">📎 Docs</button>
                     <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px'}} onClick={e=>{e.stopPropagation();setDraft({...c});setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0);}}>Edit</button>
                     <button style={{...S.btnSm,padding:'3px 7px',fontSize:'11px',background:'#7c3aed',color:'#fff',border:'none'}}
                       onClick={e=>{
