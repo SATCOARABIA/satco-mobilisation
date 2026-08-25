@@ -404,6 +404,8 @@ ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS wp_action_on_demob text;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS cicpa_returned boolean DEFAULT false;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS wp_expiry date;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS medical_expiry date;
+ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS adnoc_medical_status text;
+ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS adnoc_medical_date date;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS hse_passport_expiry date;
 ALTER TABLE mob_register ADD COLUMN IF NOT EXISTS h2s_expiry date;
 ALTER TABLE mob_candidates ADD COLUMN IF NOT EXISTS wp_no text;
@@ -804,7 +806,8 @@ Return ONLY a valid JSON object with these fields (include only what is visible)
   "wp_card_expiry": "YYYY-MM-DD Card Expiry Date shown on MOHRE work permit — this is the work permit expiry",
   "wp_issue_date": "YYYY-MM-DD Card Issuance Date on work permit",
   "wp_designation": "Designation/Job shown on work permit",
-  "cicpa_pass_no": "CICPA gate pass number or security pass number",
+  "cicpa_pass_no": "CICPA / National Guard security pass number — this is the NUMERIC ID on the back of the card (the Arabic الرقم field, e.g. 1219332908). CRITICAL: Do NOT put codes in SUB-XXX-YYYY format here — that is the employee number, not the pass number.",
+  "supplier_emp_no_from_cicpa": "If the CICPA card shows an employee code in SUB-XXX-YYYY format (e.g. SUB-007-1001), extract it here. This is the holder's company employee reference, NOT the CICPA pass number.",
   "site_location": "facility, project or site name shown on the gate pass (e.g. TAZIZ, ADNOC Ruwais, GASCO Habshan)",
   "pass_expiry": "YYYY-MM-DD expiry date of the gate pass or security pass",
   "nationality": "nationality or country",
@@ -2480,8 +2483,20 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
       if (aiData.issue_date)   updates.visa_expiry  = aiData.issue_date; // fallback
     }
     // CICPA gate pass / security pass — NEVER overwrite name or designation
-    else if (dt.includes('cicpa') || aiData.cicpa_pass_no) {
-      if (aiData.cicpa_pass_no)   updates.security_pass_no     = aiData.cicpa_pass_no;
+    else if (dt.includes('cicpa') || aiData.cicpa_pass_no || aiData.supplier_emp_no_from_cicpa) {
+      // Safety net: if AI still returns SUB-XXX-YYYY in cicpa_pass_no, redirect it
+      const rawPassNo = aiData.cicpa_pass_no || '';
+      const isEmpCode = /^SUB-\d{3}-\d+$/i.test(rawPassNo.trim());
+      if (rawPassNo && !isEmpCode) {
+        updates.security_pass_no = rawPassNo;
+      } else if (isEmpCode && !docPanel.entity.supplier_emp_no) {
+        // AI confused employee code for pass number — put it in the right field instead
+        updates.supplier_emp_no = rawPassNo.trim();
+      }
+      // Employee code extracted correctly from new field
+      if (aiData.supplier_emp_no_from_cicpa && !docPanel.entity.supplier_emp_no) {
+        updates.supplier_emp_no = aiData.supplier_emp_no_from_cicpa;
+      }
       if (aiData.pass_expiry)     updates.security_pass_expiry = aiData.pass_expiry;
       if (aiData.cicpa_expiry)    updates.security_pass_expiry = aiData.cicpa_expiry;
       if (aiData.training_expiry) updates.security_pass_expiry = aiData.training_expiry;
@@ -2749,9 +2764,17 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                         if (wpIss              && !allUpdates.wp_issue_date) allUpdates.wp_issue_date = wpIss;
                       }
                       // CICPA gate pass / security pass — never touch name or designation
-                      if (detectedType.includes('cicpa') || result.cicpa_pass_no) {
-                        if (result.cicpa_pass_no && !allUpdates.security_pass_no)
-                          allUpdates.security_pass_no = result.cicpa_pass_no;
+                      if (detectedType.includes('cicpa') || result.cicpa_pass_no || result.supplier_emp_no_from_cicpa) {
+                        // Safety net: if AI still returns SUB-XXX-YYYY in cicpa_pass_no, redirect it
+                        const rawPassNo = result.cicpa_pass_no || '';
+                        const isEmpCode = /^SUB-\d{3}-\d+$/i.test(rawPassNo.trim());
+                        if (rawPassNo && !isEmpCode && !allUpdates.security_pass_no)
+                          allUpdates.security_pass_no = rawPassNo;
+                        else if (isEmpCode && !allUpdates.supplier_emp_no && !(draft.supplier_emp_no))
+                          allUpdates.supplier_emp_no = rawPassNo.trim();
+                        // Employee code extracted correctly from new field
+                        if (result.supplier_emp_no_from_cicpa && !allUpdates.supplier_emp_no && !draft.supplier_emp_no)
+                          allUpdates.supplier_emp_no = result.supplier_emp_no_from_cicpa;
                         const exp = result.pass_expiry || result.cicpa_expiry || result.training_expiry;
                         if (exp && !allUpdates.security_pass_expiry) allUpdates.security_pass_expiry = exp;
                         if (result.site_location && !allUpdates.cicpa_location) allUpdates.cicpa_location = result.site_location;
@@ -3808,7 +3831,14 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
       emirates_id:c.emirates_id, eid_expiry:c.eid_expiry||d.eid_expiry,
       visa_no:c.visa_no, visa_type:c.visa_type||d.visa_type,
       visa_location:c.visa_location, visa_expiry:c.visa_expiry||d.visa_expiry,
-      phone:c.phone||d.phone}));
+      phone:c.phone||d.phone,
+      // Pre-fill CICPA from candidate record
+      cicpa_pass_no: c.security_pass_no||d.cicpa_pass_no||'',
+      cicpa_expiry_date: c.security_pass_expiry||d.cicpa_expiry_date||'',
+      // Pre-fill ADNOC Medical from candidate record
+      adnoc_medical_status: c.adnoc_medical_status||d.adnoc_medical_status||'',
+      adnoc_medical_date:   c.adnoc_medical_date||d.adnoc_medical_date||'',
+    }));
   };
 
   const applyLocTrainings = loc => {
@@ -3832,7 +3862,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
     return locMatch;
   }) : [];
 
-  const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',emirates_id:'',visa_no:'',visa_location:'',customer_name:'',location:'',loa_id:'',medical_done:false,medical_result:'',hse_passport_done:false,h2s_done:false,extra_trainings:[],status:'pending',notes:''}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
+  const blank = () => { setDraft({full_name:'',designation:'',source:'supplier',supplier_name:'',supplier_emp_no:'',nationality:'',date_of_birth:'',passport_no:'',emirates_id:'',visa_no:'',visa_location:'',customer_name:'',location:'',loa_id:'',medical_done:false,medical_result:'',hse_passport_done:false,h2s_done:false,extra_trainings:[],status:'pending',notes:'',adnoc_medical_status:'',adnoc_medical_date:'',cicpa_pass_no:'',cicpa_expiry_date:'',cicpa_applied_date:'',cicpa_approved_date:''}); setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),0); };
 
   const handleRowClick = (r, e) => {
     if (e.target.closest('button')) return;
@@ -3875,15 +3905,20 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
       if (aiData.issue_date)  updates.wp_approved_date = aiData.issue_date;
     }
     // CICPA / Security Gate Pass
-    if (dt.includes('cicpa') || aiData.cicpa_pass_no) {
-      if (aiData.cicpa_pass_no)   updates.cicpa_pass_no       = aiData.cicpa_pass_no;
+    if (dt.includes('cicpa') || aiData.cicpa_pass_no || aiData.supplier_emp_no_from_cicpa) {
+      // Safety net: reject SUB-XXX-YYYY from cicpa_pass_no — that is an employee number
+      const rawPN = aiData.cicpa_pass_no || '';
+      const isEmpCode = /^SUB-\d{3}-\d+$/i.test(rawPN.trim());
+      if (rawPN && !isEmpCode)    updates.cicpa_pass_no       = rawPN;
       if (aiData.issue_date)      updates.cicpa_approved_date = aiData.issue_date;
       if (aiData.cicpa_expiry)    updates.cicpa_expiry_date   = aiData.cicpa_expiry;
       if (aiData.training_expiry) updates.cicpa_expiry_date   = aiData.training_expiry;
       if (aiData.pass_expiry)     updates.cicpa_expiry_date   = aiData.pass_expiry;
       // If scanning in Candidates context, also fill security_pass and cicpa_location
       if (docPanel.entityType === 'candidate') {
-        if (aiData.cicpa_pass_no) updates.security_pass_no     = aiData.cicpa_pass_no;
+        if (rawPN && !isEmpCode)  updates.security_pass_no     = rawPN;
+        if (isEmpCode && !docPanel.entity.supplier_emp_no) updates.supplier_emp_no = rawPN.trim();
+        if (aiData.supplier_emp_no_from_cicpa && !docPanel.entity.supplier_emp_no) updates.supplier_emp_no = aiData.supplier_emp_no_from_cicpa;
         if (aiData.pass_expiry)   updates.security_pass_expiry = aiData.pass_expiry;
         if (aiData.cicpa_expiry)  updates.security_pass_expiry = aiData.cicpa_expiry;
         if (aiData.site_location) updates.cicpa_location       = aiData.site_location;
@@ -3994,6 +4029,8 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
         'WP Applied Date':       fD(r.wp_applied_date),
         'WP Approved Date':      fD(r.wp_approved_date),
         'WP Expiry':             fD(r.wp_expiry),
+        'ADNOC Medical Status':  r.adnoc_medical_status || '',
+        'ADNOC Medical Date':    fD(r.adnoc_medical_date),
         'Medical Done':          r.medical_done ? 'Yes' : 'No',
         'Medical Date':          fD(r.medical_date),
         'Medical Result':        r.medical_result || '',
@@ -4019,12 +4056,24 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
     });
     const ws = XLSX.utils.json_to_sheet(data);
     ws['!cols'] = [
-      {wch:5},{wch:28},{wch:14},{wch:32},{wch:18},{wch:10},{wch:12},{wch:12},
-      {wch:12},{wch:14},{wch:20},{wch:12},{wch:14},{wch:12},{wch:14},{wch:12},
-      {wch:20},{wch:20},{wch:12},{wch:14},{wch:14},{wch:16},{wch:20},{wch:18},
-      {wch:14},{wch:14},{wch:14},{wch:12},{wch:10},{wch:12},{wch:12},{wch:12},
-      {wch:10},{wch:12},{wch:12},{wch:10},{wch:12},{wch:12},{wch:14},{wch:16},
-      {wch:16},{wch:14},{wch:10},{wch:28},{wch:28},{wch:16},{wch:16},{wch:14},{wch:30},
+      // S.No, Name, EmpNo, Supplier, Designation, Source, Nationality, DOB
+      {wch:5},{wch:28},{wch:14},{wch:32},{wch:20},{wch:10},{wch:12},{wch:12},
+      // Passport No, PP Expiry, Emirates ID, EID Expiry, Visa No, Visa Type, Visa Emirate, Visa Expiry
+      {wch:13},{wch:14},{wch:20},{wch:12},{wch:16},{wch:12},{wch:16},{wch:12},
+      // Customer, Location, Status, Mob Date, Demob Date, Demob Reason, Demob Remarks, WP Action on Demob
+      {wch:22},{wch:22},{wch:12},{wch:14},{wch:12},{wch:18},{wch:22},{wch:20},
+      // WP No, WP Applied, WP Approved, WP Expiry
+      {wch:16},{wch:14},{wch:14},{wch:12},
+      // ADNOC Medical Status, ADNOC Medical Date
+      {wch:20},{wch:16},
+      // Medical Done, Medical Date, Medical Result, Medical Expiry
+      {wch:12},{wch:12},{wch:14},{wch:14},
+      // HSE Passport, HSE Date, HSE Expiry, H2S Done, H2S Date, H2S Expiry
+      {wch:12},{wch:12},{wch:12},{wch:10},{wch:12},{wch:12},
+      // CICPA Pass No, CICPA Applied, CICPA Approved, CICPA Expiry, CICPA Returned
+      {wch:18},{wch:16},{wch:18},{wch:14},{wch:14},
+      // Extra Trainings Done, Extra Trainings All, Client Submitted, Camp Notified, Phone, Notes
+      {wch:28},{wch:28},{wch:16},{wch:16},{wch:14},{wch:30},
     ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Mobilisation');
@@ -4307,12 +4356,64 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
               </div>
             ))}
           </>}
+          <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>ADNOC Medical</div>
+          <Grid cols={3}>
+            <Field label="ADNOC Medical Status">
+              <select value={draft.adnoc_medical_status||''} onChange={e=>setDraft(d=>({...d,adnoc_medical_status:e.target.value}))}
+                style={{...S.input,
+                  borderColor:draft.adnoc_medical_status==='Fit'?'#166534':draft.adnoc_medical_status==='Unfit'?'#dc2626':undefined,
+                  fontWeight:draft.adnoc_medical_status?700:400,
+                  color:draft.adnoc_medical_status==='Fit'?'#166534':draft.adnoc_medical_status==='Unfit'?'#dc2626':'inherit'}}>
+                <option value="">— Not recorded —</option>
+                <option value="Fit">✓ Fit</option>
+                <option value="Unfit">✗ Unfit</option>
+                <option value="Pending">⏳ Pending</option>
+              </select>
+            </Field>
+            <Field label="ADNOC Medical Date"><input type="date" value={draft.adnoc_medical_date||''} onChange={e=>setDraft(d=>({...d,adnoc_medical_date:e.target.value}))} style={S.input}/></Field>
+            {draft.adnoc_medical_status==='Fit' && (
+              <div style={{display:'flex',alignItems:'center',paddingTop:'18px'}}>
+                <span style={{background:'#dcfce7',color:'#166534',fontWeight:800,fontSize:'13px',padding:'6px 16px',borderRadius:'8px',border:'1px solid #86efac'}}>🏥 ADNOC Medical: FIT</span>
+              </div>
+            )}
+            {draft.adnoc_medical_status==='Unfit' && (
+              <div style={{display:'flex',alignItems:'center',paddingTop:'18px'}}>
+                <span style={{background:'#fee2e2',color:'#dc2626',fontWeight:800,fontSize:'13px',padding:'6px 16px',borderRadius:'8px',border:'1px solid #fca5a5'}}>⚠ ADNOC Medical: UNFIT</span>
+              </div>
+            )}
+          </Grid>
           <div style={{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',margin:'8px 0'}}>CICPA Gate Pass</div>
+          {/* CICPA status banner — shown when pass no exists */}
+          {draft.cicpa_pass_no && (()=>{
+            const exp = draft.cicpa_expiry_date;
+            const days = exp ? Math.ceil((new Date(exp) - new Date()) / 86400000) : null;
+            const expired = days !== null && days < 0;
+            const expiring = days !== null && days >= 0 && days <= 60;
+            return (
+              <div style={{background:expired?'#fee2e2':expiring?'#fef3c7':'#dcfce7',border:`1px solid ${expired?'#fca5a5':expiring?'#fde68a':'#86efac'}`,borderRadius:'8px',padding:'10px 14px',marginBottom:'10px',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}}>
+                <span style={{fontWeight:800,fontSize:'13px',color:expired?'#dc2626':expiring?'#92400e':'#166534'}}>
+                  🔒 CICPA Pass: {draft.cicpa_pass_no}
+                </span>
+                {exp && <span style={{fontSize:'12px',fontWeight:700,color:expired?'#dc2626':expiring?'#b45309':'#166534'}}>
+                  {expired ? `⚠ EXPIRED ${Math.abs(days)}d ago` : expiring ? `⚠ Expires in ${days}d` : `✓ Valid · Expires ${fmtDate(exp)}`}
+                </span>}
+              </div>
+            );
+          })()}
           <Grid cols={4}>
             <Field label="Applied Date"><input type="date" value={draft.cicpa_applied_date||''} onChange={e=>setDraft(d=>({...d,cicpa_applied_date:e.target.value}))} style={S.input}/></Field>
             <Field label="Approved Date"><input type="date" value={draft.cicpa_approved_date||''} onChange={e=>setDraft(d=>({...d,cicpa_approved_date:e.target.value}))} style={S.input}/></Field>
-            <Field label="Pass No"><input value={draft.cicpa_pass_no||''} onChange={e=>setDraft(d=>({...d,cicpa_pass_no:e.target.value}))} style={S.input}/></Field>
-            <Field label="CICPA Expiry"><input type="date" value={draft.cicpa_expiry_date||''} onChange={e=>setDraft(d=>({...d,cicpa_expiry_date:e.target.value}))} style={S.input}/></Field>
+            <Field label="CICPA Number (Pass No)">
+              <input value={draft.cicpa_pass_no||''} onChange={e=>setDraft(d=>({...d,cicpa_pass_no:e.target.value}))}
+                placeholder="e.g. 1219332908"
+                style={{...S.input, borderColor:draft.cicpa_pass_no?'#166534':undefined, fontWeight:draft.cicpa_pass_no?700:400}} />
+              {draft.cicpa_pass_no && <div style={{fontSize:'10px',color:'#166534',fontWeight:700,marginTop:'2px'}}>✓ Pass issued</div>}
+            </Field>
+            <Field label="CICPA Expiry Date">
+              <input type="date" value={draft.cicpa_expiry_date||''} onChange={e=>setDraft(d=>({...d,cicpa_expiry_date:e.target.value}))}
+                style={{...S.input, ...(draft.cicpa_expiry_date?(()=>{const d=Math.ceil((new Date(draft.cicpa_expiry_date)-new Date())/86400000);return d<0?{borderColor:'#dc2626',background:'#fef2f2'}:d<=60?{borderColor:'#f59e0b'}:{};})():{})}} />
+              {draft.cicpa_expiry_date && (()=>{const d=Math.ceil((new Date(draft.cicpa_expiry_date)-new Date())/86400000);return d<0?<div style={{fontSize:'10px',color:'#dc2626',fontWeight:700,marginTop:'2px'}}>🔴 EXPIRED {Math.abs(d)}d ago</div>:d<=30?<div style={{fontSize:'10px',color:'#dc2626',fontWeight:700,marginTop:'2px'}}>⚠ Expires in {d}d — CRITICAL</div>:d<=60?<div style={{fontSize:'10px',color:'#b45309',fontWeight:700,marginTop:'2px'}}>⚠ Expires in {d}d</div>:null;})()}
+            </Field>
           </Grid>
           <Grid cols={3}>
             <Field label="Status">
@@ -4459,6 +4560,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
             <col style={{width:'80px'}}/>{/* HSE */}
             <col style={{width:'80px'}}/>{/* H2S */}
             <col style={{width:'60px'}}/>{/* Extra */}
+            <col style={{width:'110px'}}/>{/* ADNOC Med */}
             <col style={{width:'110px'}}/>{/* CICPA */}
             <col style={{width:'95px'}}/>{/* Mob Date */}
             <col style={{width:'95px'}}/>{/* Demob Date */}
@@ -4475,10 +4577,10 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
               />
             </th>
             <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,background:'#f8fafc',borderRight:'2px solid #e2e8f0'}}>Name</th>
-            {['Designation','Supplier / EmpNo','Customer','Location','Work Permit','Medical','HSE','H2S','Extra','CICPA','Mob Date','Demob Date','Status','Readiness','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
+            {['Designation','Supplier / EmpNo','Customer','Location','Work Permit','Medical','ADNOC Med','HSE','H2S','Extra','CICPA','Mob Date','Demob Date','Status','Readiness','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12}}>{h}</th>)}
           </tr></thead>
           <tbody>
-            {filtered.length===0&&<tr><td colSpan={16} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No records. Use filters or click <strong>+ Add Person</strong>.</td></tr>}
+            {filtered.length===0&&<tr><td colSpan={17} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No records. Use filters or click <strong>+ Add Person</strong>.</td></tr>}
             {filtered.map((r,idx)=>{
               const ex=(r.extra_trainings||[]), exDone=ex.filter(t=>t.done).length;
               const cicpaExpiring = r.cicpa_expiry_date&&daysUntil(r.cicpa_expiry_date)<=30&&daysUntil(r.cicpa_expiry_date)>=0;
@@ -4517,6 +4619,15 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
                     : <span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
                 </td>
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
+                  {r.adnoc_medical_status==='Fit'
+                    ? <span style={{background:'#dcfce7',color:'#166534',fontWeight:700,fontSize:'10px',padding:'2px 6px',borderRadius:4}}>✓ Fit</span>
+                    : r.adnoc_medical_status==='Unfit'
+                    ? <span style={{background:'#fee2e2',color:'#dc2626',fontWeight:700,fontSize:'10px',padding:'2px 6px',borderRadius:4}}>✗ Unfit</span>
+                    : r.adnoc_medical_status==='Pending'
+                    ? <span style={{background:'#fef3c7',color:'#92400e',fontWeight:700,fontSize:'10px',padding:'2px 6px',borderRadius:4}}>⏳ Pending</span>
+                    : <span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
+                </td>
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
                   {r.hse_passport_done?<span style={{color:'#166534',fontWeight:700,fontSize:'11px'}}>✓ HSE</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>— HSE</span>}
                 </td>
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
@@ -4526,10 +4637,23 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
                   {ex.length>0?<span style={{fontSize:'11px',fontWeight:700,color:exDone===ex.length?'#166534':'#b45309'}}>{exDone}/{ex.length}</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
                 </td>
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
-                  {r.cicpa_pass_no
-                    ?<span style={{color:cicpaExpiring?'#b45309':'#166534',fontWeight:700,fontSize:'11px'}}>✓ {r.cicpa_pass_no}{cicpaExpiring&&` (${daysUntil(r.cicpa_expiry_date)}d)`}</span>
-                    :r.cicpa_applied_date?<span style={{color:'#b45309',fontSize:'11px'}}>Applied</span>
-                    :<span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
+                  {r.cicpa_pass_no ? (()=>{
+                    const days = r.cicpa_expiry_date ? daysUntil(r.cicpa_expiry_date) : null;
+                    const expired  = days !== null && days < 0;
+                    const expiring = days !== null && days >= 0 && days <= 60;
+                    return (
+                      <div>
+                        <span style={{fontWeight:700,fontSize:'11px',color:expired?'#dc2626':expiring?'#b45309':'#166534'}}>
+                          {expired?'🔴':expiring?'⚠':'✓'} {r.cicpa_pass_no}
+                        </span>
+                        {r.cicpa_expiry_date&&<div style={{fontSize:'10px',color:expired?'#dc2626':expiring?'#b45309':'#64748b',marginTop:'1px'}}>
+                          Exp: {fmtDate(r.cicpa_expiry_date)}{days!==null&&` (${days<0?Math.abs(days)+'d ago':days+'d'})`}
+                        </div>}
+                      </div>
+                    );
+                  })()
+                  : r.cicpa_applied_date ? <span style={{color:'#b45309',fontSize:'11px'}}>⏳ Applied</span>
+                  : <span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
                 </td>
                 <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px'}}>{fmtDate(r.mobilisation_date)}</td>
                 <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px'}}>
@@ -5571,6 +5695,54 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
               <span style={{fontSize:'11px',color:'#94a3b8'}}>
                 Alert emails come from: <strong>alerts@satcoarabiaengg.com</strong> via Resend
               </span>
+            </div>
+
+            {/* ── Backfill utility ── */}
+            <div style={{marginTop:'20px',background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:'8px',padding:'14px 16px'}}>
+              <div style={{fontWeight:800,fontSize:'13px',color:'#166534',marginBottom:'6px'}}>🔄 Backfill CICPA &amp; ADNOC Medical into Mobilisation Records</div>
+              <div style={{fontSize:'12px',color:'#166534',marginBottom:'10px'}}>
+                Copies <strong>CICPA Pass No, CICPA Expiry, ADNOC Medical Status, ADNOC Medical Date</strong> from each candidate's profile into their existing mobilisation records — only fills empty fields, never overwrites.
+              </div>
+              <div style={{display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap'}}>
+                <button style={{...S.btnGrn,fontSize:'12px',padding:'7px 16px'}} onClick={async()=>{
+                  const logEl = document.getElementById('backfill-log');
+                  logEl.style.display='block';
+                  logEl.textContent = 'Fetching records…
+';
+                  const append = (msg) => { logEl.textContent += msg + '
+'; logEl.scrollTop=logEl.scrollHeight; };
+                  try {
+                    const {data:mob,error:e1} = await db.from('mob_register')
+                      .select('id,full_name,candidate_id,cicpa_pass_no,cicpa_expiry_date,adnoc_medical_status,adnoc_medical_date');
+                    if(e1) throw e1;
+                    const {data:cands,error:e2} = await db.from('mob_candidates')
+                      .select('id,full_name,security_pass_no,security_pass_expiry,adnoc_medical_status,adnoc_medical_date');
+                    if(e2) throw e2;
+                    append(`mob_register: ${mob.length} records  |  mob_candidates: ${cands.length} records`);
+                    const byId={}, byName={};
+                    for(const c of cands){ byId[c.id]=c; const k=(c.full_name||'').toLowerCase().trim(); if(k)byName[k]=c; }
+                    let updated=0, skipped=0;
+                    for(const r of mob){
+                      let cand = r.candidate_id ? byId[r.candidate_id] : null;
+                      if(!cand) cand = byName[(r.full_name||'').toLowerCase().trim()]||null;
+                      if(!cand){skipped++;continue;}
+                      const u={};
+                      if(!r.cicpa_pass_no && cand.security_pass_no) u.cicpa_pass_no=cand.security_pass_no;
+                      if(!r.cicpa_expiry_date && cand.security_pass_expiry) u.cicpa_expiry_date=cand.security_pass_expiry;
+                      if(!r.adnoc_medical_status && cand.adnoc_medical_status) u.adnoc_medical_status=cand.adnoc_medical_status;
+                      if(!r.adnoc_medical_date && cand.adnoc_medical_date) u.adnoc_medical_date=cand.adnoc_medical_date;
+                      if(!Object.keys(u).length) continue;
+                      const {error} = await db.from('mob_register').update({...u,updated_at:new Date().toISOString()}).eq('id',r.id);
+                      if(error){ append(`❌ ${r.full_name}: ${error.message}`); }
+                      else { updated++; append(`✓ ${r.full_name}: ${Object.keys(u).join(', ')}`); }
+                    }
+                    append(`
+✅ Done — ${updated} updated, ${skipped} no match found.`);
+                  } catch(err){ append('❌ Error: '+(err.message||JSON.stringify(err))); }
+                }}>▶ Run Backfill Now</button>
+                <span style={{fontSize:'11px',color:'#166534'}}>Safe to run multiple times</span>
+              </div>
+              <pre id="backfill-log" style={{display:'none',marginTop:'10px',background:'#0f172a',color:'#e2e8f0',borderRadius:'6px',padding:'10px 12px',fontSize:'11px',fontFamily:'monospace',maxHeight:'220px',overflowY:'auto',whiteSpace:'pre-wrap'}}></pre>
             </div>
           </div>
         )}
