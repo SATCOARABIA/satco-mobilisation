@@ -3169,7 +3169,9 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
             <col style={{width:'90px'}}/>{/* Visa Emirate */}
             <col style={{width:'110px'}}/>{/* Sec Pass No */}
             <col style={{width:'90px'}}/>{/* Sec Pass Exp */}
-            <col style={{width:'90px'}}/>{/* ADNOC Med */}
+            <col style={{width:'120px'}}/>{/* Med Status */}
+            <col style={{width:'115px'}}/>{/* Med Report No */}
+            <col style={{width:'100px'}}/>{/* Med Expiry */}
             <col style={{width:'120px'}}/>{/* CICPA Location */}
             <col style={{width:'100px'}}/>{/* WP */}
             <col style={{width:'70px'}}/>{/* HSE */}
@@ -3185,10 +3187,10 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
             <th style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>Supplier</th>
             <th style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>Status</th>
             <th style={{position:'sticky',top:0,zIndex:12,background:'#f8fafc',borderBottom:'2px solid #e2e8f0'}}></th>{/* gap */}
-            {['Current Site','Designation','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa Emirate','Sec Pass','Sec Exp','ADNOC Med','CICPA Location','Work Permit','HSE','H2S','CICPA','Ready?','Phone','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px'}}>{h}</th>)}
+            {['Current Site','Designation','Nationality','DOB','Passport','Emirates ID','EID Expiry','Visa Emirate','Sec Pass','Sec Exp','Med Status','Med Report No','Med Expiry','CICPA Location','Work Permit','HSE','H2S','CICPA','Ready?','Phone','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,fontSize:'10px',whiteSpace:'nowrap'}}>{h}</th>)}
           </tr></thead>
           <tbody>
-            {filtered.length===0&&<tr><td colSpan={24} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
+            {filtered.length===0&&<tr><td colSpan={26} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No candidates. Click <strong>+ Add Person</strong>.</td></tr>}
             {filtered.map((c,idx)=>{
               const isOnSite = isOnSiteFn(c);
               const currentSite = hrMobLocs[c.supplier_emp_no] || '';
@@ -3265,31 +3267,37 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                 <Cell col={c.security_pass_no?secCol:{bg:'#f1f5f9',color:'#94a3b8',icon:'—'}} text={c.security_pass_no||'—'} title="Security Pass No"/>
                 {/* Security Pass Expiry */}
                 <Cell col={c.security_pass_expiry?secCol:{bg:'#f1f5f9',color:'#94a3b8',icon:'—'}} text={c.security_pass_expiry?fmtDate(c.security_pass_expiry):'—'} title="Security Pass Expiry"/>
-                {/* ADNOC Medical — record no, expiry, fitness verdict */}
-                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
-                  {c.adnoc_medical_status ? (()=>{
-                    const exp = c.medical_expiry;
-                    const days = exp ? Math.ceil((new Date(exp)-new Date())/86400000) : null;
-                    const expired  = days!==null && days<0;
-                    const expiring = days!==null && days>=0 && days<=90;
-                    const isUnfit  = (c.adnoc_medical_status||'').toLowerCase().includes('unfit');
-                    const bg = isUnfit?'#fee2e2':expired?'#fef2f2':expiring?'#fef3c7':'#dcfce7';
-                    const col= isUnfit?'#991b1b':expired?'#dc2626':expiring?'#92400e':'#166534';
-                    return (
-                      <div style={{background:bg,borderRadius:5,padding:'3px 7px',minWidth:'90px'}}>
-                        <div style={{fontWeight:800,fontSize:'11px',color:col}}>
-                          {isUnfit?'Unfit':expired?'EXPIRED':c.adnoc_medical_status}
-                        </div>
-                        {c.medical_record_no&&<div style={{fontSize:'10px',color:'#475569',marginTop:'1px'}}>#{c.medical_record_no}</div>}
-                        {exp&&<div style={{fontSize:'10px',color:expired?'#dc2626':expiring?'#b45309':'#475569',fontWeight:expired||expiring?700:400}}>
-                          Exp: {fmtDate(exp)}{days!==null?` (${days<0?Math.abs(days)+'d ago':days+'d'})`:'' }
-                        </div>}
-                        {!exp&&c.adnoc_medical_date&&<div style={{fontSize:'10px',color:'#94a3b8'}}>Exam: {fmtDate(c.adnoc_medical_date)}</div>}
-                      </div>
-                    );
-                  })()
-                  : <span style={{color:'#94a3b8',fontSize:'11px'}}>Not done</span>}
-                </td>
+                {/* ADNOC Medical — split into 3 columns: Status | Report No | Expiry */}
+                {(()=>{
+                  const exp = c.medical_expiry;
+                  const days = exp ? Math.ceil((new Date(exp)-new Date())/86400000) : null;
+                  const expired  = days!==null && days<0;
+                  const expiring = days!==null && days>=0 && days<=90;
+                  const isUnfit  = (c.adnoc_medical_status||'').toLowerCase().includes('unfit');
+                  const statusBg = !c.adnoc_medical_status?'transparent':isUnfit?'#fee2e2':'#dcfce7';
+                  const statusCol= !c.adnoc_medical_status?'#94a3b8':isUnfit?'#991b1b':'#166534';
+                  const expBg = !exp?'transparent':expired?'#fee2e2':expiring?'#fef3c7':'#dcfce7';
+                  const expCol= !exp?'#94a3b8':expired?'#dc2626':expiring?'#92400e':'#166534';
+                  return <>
+                    <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
+                      {c.adnoc_medical_status
+                        ? <span style={{background:statusBg,color:statusCol,fontWeight:700,fontSize:'11px',padding:'2px 7px',borderRadius:4,display:'inline-block',whiteSpace:'nowrap'}}>
+                            {isUnfit?'Unfit':c.adnoc_medical_status}
+                          </span>
+                        : <span style={{color:'#94a3b8',fontSize:'11px'}}>—</span>}
+                    </td>
+                    <td style={{...S.td,whiteSpace:'nowrap',fontFamily:'monospace',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px',color:c.medical_record_no?'#475569':'#cbd5e1'}}>
+                      {c.medical_record_no||'—'}
+                    </td>
+                    <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
+                      {exp
+                        ? <span style={{background:expBg,color:expCol,fontWeight:expired||expiring?700:600,fontSize:'11px',padding:'2px 7px',borderRadius:4,display:'inline-block',whiteSpace:'nowrap'}}>
+                            {expired?'EXP ':''}{fmtDate(exp)}
+                          </span>
+                        : <span style={{color:'#94a3b8',fontSize:'11px'}}>—</span>}
+                    </td>
+                  </>;
+                })()}
                 {/* CICPA Location — which O&G field CICPA this candidate holds */}
                 <td style={{...S.td,fontSize:'11px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
                   {c.cicpa_status==='confiscated'
