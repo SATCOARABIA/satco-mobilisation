@@ -2603,7 +2603,7 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
     // Retry without new columns if they don't exist yet in DB
     if (error && error.message && (error.message.includes('does not exist') || error.message.includes('column'))) {
       const safePayload = {...savePayload};
-      ['medical_record_no','medical_comments','medical_expiry','medical_fitness_type'].forEach(c=>delete safePayload[c]);
+      ['medical_record_no','medical_comments','medical_expiry','medical_fitness_type','medical_date','medical_result','medical_done'].forEach(c=>delete safePayload[c]);
       const r2 = await db.from('mob_candidates').update(safePayload).eq('id', docPanel.entity.id);
       if (r2.error) { alert('Save error: ' + r2.error.message); return; }
       // Still update local state with all fields including new ones
@@ -2872,7 +2872,7 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                         if (result.medical_result && !allUpdates.medical_result)        allUpdates.medical_result       = result.medical_result;
                         const md = result.medical_date || result.issue_date;
                         if (md && !allUpdates.adnoc_medical_date)                       allUpdates.adnoc_medical_date   = md;
-                        if (md && !allUpdates.medical_date)                             allUpdates.medical_date         = md;
+                        // NOTE: medical_date column exists in mob_register only, not mob_candidates — don't write to allUpdates
                         if (result.medical_expiry && !allUpdates.medical_expiry)        allUpdates.medical_expiry       = result.medical_expiry;
                         if (result.medical_record_no && !allUpdates.medical_record_no)  allUpdates.medical_record_no    = result.medical_record_no;
                         if (result.medical_fitness_comments && !allUpdates.medical_comments) allUpdates.medical_comments = result.medical_fitness_comments;
@@ -6240,6 +6240,10 @@ function App() {
     if(hasUpdatedAt) clean.updated_at=new Date().toISOString();
     // Strip internal UI state fields (anything starting with _)
     Object.keys(clean).forEach(k=>{ if(k.startsWith('_')) delete clean[k]; });
+    // Strip fields that exist in mob_register but NOT in mob_candidates
+    if (table === 'mob_candidates') {
+      ['medical_date','medical_result','medical_done'].forEach(k=>delete clean[k]);
+    }
     // Convert empty strings to null
     Object.keys(clean).forEach(k=>{ if(clean[k]==='') clean[k]=null; });
     let {error}=draft.id
@@ -6250,7 +6254,7 @@ function App() {
       const colMatch = error.message.match(/column "?([\w]+)"? of/i) || error.message.match(/"([\w]+)" does not exist/i);
       if(colMatch){
         const badCols = ['medical_record_no','medical_comments','medical_expiry','medical_fitness_type',
-                         'adnoc_medical_status','adnoc_medical_date'];
+                         'adnoc_medical_status','adnoc_medical_date','medical_date','medical_result','medical_done'];
         const retry={...clean};
         badCols.forEach(c=>delete retry[c]);
         const r2=draft.id
