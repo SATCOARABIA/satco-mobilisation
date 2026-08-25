@@ -1773,7 +1773,17 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
 
   // Keep a window cache of mobList for bulk insert duplicate check
   useEffect(()=>{ window._mobListCache = mobList; },[mobList]);
-  const planCandSiteMap = useMemo(()=>{ const m={}; mobList.filter(r=>r.status==='mobilised'&&r.candidate_id).forEach(r=>{ m[r.candidate_id]=r.location||'On Site'; }); return m; },[mobList]);
+  // Maps candidate_id -> full mob record for already-mobilised candidates
+  const planCandMobMap = useMemo(()=>{
+    const m={};
+    mobList.filter(r=>(r.status==='mobilised'||r.status==='pending')&&r.candidate_id).forEach(r=>{
+      // Keep the most recent record per candidate
+      if(!m[r.candidate_id]||new Date(r.mobilisation_date||0)>=new Date((m[r.candidate_id].mobilisation_date)||0))
+        m[r.candidate_id]=r;
+    });
+    return m;
+  },[mobList]);
+  const planCandSiteMap = useMemo(()=>{ const m={}; Object.entries(planCandMobMap).forEach(([cid,r])=>{ m[cid]=r.location||'On Site'; }); return m; },[planCandMobMap]);
 
   // Toggle select
   const toggleSelect = (id) => setSelected(s=>{ const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
@@ -1962,7 +1972,7 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
             {c.designation||'—'} · {c.supplier_emp_no||'—'}
             {conflicted&&<span style={{color:'#b45309',fontWeight:700}}> · ⚠ {assigned.planName}</span>}
             {isAssigned&&<span style={{color:'#166534',fontWeight:700}}> · ✓ This plan</span>}
-            {planCandSiteMap[c.id]&&<span style={{color:'#166534',fontWeight:700}}> · 🏗 {(planCandSiteMap[c.id]||'').split(/[-–]/)[0].trim().substring(0,15)}</span>}
+            {planCandMobMap[c.id]&&<span style={{color:'#166534',fontWeight:700}}> · ✅ {planCandMobMap[c.id].status==='mobilised'?'Mobilised':'Pending'} → {(planCandMobMap[c.id].location||'Site').split(/[-–]/)[0].trim().substring(0,20)}{planCandMobMap[c.id].mobilisation_date?' · '+fmtDate(planCandMobMap[c.id].mobilisation_date):''}</span>}
           </div>
         </div>
         {/* Check badges — scrollable row, no wrap */}
@@ -2294,7 +2304,13 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
               return (
                 <div>
                   <div style={{background:'#f0f4ff',borderBottom:'2px solid #6366f1',padding:'8px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                    <span style={{fontWeight:800,fontSize:'13px',color:'#3730a3'}}>📋 {assignedList.length} Assigned to "{plan.name}"</span>
+                    {(()=>{
+                      const alreadyMobCount = assignedList.filter(c=>planCandMobMap[c.id]).length;
+                      return <span style={{fontWeight:800,fontSize:'13px',color:'#3730a3'}}>
+                        📋 {assignedList.length} Assigned to "{plan.name}"
+                        {alreadyMobCount>0&&<span style={{marginLeft:'10px',background:'#dcfce7',color:'#166534',fontSize:'11px',padding:'2px 8px',borderRadius:4}}>✅ {alreadyMobCount} already mobilised</span>}
+                      </span>;
+                    })()}
                     <div style={{display:'flex',gap:'6px'}}>
                       <button style={{...S.btnSm,fontSize:'11px'}} onClick={()=>setSelected(new Set(assignedList.map(c=>c.id)))}>Select all assigned</button>
                       <button style={{...S.btnSm,background:'#7c3aed',color:'#fff',border:'none',fontWeight:700,fontSize:'11px',padding:'4px 10px'}}
@@ -2313,15 +2329,48 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
             {/* ── GREEN — Ready ── */}
             {(()=>{
               const q = candSearch.toLowerCase();
-              const list = sorted.green.filter(c=>!q||((c.full_name+c.designation+c.supplier_emp_no+(c.nationality||'')).toLowerCase().includes(q)));
+              // Exclude already-mobilised/pending candidates from this list
+              const alreadyMobIds = new Set(Object.keys(planCandMobMap));
+              const listAll = sorted.green.filter(c=>!q||((c.full_name+c.designation+c.supplier_emp_no+(c.nationality||'')).toLowerCase().includes(q)));
+              const listMobbed = listAll.filter(c=>alreadyMobIds.has(String(c.id)));
+              const list = listAll.filter(c=>!alreadyMobIds.has(String(c.id)));
               return (
                 <div>
+                  {/* Already mobilised — show at top of green section */}
+                  {listMobbed.length>0&&(
+                    <div>
+                      <div style={{background:'#dcfce7',borderBottom:'2px solid #4ade80',padding:'6px 14px'}}>
+                        <span style={{fontWeight:800,fontSize:'12px',color:'#166534'}}>✅ {listMobbed.length} Already Mobilised</span>
+                      </div>
+                      <div style={{padding:'6px 8px',display:'flex',flexDirection:'column',gap:'4px',background:'#f0fdf4',borderBottom:'1px solid #e2e8f0'}}>
+                        {listMobbed.map(c=>{
+                          const mobRec=planCandMobMap[c.id];
+                          return (
+                            <div key={c.id} style={{background:'#f0fdf4',border:'1.5px solid #4ade80',borderRadius:'6px',padding:'6px 10px',display:'flex',alignItems:'center',gap:'8px',minHeight:'34px'}}>
+                              <span style={{fontSize:'18px'}}>✅</span>
+                              <div style={{width:'200px',flexShrink:0}}>
+                                <div style={{fontWeight:700,fontSize:'11px',color:'#166534',textTransform:'uppercase',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c.full_name}</div>
+                                <div style={{fontSize:'9px',color:'#64748b',whiteSpace:'nowrap'}}>{c.designation||'—'} · {c.supplier_emp_no||'—'}</div>
+                              </div>
+                              <div style={{flex:1}}>
+                                <span style={{fontSize:'11px',fontWeight:700,color:'#166534',whiteSpace:'nowrap'}}>
+                                  {mobRec.status==='mobilised'?'Mobilised':'Pending'} → {(mobRec.location||'Site').substring(0,30)}
+                                </span>
+                                {mobRec.mobilisation_date&&<span style={{fontSize:'11px',color:'#166534',marginLeft:'8px'}}>· {fmtDate(mobRec.mobilisation_date)}</span>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {/* Not yet mobilised — ready to go */}
                   <div style={{background:'#f0fdf4',borderBottom:'2px solid #86efac',padding:'8px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                    <span style={{fontWeight:800,fontSize:'13px',color:'#166534'}}>✅ {list.length} Ready to Mobilise</span>
+                    <span style={{fontWeight:800,fontSize:'13px',color:'#166534'}}>🚀 {list.length} Ready to Mobilise</span>
                     <button style={{...S.btnSm,fontSize:'11px'}} onClick={()=>setSelected(new Set(list.map(c=>c.id)))}>Select all ready</button>
                   </div>
                   <div style={{maxHeight:'280px',overflowY:'auto',padding:'6px 8px',display:'flex',flexDirection:'column',gap:'4px',background:'#f8fff8'}}>
-                    {list.length===0&&<div style={{padding:'12px',textAlign:'center',color:'#64748b',fontSize:'12px'}}>{candSearch?'No matches in ready list.':'No candidates meet all requirements yet.'}</div>}
+                    {list.length===0&&<div style={{padding:'12px',textAlign:'center',color:'#64748b',fontSize:'12px'}}>{candSearch?'No matches in ready list.':listMobbed.length>0?'All ready candidates are already mobilised! 🎉':'No candidates meet all requirements yet.'}</div>}
                     {list.map(c=><CandRow key={c.id} c={c}/>)}
                   </div>
                 </div>
@@ -2331,7 +2380,8 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
             {/* ── YELLOW — Need Action ── */}
             {(()=>{
               const q = candSearch.toLowerCase();
-              const list = sorted.yellow.filter(c=>!q||((c.full_name+c.designation+c.supplier_emp_no+(c.nationality||'')).toLowerCase().includes(q)));
+              const alreadyMobIds2 = new Set(Object.keys(planCandMobMap));
+              const list = sorted.yellow.filter(c=>!alreadyMobIds2.has(String(c.id))&&(!q||((c.full_name+c.designation+c.supplier_emp_no+(c.nationality||'')).toLowerCase().includes(q))));
               return (
                 <div>
                   <div style={{background:'#fffbeb',borderTop:'2px solid #fde68a',borderBottom:'2px solid #fde68a',padding:'8px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
