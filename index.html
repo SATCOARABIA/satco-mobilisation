@@ -6727,59 +6727,50 @@ function App() {
   const loaUsed = useMemo(()=>{
     const m={};
 
-    // ── Pass 1: mob register records only ─────────────────────────────────────
-    // Count each active mob record exactly once against one LOA
-    const mobCandIds = new Set(); // track candidate_ids already counted
-
-    data.mobList
-      .filter(r => r.status !== 'demobilised' && r.status !== 'rejected')
-      .forEach(r => {
-        // Find the matching LOA — explicit loa_id wins, otherwise fuzzy location+customer
-        let loaId = r.loa_id || null;
-        if (!loaId && r.location && r.customer_name) {
-          const rLoc  = r.location.toLowerCase().trim();
-          const rCust = r.customer_name.toLowerCase().trim();
-          const loa = data.loaList.find(l => {
-            const lLoc  = (l.location||'').toLowerCase().trim();
-            const lCust = (l.customer_name||'').toLowerCase().trim();
-            return (rCust===lCust || rCust.includes(lCust) || lCust.includes(rCust)) &&
-                   (rLoc===lLoc   || rLoc.includes(lLoc)   || lLoc.includes(rLoc));
-          });
-          if (loa) loaId = loa.id;
-        }
-        if (loaId) {
-          m[loaId] = (m[loaId] || 0) + 1;
-          if (r.candidate_id) mobCandIds.add(r.candidate_id);
-        }
-      });
-
-    // ── Pass 2: candidates with active CICPA but NO mob record ────────────────
-    // e.g. Shaik — supervisor with TAZIZ CICPA pass but not mobilised to Volta
-    // Build name set from ALL active mob records (with OR without candidate_id link)
-    const mobNamesAll = new Set(
-      data.mobList
-        .filter(r => r.status !== 'demobilised' && r.status !== 'rejected')
-        .map(r => (r.full_name||'').toLowerCase().trim())
-        .filter(Boolean)
+    // Count active mob_register rows against their LOA — one count per row, no more
+    const activeMob = data.mobList.filter(r =>
+      r.status !== 'demobilised' && r.status !== 'rejected'
     );
 
-    data.candidates
-      .filter(c =>
-        c.active &&
-        c.cicpa_status === 'active' &&
-        c.security_pass_no &&
-        c.cicpa_location &&
-        !mobCandIds.has(c.id) &&                                    // not linked by candidate_id
-        !mobNamesAll.has((c.full_name||'').toLowerCase().trim())     // not matched by name either
-      )
-      .forEach(c => {
-        const cLoc = canonicalCicpa(c.cicpa_location).toLowerCase();
-        const loa = data.loaList.find(l => {
-          const lLoc = (l.location||'').toLowerCase();
-          return cLoc.split(/[^a-z0-9]+/).filter(w=>w.length>3).some(w => lLoc.includes(w));
-        });
-        if (loa) m[loa.id] = (m[loa.id] || 0) + 1;
+    // Deduplicate by row id — each mob_register row counted exactly once
+    const counted = new Set();
+    activeMob.forEach(r => {
+      if (counted.has(r.id)) return;
+      counted.add(r.id);
+
+      let loaId = r.loa_id || null;
+      if (!loaId && r.location && r.customer_name) {
+        const rL = r.location.toLowerCase().trim();
+        const rC = r.customer_name.toLowerCase().trim();
+        const loa = data.loaList.find(l =>
+          (l.location||'').toLowerCase().trim() === rL &&
+          (l.customer_name||'').toLowerCase().trim() === rC
+        ) || data.loaList.find(l =>
+          (l.location||'').toLowerCase().includes(rL.substring(0,20)) &&
+          (l.customer_name||'').toLowerCase().includes(rC.substring(0,15))
+        );
+        if (loa) loaId = loa.id;
+      }
+      if (loaId) m[loaId] = (m[loaId] || 0) + 1;
+    });
+
+    // Count candidates with active CICPA not in mob register
+    // Use strict: only count if candidate id NOT in any mob row AND full_name normalised NOT in mob rows
+    const mobIds = new Set(activeMob.map(r=>r.candidate_id).filter(Boolean));
+    const mobNms = new Set(activeMob.map(r=>(r.full_name||'').toLowerCase().replace(/\s+/g,' ').trim()).filter(Boolean));
+
+    data.candidates.filter(c=>
+      c.active && c.cicpa_status==='active' && c.security_pass_no && c.cicpa_location &&
+      !mobIds.has(c.id) &&
+      !mobNms.has((c.full_name||'').toLowerCase().replace(/\s+/g,' ').trim())
+    ).forEach(c=>{
+      const cNorm = canonicalCicpa(c.cicpa_location).toLowerCase().replace(/[^a-z0-9]/g,'');
+      const loa = data.loaList.find(l=>{
+        const lNorm = (l.location||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+        return ['taziz','ruwais','habshan','enhancement'].some(kw=>cNorm.includes(kw)&&lNorm.includes(kw));
       });
+      if (loa) m[loa.id]=(m[loa.id]||0)+1;
+    });
 
     return m;
   },[data.mobList, data.loaList, data.candidates]);
