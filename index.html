@@ -500,23 +500,54 @@ function canonicalDesig(d) {
 // ── Canonical English for CICPA location (strips Arabic / mixed values) ───────
 function canonicalCicpa(val) {
   if (!val) return '';
-  // If string contains Arabic characters, map known values to English
+  const s = val.trim();
+
+  // Normalize known site variants (case-insensitive, ignore punctuation differences)
+  const norm = s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  // TAZIZ / Ta'ziz / ADNOC TAZIZ / ADNOC/TAZIZ / Taaziz
+  if (norm.includes('taziz') || norm.includes('taaziz') || norm.includes('tazis'))
+    return 'ADNOC / TAZIZ';
+
+  // Ruwais / KEZAD / ADNOC Ruwais
+  if (norm.includes('ruwais') && !norm.includes('mabroug') && !norm.includes('mabrook'))
+    return 'ADNOC Ruwais';
+
+  // Mabroug / Mabrook Al Ruwais Industrial / Sinaiya
+  if (norm.includes('mabroug') || norm.includes('mabrook') || norm.includes('sinaiy') || norm.includes('industrial'))
+    return 'Mabroug Al Ruwais Industrial';
+
+  // GASCO Habshan
+  if (norm.includes('habshan') || norm.includes('gasco'))
+    return 'GASCO Habshan';
+
+  // ADNOC Enhancement / ADE
+  if (norm.includes('enhancement') || norm.includes(' ade') || norm === 'ade')
+    return 'ADNOC Enhancement';
+
+  // Das Island
+  if (norm.includes('das') || norm.includes('dasisle'))
+    return 'Das Island';
+
+  // Arabic variants
   const arabicRe = /[\u0600-\u06FF]/;
-  if (!arabicRe.test(val)) return val; // already English
-  const map = {
-    'ماروك الرويس الصناعية': 'Mabroug Al Ruwais Industrial',
-    'م.بروج الرويس الصناعية': 'Mabroug Al Ruwais Industrial',
-    'مبروج الرويس الصناعية': 'Mabroug Al Ruwais Industrial',
-  };
-  // Try direct map lookup
-  const trimmed = val.trim();
-  for (const [ar, en] of Object.entries(map)) {
-    if (trimmed.includes(ar) || ar.includes(trimmed)) return en;
+  if (arabicRe.test(s)) {
+    const arabicMap = {
+      'ماروك الرويس الصناعية': 'Mabroug Al Ruwais Industrial',
+      'م.بروج الرويس الصناعية': 'Mabroug Al Ruwais Industrial',
+      'مبروج الرويس الصناعية': 'Mabroug Al Ruwais Industrial',
+    };
+    const trimmed = s.trim();
+    for (const [ar, en] of Object.entries(arabicMap)) {
+      if (trimmed.includes(ar) || ar.includes(trimmed)) return en;
+    }
+    // Fallback: extract Latin portions
+    const latin = s.match(/[A-Za-z][A-Za-z0-9 \-']*/g);
+    if (latin && latin.join('').trim().length > 3) return latin.join(' ').trim();
+    return 'Mabroug Al Ruwais Industrial';
   }
-  // Fallback: extract any Latin portions
-  const latin = val.match(/[A-Za-z][A-Za-z0-9 \-]*/g);
-  if (latin && latin.join('').trim().length > 3) return latin.join(' ').trim();
-  return 'Mabroug Al Ruwais Industrial'; // last resort for known site
+
+  return s; // return as-is if no match
 }
 
 // ── Excel-style multi-select dropdown ────────────────────────────────────────
@@ -872,7 +903,7 @@ Return ONLY a valid JSON object with these fields (include only what is visible)
   "wp_designation": "Designation/Job shown on work permit",
   "cicpa_pass_no": "CICPA / National Guard security pass number — the full numeric ID printed on the pass, typically 10 digits (e.g. 1219332908, 1219327208). Found on the back labeled الرقم or on the front as the pass number. CRITICAL: (1) Do NOT put SUB-XXX-YYYY codes here — those are employee numbers. (2) Do NOT truncate — extract the COMPLETE number. (3) If the number shown is fewer than 6 digits it may be a partial read — return null rather than a truncated value.",
   "supplier_emp_no_from_cicpa": "If the CICPA card shows an employee code in SUB-XXX-YYYY format (e.g. SUB-007-1001), extract it here. This is the holder's company employee reference, NOT the CICPA pass number.",
-  "site_location": "facility, project or site name shown on the gate pass (e.g. TAZIZ, ADNOC Ruwais, GASCO Habshan)",
+  "site_location": "facility or site name from the gate pass. IMPORTANT: Map to the closest canonical name from this list — ADNOC / TAZIZ (for any variant of Taziz/Ta'ziz/TAZIZ/تعزيز), ADNOC Ruwais, Mabroug Al Ruwais Industrial, GASCO Habshan, ADNOC Enhancement, Das Island, Mabrouk Al-Ruways Al-Sinaiya. If unsure, return the Arabic text and the system will normalize it.",
   "pass_expiry": "YYYY-MM-DD expiry date of the gate pass or security pass",
   "nationality": "nationality or country",
   "date_of_birth": "YYYY-MM-DD",
@@ -2503,7 +2534,7 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
 }
 
 
-function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onMobilise, onRefresh, tabSearch, hrMobActive=new Set(), hrMobLocs={}, thresholds=[]}) {
+function CandidatesTab({candidates, mobList, suppliers=[], locConfigs=[], onSave, onDelete, onMobilise, onRefresh, tabSearch, hrMobActive=new Set(), hrMobLocs={}, thresholds=[]}) {
   const [draft,setDraft]   = usePersistentDraft('candidate');
   const [savedDraft, setSavedDraft] = useState(() => { try { const v=localStorage.getItem('satco_mob_draft_candidate'); return v?JSON.parse(v):null; } catch{return null;} });
   const [search,setSearch] = useState(tabSearch||'');
@@ -2636,7 +2667,7 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
     const map = new Map(); // canonicalEnglish -> count
     candidates.forEach(c => {
       if (!c.cicpa_location) return;
-      const key = canonicalCicpa(c.cicpa_location);
+      const key = canonicalCicpa(c.cicpa_location); // normalises variants like Taziz/TAZIZ/Ta'ziz
       map.set(key, (map.get(key) || 0) + 1);
     });
     return [...map.entries()]
@@ -2760,7 +2791,7 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
       if (aiData.pass_expiry)     updates.security_pass_expiry = aiData.pass_expiry;
       if (aiData.cicpa_expiry)    updates.security_pass_expiry = aiData.cicpa_expiry;
       if (aiData.training_expiry) updates.security_pass_expiry = aiData.training_expiry;
-      if (aiData.site_location)   updates.cicpa_location       = aiData.site_location;
+      if (aiData.site_location)   updates.cicpa_location       = canonicalCicpa(aiData.site_location);
       // Never touch full_name or designation from CICPA scan
     }
     // Medical / ADNOC Medical
@@ -2805,7 +2836,7 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
       if (aiData.nationality)     updates.nationality     = aiData.nationality;
       if (aiData.date_of_birth)   updates.date_of_birth   = aiData.date_of_birth;
       if (aiData.cicpa_pass_no)   updates.security_pass_no    = aiData.cicpa_pass_no;
-      if (aiData.site_location)   updates.cicpa_location       = aiData.site_location;
+      if (aiData.site_location)   updates.cicpa_location       = canonicalCicpa(aiData.site_location);
       if (aiData.pass_expiry)     updates.security_pass_expiry = aiData.pass_expiry;
     }
 
@@ -3085,7 +3116,7 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                           allUpdates.supplier_emp_no = result.supplier_emp_no_from_cicpa;
                         const exp = result.pass_expiry || result.cicpa_expiry || result.training_expiry;
                         if (exp && !allUpdates.security_pass_expiry) allUpdates.security_pass_expiry = exp;
-                        if (result.site_location && !allUpdates.cicpa_location) allUpdates.cicpa_location = result.site_location;
+                        if (result.site_location && !allUpdates.cicpa_location) allUpdates.cicpa_location = canonicalCicpa(result.site_location);
                       }
                       // ADNOC Medical / medical certificate
                       if (detectedType.includes('medical') || result.medical_result || result.medical_date || result.medical_record_no) {
@@ -3316,7 +3347,28 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
           </Grid>
           <Grid cols={2}>
             <Field label="CICPA Location (O&G Field)">
-              <input value={draft.cicpa_location||''} onChange={e=>setDraft(d=>({...d,cicpa_location:e.target.value}))} placeholder="e.g. TAZIZ, ADNOC Ruwais, GASCO…" style={S.input}/>
+              {(()=>{
+                // Build options from locConfigs (Setup → Locations) + any existing canonical values
+                const knownLocs = [...new Set([
+                  ...locConfigs.map(l=>l.location).filter(Boolean),
+                  'ADNOC / TAZIZ','ADNOC Ruwais','Mabroug Al Ruwais Industrial',
+                  'GASCO Habshan','ADNOC Enhancement','Das Island','Mabrouk Al-Ruways Al-Sinaiya',
+                  ...candidates.map(c=>canonicalCicpa(c.cicpa_location)).filter(Boolean),
+                ])].filter(Boolean).sort();
+                const currentVal = draft.cicpa_location || '';
+                const canonical = canonicalCicpa(currentVal);
+                const isKnown = !currentVal || knownLocs.includes(canonical);
+                return (
+                  <div>
+                    <select value={canonical||''} onChange={e=>setDraft(d=>({...d,cicpa_location:e.target.value}))} style={S.input}>
+                      <option value="">— Select site —</option>
+                      {knownLocs.map(loc=><option key={loc} value={loc}>{loc}</option>)}
+                      {currentVal && !isKnown && <option value={currentVal}>{currentVal} (custom)</option>}
+                    </select>
+                    {!isKnown && <div style={{fontSize:'10px',color:'#b45309',marginTop:'3px'}}>⚠ "{currentVal}" not in standard list — will be normalized on save</div>}
+                  </div>
+                );
+              })()}
             </Field>
             <Field label={<span style={{color:draft.cicpa_status==='confiscated'?'#dc2626':'inherit'}}>CICPA Remarks {draft.cicpa_status==='confiscated'&&'⚠ REQUIRED'}</span>}>
               <input value={draft.cicpa_remarks||''} onChange={e=>setDraft(d=>({...d,cicpa_remarks:e.target.value}))}
@@ -4342,7 +4394,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
         if (aiData.supplier_emp_no_from_cicpa && !docPanel.entity.supplier_emp_no) updates.supplier_emp_no = aiData.supplier_emp_no_from_cicpa;
         if (aiData.pass_expiry)   updates.security_pass_expiry = aiData.pass_expiry;
         if (aiData.cicpa_expiry)  updates.security_pass_expiry = aiData.cicpa_expiry;
-        if (aiData.site_location) updates.cicpa_location       = aiData.site_location;
+        if (aiData.site_location) updates.cicpa_location       = canonicalCicpa(aiData.site_location);
       }
     }
     // Medical
@@ -6674,9 +6726,23 @@ function App() {
 
   const loaUsed = useMemo(()=>{
     const m={};
-    data.mobList.forEach(r=>{if(r.loa_id&&r.status!=='demobilised')m[r.loa_id]=(m[r.loa_id]||0)+1;});
+    data.mobList.filter(r=>r.status!=='demobilised'&&r.status!=='rejected').forEach(r=>{
+      if (r.loa_id) {
+        // Primary: count by explicit loa_id
+        m[r.loa_id]=(m[r.loa_id]||0)+1;
+      } else if (r.location || r.customer_name) {
+        // Fallback: match by location+customer when loa_id not set
+        const match = data.loaList.find(l=>
+          (r.loa_id===l.id) ||
+          (r.customer_name&&r.location&&
+           (l.customer_name||'').toLowerCase().trim()===(r.customer_name||'').toLowerCase().trim()&&
+           (l.location||'').toLowerCase().trim()===(r.location||'').toLowerCase().trim())
+        );
+        if (match && !r.loa_id) m[match.id]=(m[match.id]||0)+1;
+      }
+    });
     return m;
-  },[data.mobList]);
+  },[data.mobList, data.loaList]);
 
   // Global search results — search both candidates and mob records
   const searchResults = useMemo(()=>{
@@ -6705,6 +6771,8 @@ function App() {
     if (table === 'mob_candidates') {
       ['medical_date','medical_result','medical_done'].forEach(k=>delete clean[k]);
     }
+    // Normalize CICPA location to canonical form before saving
+    if (clean.cicpa_location) clean.cicpa_location = canonicalCicpa(clean.cicpa_location);
     // Convert empty strings to null
     Object.keys(clean).forEach(k=>{ if(clean[k]==='') clean[k]=null; });
     let {error}=draft.id
@@ -6838,7 +6906,7 @@ function App() {
           {!loading&&tableReady&&<>
             {tab==='dashboard'    &&<Dashboard data={data} loaUsed={loaUsed} setTab={t=>{setTab(t);}} setFilterStatus={setFilterStatus} hrMobActive={hrMobActive}/>}
             {tab==='planning'     &&<PlanningTab candidates={data.candidates} mobList={data.mobList} requirements={data.requirements} loaList={data.loaList} onMobilise={(c,ctx)=>{handleMobilise(c,ctx||{});}} setTab={t=>{setTab(t);}} onRefreshAndFilter={async(cust,loc)=>{await loadAll();setBulkMobFilter({customer:cust,location:loc});setTab('mobilisation');setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),300);}} onBulkMobFilter={(cust,loc)=>{setBulkMobFilter({customer:cust,location:loc});setTab('mobilisation');}}/>}
-            {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} suppliers={data.suppliers} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} onRefresh={loadAll} tabSearch={tabSearch} hrMobActive={hrMobActive} hrMobLocs={hrMobLocs} thresholds={data.thresholds}/>}
+            {tab==='candidates'   &&<CandidatesTab candidates={data.candidates} mobList={data.mobList} suppliers={data.suppliers} locConfigs={data.locConfigs} onSave={onSave} onDelete={onDelete} onMobilise={handleMobilise} onRefresh={loadAll} tabSearch={tabSearch} hrMobActive={hrMobActive} hrMobLocs={hrMobLocs} thresholds={data.thresholds}/>}
             {tab==='requirements' &&<RequirementsTab requirements={data.requirements} onSave={onSave}/>}
             {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
             {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} requirements={data.requirements} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} onRefresh={loadAll} initialStatus={filterStatus} tabSearch={tabSearch} bulkMobFilter={bulkMobFilter} onClearBulkFilter={()=>setBulkMobFilter(null)}/>}
