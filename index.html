@@ -1764,30 +1764,13 @@ function Dashboard({data, loaUsed, setTab, setFilterStatus, hrMobActive=new Set(
               {loaList.length===0&&<tr><td colSpan={5} style={{padding:'16px',textAlign:'center',color:'#94a3b8',fontSize:'13px'}}>No LOA registered</td></tr>}
               {loaList.map(l=>{
                 const used=loaUsed[l.id]||0, rem=l.total_count-used, low=rem<(l.alert_threshold||10);
-                const activeMobForLoa = mobList.filter(r=>r.status!=='demobilised'&&r.status!=='rejected');
-                return <React.Fragment key={l.id}>
-                  <tr style={{background:low?'#fffbeb':'#fff'}}>
-                    <td style={{...S.td,fontWeight:700}}>{l.customer_name}</td>
-                    <td style={S.td}>{l.location}</td>
-                    <td style={{...S.td,fontWeight:800,color:rem<=5?'#dc2626':low?'#b45309':'#166534'}}>{rem}</td>
-                    <td style={{...S.td,color:'#0369a1'}}>{used}</td>
-                    <td style={{...S.td,color:'#64748b'}}>{l.total_count}</td>
-                  </tr>
-                  <tr><td colSpan={5} style={{padding:'0 8px 8px',background:'#fffbeb'}}>
-                    <details><summary style={{fontSize:'11px',color:'#92400e',cursor:'pointer'}}>🐛 Debug: {activeMobForLoa.length} active mob records</summary>
-                    <table style={{fontSize:'10px',width:'100%',marginTop:'4px'}}>
-                      <thead><tr style={{background:'#fde68a'}}><th>Name</th><th>Status</th><th>loa_id?</th><th>Location</th><th>Customer</th><th>cand_id?</th></tr></thead>
-                      <tbody>{activeMobForLoa.map((r,i)=><tr key={i} style={{background:i%2?'#fffef0':'#fff'}}>
-                        <td style={{padding:'2px 4px'}}>{r.full_name}</td>
-                        <td>{r.status}</td>
-                        <td style={{color:r.loa_id?'green':'red'}}>{r.loa_id?'✓':'✗'}</td>
-                        <td>{(r.location||'—').substring(0,30)}</td>
-                        <td>{(r.customer_name||'—').substring(0,20)}</td>
-                        <td style={{color:r.candidate_id?'green':'red'}}>{r.candidate_id?'✓':'✗'}</td>
-                      </tr>)}</tbody>
-                    </table></details>
-                  </td></tr>
-                </React.Fragment>;
+                return <tr key={l.id} style={{background:low?'#fffbeb':'#fff'}}>
+                  <td style={{...S.td,fontWeight:700}}>{l.customer_name}</td>
+                  <td style={S.td}>{l.location}</td>
+                  <td style={{...S.td,fontWeight:800,color:rem<=5?'#dc2626':low?'#b45309':'#166534'}}>{rem}</td>
+                  <td style={{...S.td,color:'#0369a1'}}>{used}</td>
+                  <td style={{...S.td,color:'#64748b'}}>{l.total_count}</td>
+                </tr>;
               })}
             </tbody>
           </table>
@@ -6771,11 +6754,13 @@ function App() {
       });
 
     // ── Pass 2: candidates with active CICPA but NO mob record ────────────────
-    // e.g. supervisors/visitors who consume an LOA slot via their CICPA pass
-    const mobNames = new Set(
+    // e.g. Shaik — supervisor with TAZIZ CICPA pass but not mobilised to Volta
+    // Build name set from ALL active mob records (with OR without candidate_id link)
+    const mobNamesAll = new Set(
       data.mobList
-        .filter(r => r.status !== 'demobilised' && r.status !== 'rejected' && !r.candidate_id)
+        .filter(r => r.status !== 'demobilised' && r.status !== 'rejected')
         .map(r => (r.full_name||'').toLowerCase().trim())
+        .filter(Boolean)
     );
 
     data.candidates
@@ -6784,14 +6769,13 @@ function App() {
         c.cicpa_status === 'active' &&
         c.security_pass_no &&
         c.cicpa_location &&
-        !mobCandIds.has(c.id) &&
-        !mobNames.has((c.full_name||'').toLowerCase().trim())
+        !mobCandIds.has(c.id) &&                                    // not linked by candidate_id
+        !mobNamesAll.has((c.full_name||'').toLowerCase().trim())     // not matched by name either
       )
       .forEach(c => {
         const cLoc = canonicalCicpa(c.cicpa_location).toLowerCase();
         const loa = data.loaList.find(l => {
           const lLoc = (l.location||'').toLowerCase();
-          // Match if LOA location contains any word from the canonical CICPA site name
           return cLoc.split(/[^a-z0-9]+/).filter(w=>w.length>3).some(w => lLoc.includes(w));
         });
         if (loa) m[loa.id] = (m[loa.id] || 0) + 1;
