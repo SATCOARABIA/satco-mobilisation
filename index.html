@@ -1502,9 +1502,9 @@ function Dashboard({data, loaUsed, setTab, setFilterStatus, hrMobActive=new Set(
         allExpiries.push({ person: r.full_name, type, label, date, daysLeft: d, expired: d < 0, critical: !!critical, record: r });
       }
     };
-    add('CICPA Gate Pass',   r.cicpa_expiry_date,   'CICPA Gate Pass',      true);
-    add('Work Permit',       r.wp_expiry,            'Work Permit',          true);
-    add('Medical',           r.medical_expiry,       'Medical Certificate',  true);
+    add('CICPA Gate Pass',   r.cicpa_expiry_date||r._cand?.security_pass_expiry,   'CICPA Gate Pass',      true);
+    add('Work Permit',       r.wp_expiry||r._cand?.wp_expiry,            'Work Permit',          true);
+    add('Medical',           r.medical_expiry||r._cand?.medical_expiry,       'Medical Certificate',  true);
     add('HSE Passport',      r.hse_passport_expiry,  'HSE Passport',         false);
     add('H2S Training',      r.h2s_expiry,           'H2S Certificate',      false);
     // Extra trainings
@@ -3869,8 +3869,8 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
       const key = m.location || 'No Site Assigned';
       if (!map[key]) map[key] = { location: key, customer: m.customer_name || '', mobilised: [], pending: [] };
       // Enrich row: merge candidate WP/CICPA fields so roster can display them
-      const cand = m.candidate_id ? candById[m.candidate_id] : null;
-      const enriched = { ...m, _cand: cand };
+      const cand = m.candidate_id ? candById[m.candidate_id] : (candidates.find(c=>(c.full_name||'').toLowerCase().trim()===(m.full_name||'').toLowerCase().trim())||null);
+      const enriched = { ...m, _cand: cand, _merged: true };
       if (m.status === 'mobilised') map[key].mobilised.push(enriched);
       else map[key].pending.push(enriched);
     });
@@ -3908,7 +3908,40 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
   };
 
   // ── Compute readiness for one mobilisation record ────────────────────────
-  const computeReadiness = useCallback((r) => {
+  // ── candMerge: returns mob register row enriched with candidate fallback for every field ──
+  // Use this anywhere you need r.field — it guarantees _cand fills any gap
+  const candMerge = r => {
+    const c = r._cand || {};
+    return {
+      ...r,
+      supplier_emp_no:      r.supplier_emp_no      || c.supplier_emp_no      || '',
+      supplier_name:        r.supplier_name         || (c.source==='satco_own'?'SATCO Arabia':c.supplier_name) || '',
+      nationality:          r.nationality            || c.nationality          || '',
+      date_of_birth:        r.date_of_birth          || c.date_of_birth        || '',
+      passport_no:          r.passport_no            || c.passport_no          || '',
+      passport_expiry:      r.passport_expiry        || c.passport_expiry      || '',
+      emirates_id:          r.emirates_id            || c.emirates_id          || '',
+      eid_expiry:           r.eid_expiry             || c.eid_expiry           || '',
+      visa_no:              r.visa_no                || c.visa_no              || '',
+      visa_type:            r.visa_type              || c.visa_type            || '',
+      visa_location:        r.visa_location          || c.visa_location        || '',
+      visa_expiry:          r.visa_expiry            || c.visa_expiry          || '',
+      phone:                r.phone                  || c.phone                || '',
+      wp_no:                r.wp_no                  || c.wp_no                || '',
+      wp_employer:          r.wp_employer            || c.wp_employer          || '',
+      wp_expiry:            r.wp_expiry              || c.wp_expiry            || '',
+      wp_issue_date:        r.wp_issue_date          || c.wp_issue_date        || '',
+      cicpa_pass_no:        r.cicpa_pass_no          || c.security_pass_no    || '',
+      cicpa_expiry_date:    r.cicpa_expiry_date      || c.security_pass_expiry || '',
+      adnoc_medical_status: r.adnoc_medical_status   || c.adnoc_medical_status || '',
+      adnoc_medical_date:   r.adnoc_medical_date     || c.adnoc_medical_date   || '',
+      medical_expiry:       r.medical_expiry         || c.medical_expiry       || '',
+      medical_record_no:    r.medical_record_no      || c.medical_record_no    || '',
+    };
+  };
+
+
+  const computeReadiness = useCallback((r_raw) => { const r = (r_raw && r_raw._cand !== undefined) ? candMerge(r_raw) : r_raw;
     const cfg = locConfigs.find(l => l.location === r.location);
     const required = [];
 
@@ -4019,7 +4052,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
         if (fReady.has('not_ready') && rd.readyForSubmission)  return false;
       }
       return matchSearch(m, search);
-    }).map(m=>({...m, _cand: m.candidate_id ? candById[m.candidate_id] : null}));
+    }).map(m=>{ const _cand = m.candidate_id ? candById[m.candidate_id] : (candidates.find(c=>(c.full_name||'').toLowerCase().trim()===(m.full_name||'').toLowerCase().trim())||null); return {...m, _cand}; });
   }, [mobList, candidates, search, fCust, fLoc, fStatus, fReady, computeReadiness]);
 
   const fillFromCandidate = candId => {
@@ -4219,7 +4252,8 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
     const XLSX = window.XLSX;
     if (!XLSX) return alert('SheetJS not loaded — refresh and try again.');
     const fD = d => d ? new Date(d).toLocaleDateString('en-GB') : '';
-    const data = rows.map((r, i) => {
+    const data = rows.map((r_raw, i) => {
+      const r = (typeof candMerge === 'function') ? candMerge(r_raw) : r_raw;
       const extraDone  = (r.extra_trainings||[]).filter(t=>t.done).map(t=>t.name).join(', ');
       const extraAll   = (r.extra_trainings||[]).map(t=>t.name).join(', ');
       const cand = r._cand || {};
@@ -4378,8 +4412,8 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
             const XLSX=window.XLSX;
             if(!XLSX)return alert('SheetJS not loaded — refresh page.');
             const fD=d=>d?new Date(d).toLocaleDateString('en-GB'):'';
-            const rows=filtered.map((r,i)=>{
-              const cand=r._cand||{};
+            const rows=filtered.map((r_raw,i)=>{
+              const r=candMerge(r_raw); const cand=r._cand||{};
               const wpNo=r.wp_no||cand.wp_no||'';
               const wpExp=r.wp_expiry||cand.wp_expiry||'';
               const medSt=r.adnoc_medical_status||cand.adnoc_medical_status||'';
@@ -4833,7 +4867,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
                       <div key={r.id} style={{background:'#fff',border:'1px solid #fde68a',borderRadius:'8px',padding:'8px 12px',display:'flex',gap:'10px',alignItems:'center',minWidth:'260px'}}>
                         <div style={{flex:1}}>
                           <div style={{fontWeight:700,fontSize:'12px'}}>{r.full_name}</div>
-                          <div style={{fontSize:'10px',color:'#64748b'}}>{r.designation||'—'} · {r.supplier_emp_no||'—'}</div>
+                          <div style={{fontSize:'10px',color:'#64748b'}}>{r.designation||'—'} · {r.supplier_emp_no||r._cand?.supplier_emp_no||'—'}</div>
                         </div>
                         <button style={{...S.btnSm,background:'#166534',color:'#fff',border:'none',fontWeight:700,fontSize:'11px',padding:'5px 12px',whiteSpace:'nowrap'}}
                           onClick={()=>quickSetStatus(r,'mobilised')}>
@@ -4921,7 +4955,7 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
           </tr></thead>
           <tbody>
             {filtered.length===0&&<tr><td colSpan={24} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No records. Use filters or click <strong>+ Add Person</strong>.</td></tr>}
-            {filtered.map((r,idx)=>{
+            {filtered.map((r_raw,idx)=>{ const r=candMerge(r_raw);
               const ex=(r.extra_trainings||[]), exDone=ex.filter(t=>t.done).length;
               const cicpaExpiring = r.cicpa_expiry_date&&daysUntil(r.cicpa_expiry_date)<=30&&daysUntil(r.cicpa_expiry_date)>=0;
               const rowBg = mobSel.has(r.id) ? '#fff1f2' : docPanel?.entity?.id===r.id ? '#eff6ff' : idx%2===0 ? '#fff' : '#fafafa';
@@ -6057,9 +6091,9 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
 
             {/* ── Backfill utility ── */}
             <div style={{marginTop:'20px',background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:'8px',padding:'14px 16px'}}>
-              <div style={{fontWeight:800,fontSize:'13px',color:'#166534',marginBottom:'6px'}}>🔄 Backfill CICPA &amp; ADNOC Medical into Mobilisation Records</div>
+              <div style={{fontWeight:800,fontSize:'13px',color:'#166534',marginBottom:'6px'}}>🔄 Backfill ALL candidate fields into Mobilisation Records</div>
               <div style={{fontSize:'12px',color:'#166534',marginBottom:'10px'}}>
-                Copies <strong>CICPA Pass No, CICPA Expiry, ADNOC Medical Status, ADNOC Medical Date</strong> from each candidate's profile into their existing mobilisation records — only fills empty fields, never overwrites.
+                Copies <strong>all candidate fields</strong> (EMP No, Supplier, Passport, EID, Visa, WP, CICPA, ADNOC Medical) into existing mobilisation records — only fills empty fields, never overwrites existing data.
               </div>
               <div style={{display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap'}}>
                 <button style={{...S.btnGrn,fontSize:'12px',padding:'7px 16px'}} onClick={async()=>{
@@ -6087,6 +6121,24 @@ Return ONLY the JSON. No markdown, no backticks, no explanation.`;
                       if(!r.cicpa_expiry_date && cand.security_pass_expiry) u.cicpa_expiry_date=cand.security_pass_expiry;
                       if(!r.adnoc_medical_status && cand.adnoc_medical_status) u.adnoc_medical_status=cand.adnoc_medical_status;
                       if(!r.adnoc_medical_date && cand.adnoc_medical_date) u.adnoc_medical_date=cand.adnoc_medical_date;
+                      // Backfill all other candidate fields if empty
+                      if(!r.supplier_emp_no && cand.supplier_emp_no) u.supplier_emp_no=cand.supplier_emp_no;
+                      if(!r.supplier_name && cand.supplier_name) u.supplier_name=cand.supplier_name;
+                      if(!r.nationality && cand.nationality) u.nationality=cand.nationality;
+                      if(!r.date_of_birth && cand.date_of_birth) u.date_of_birth=cand.date_of_birth;
+                      if(!r.passport_no && cand.passport_no) u.passport_no=cand.passport_no;
+                      if(!r.passport_expiry && cand.passport_expiry) u.passport_expiry=cand.passport_expiry;
+                      if(!r.emirates_id && cand.emirates_id) u.emirates_id=cand.emirates_id;
+                      if(!r.eid_expiry && cand.eid_expiry) u.eid_expiry=cand.eid_expiry;
+                      if(!r.visa_no && cand.visa_no) u.visa_no=cand.visa_no;
+                      if(!r.visa_location && cand.visa_location) u.visa_location=cand.visa_location;
+                      if(!r.visa_expiry && cand.visa_expiry) u.visa_expiry=cand.visa_expiry;
+                      if(!r.wp_no && cand.wp_no) u.wp_no=cand.wp_no;
+                      if(!r.wp_employer && cand.wp_employer) u.wp_employer=cand.wp_employer;
+                      if(!r.wp_expiry && cand.wp_expiry) u.wp_expiry=cand.wp_expiry;
+                      if(!r.wp_issue_date && cand.wp_issue_date) u.wp_issue_date=cand.wp_issue_date;
+                      if(!r.medical_expiry && cand.medical_expiry) u.medical_expiry=cand.medical_expiry;
+                      if(!r.medical_record_no && cand.medical_record_no) u.medical_record_no=cand.medical_record_no;
                       if(!Object.keys(u).length) continue;
                       const {error} = await db.from('mob_register').update({...u,updated_at:new Date().toISOString()}).eq('id',r.id);
                       if(error){ append('FAILED ' + r.full_name + ': ' + error.message); }
