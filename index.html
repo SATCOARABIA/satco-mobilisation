@@ -822,7 +822,7 @@ Return ONLY a valid JSON object with these fields (include only what is visible)
   "emirates_id": "15-digit UAE ID number",
   "visa_no": "visa or entry permit number",
   "wp_no": "work permit card number (Card Number field on MOHRE work permit)",
-  "wp_employer": "establishment/employer name shown on work permit (e.g. SATCO ARABIA GENERAL CONTRACTING)",
+  "wp_employer": "establishment/employer name shown ONLY on a MOHRE Electronic Work Permit document — the 'Establishment Name' field. NEVER extract this from a medical certificate, fitness report, or health questionnaire even if they show a company name under 'To:', 'Company Name', or 'Company:'. Return null for any non-work-permit document.",
   "wp_card_expiry": "YYYY-MM-DD Card Expiry Date shown on MOHRE work permit — this is the work permit expiry",
   "wp_issue_date": "YYYY-MM-DD Card Issuance Date on work permit",
   "wp_designation": "Designation/Job shown on work permit",
@@ -838,8 +838,8 @@ Return ONLY a valid JSON object with these fields (include only what is visible)
   "visa_type": "visa type or category",
   "medical_result": "Overall fitness verdict: extract EXACTLY one of: Fit to Offshore/Onshore, Fit Onshore only, Fit Food Handler, Fit SCBA, Unfit, Temporarily Unfit — based on which checkbox is ticked on the certificate. If simply Fit with no qualifier write Fit.",
   "medical_date": "YYYY-MM-DD Date of examination on the medical report (the field labeled Date of examination, e.g. 24-08-2026 becomes 2026-08-24). This is when the exam was conducted.",
-  "medical_expiry": "YYYY-MM-DD The EXPIRY field — a separate labeled field on the medical report header (labeled exactly Expiry, e.g. Expiry: 24-08-2029 becomes 2029-08-24). CRITICAL: this is NOT the Date of examination. On NNMC reports the right side of the header table shows: Job title / Expiry / Medical Record No. The Expiry is always approximately 3 years after the exam date. NEVER return the exam date here. Example: exam 24-08-2026, expiry 24-08-2029.",
-  "medical_record_no": "The Medical Record No field in the report header (labeled Medical Record No, e.g. NNMC0872765). On NNMC reports this is in the right column of the header, bottom row.",
+  "medical_expiry": "YYYY-MM-DD The EXPIRY field — a separate labeled field on the medical report header (labeled exactly Expiry, e.g. Expiry: 24-08-2029 becomes 2029-08-24). CRITICAL: this is NOT the Date of examination. On NNMC reports the Medical Report (Examination) page header right column shows three rows: Job title / Expiry / Medical Record No. The Expiry is always approximately 3 years after the exam date. NEVER return the exam date here. Example: exam 24-08-2026, expiry 24-08-2029. Search ALL pages of a multi-page document for this field.",
+  "medical_record_no": "The Medical Record No field shown in the report header. CRITICAL: On NNMC Medical Report (Examination) pages this is in the right column of the header table, bottom row, labeled 'Medical Record No' (e.g. NNMC0872765). Also accept 'MR No' shown on any page of the document. Search ALL pages of a multi-page document for this field — it may not appear on the first (fitness certificate) page.",
   "medical_fitness_comments": "Any comments, restrictions, or special conditions noted on the medical certificate",
   "training_name": "exact name of the training or certificate (for training certs)",
   "training_date": "YYYY-MM-DD date of training or issue",
@@ -2468,7 +2468,9 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
     const updates = {};
 
     // Work Permit — check passport matches, extract employer
-    if (dt.includes('work_permit') || aiData.wp_no || aiData.wp_employer) {
+    // CRITICAL: do NOT trigger on aiData.wp_employer alone — medical reports contain a company name
+    // that the AI can misread as wp_employer. Only fire when doc is work_permit OR wp_no is present.
+    if (dt.includes('work_permit') || aiData.wp_no) {
       // Passport number cross-check
       const scannedPassport = aiData.passport_no || '';
       const existingPassport = docPanel.entity.passport_no || '';
@@ -2803,7 +2805,10 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                       // full_name: only if draft currently has no name
                       if (result.full_name && !draft.full_name && !allUpdates.full_name) allUpdates.full_name = result.full_name;
                       // ── Work Permit (MOHRE) ──────────────────────────────
-                      if (detectedType.includes('work_permit') || result.wp_no || result.wp_employer) {
+                      // CRITICAL: do NOT trigger on result.wp_employer alone — medical reports also
+                      // contain a company name which the AI can misread as wp_employer. Only fire when
+                      // the doc is actually identified as a work_permit, OR when wp_no is present.
+                      if (detectedType.includes('work_permit') || result.wp_no) {
                         // Passport cross-check warning
                         const scannedPP = result.passport_no || '';
                         const existingPP = (draft.passport_no || allUpdates.passport_no || '').toUpperCase();
