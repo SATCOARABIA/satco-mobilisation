@@ -2128,8 +2128,17 @@ function PlanningTab({candidates, mobList, onMobilise, requirements=[], loaList=
     );
   };
 
+  // TEMP DEBUG
+  const voltaMob = data.mobList.filter(r=>r.status!=='demobilised'&&r.status!=='rejected');
   return (
     <div style={{maxWidth:'1400px',margin:'0 auto',padding:'16px'}}>
+      <details style={{marginBottom:'12px',background:'#fef9c3',padding:'10px',borderRadius:8,border:'1px solid #fde68a'}}>
+        <summary style={{fontWeight:700,cursor:'pointer'}}>🐛 Debug: Active mob records ({voltaMob.length} total) — click to expand</summary>
+        <table style={{fontSize:'11px',marginTop:'8px',borderCollapse:'collapse',width:'100%'}}>
+          <thead><tr style={{background:'#fde68a'}}><th style={{padding:'4px'}}>Name</th><th>Status</th><th>LOA ID</th><th>Location</th><th>Customer</th><th>CICPA Loc</th><th>Candidate ID</th></tr></thead>
+          <tbody>{voltaMob.map((r,i)=><tr key={i} style={{background:i%2?'#fffbeb':'#fff'}}><td style={{padding:'3px 6px'}}>{r.full_name}</td><td>{r.status}</td><td style={{fontFamily:'monospace',fontSize:'10px'}}>{r.loa_id?'✓ set':'✗ null'}</td><td style={{maxWidth:'200px'}}>{r.location}</td><td>{r.customer_name}</td><td>{r.cicpa_location||'—'}</td><td style={{fontFamily:'monospace',fontSize:'10px'}}>{r.candidate_id?'✓':'✗'}</td></tr>)}</tbody>
+        </table>
+      </details>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'16px',flexWrap:'wrap',gap:'8px'}}>
         <div>
           <div style={{fontWeight:800,fontSize:'18px',color:'#0f172a'}}>🎯 Planning — Shortlist &amp; Assign</div>
