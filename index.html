@@ -4305,23 +4305,79 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
           <button style={{...S.btnGold,background:'#0f172a',color:'#c49a28',fontWeight:700,fontSize:'12px'}} onClick={()=>{
             const XLSX=window.XLSX;
             if(!XLSX)return alert('SheetJS not loaded — refresh page.');
-            const rows=filtered.map((r,i)=>({
-              'SI No':i+1,'Company Name':'SATCO Arabia','Employee Number':r.supplier_emp_no||'',
-              'Employee Name':r.full_name||'','Designation':r.designation||'',
-              'DOB':r.date_of_birth?new Date(r.date_of_birth).toLocaleDateString('en-GB'):'',
-              'Nationality':r.nationality||'','Emirates ID Number':r.emirates_id||'',
-              'Emirates ID Validity Date':r.eid_expiry?new Date(r.eid_expiry).toLocaleDateString('en-GB'):'',
-              'Visa State':r.visa_location||'','Passport Number':r.passport_no||'',
-              'Email ID':'admin@satcoarabiaengg.com','Phone Number':'+971565032032',
-              'Security Pass Expiry':r.cicpa_expiry_date?new Date(r.cicpa_expiry_date).toLocaleDateString('en-GB'):'',
-              'Security Pass No':r.cicpa_pass_no||'',
-              'Adnoc Medical Status':r.medical_done&&r.medical_expiry?new Date(r.medical_expiry).toLocaleDateString('en-GB'):(r.medical_done?(r.medical_result||'Fit'):'')
-            }));
+            const fD=d=>d?new Date(d).toLocaleDateString('en-GB'):'';
+            const rows=filtered.map((r,i)=>{
+              const cand=r._cand||{};
+              const wpNo=r.wp_no||cand.wp_no||'';
+              const wpExp=r.wp_expiry||cand.wp_expiry||'';
+              const medSt=r.adnoc_medical_status||cand.adnoc_medical_status||'';
+              const medExp=r.medical_expiry||cand.medical_expiry||'';
+              const medRec=r.medical_record_no||cand.medical_record_no||'';
+              const cicpaNo=r.cicpa_pass_no||cand.security_pass_no||'';
+              const cicpaExp=r.cicpa_expiry_date||cand.security_pass_expiry||'';
+              return {
+                'SI No':i+1,
+                'Employee Number':r.supplier_emp_no||'',
+                'Employee Name':r.full_name||'',
+                'Designation':r.designation||'',
+                'Supplier / Company':r.supplier_name||(r.source==='satco_own'?'SATCO Arabia':'')||'',
+                'Nationality':r.nationality||cand.nationality||'',
+                'DOB':fD(r.date_of_birth||cand.date_of_birth),
+                'Passport No':r.passport_no||cand.passport_no||'',
+                'Passport Expiry':fD(r.passport_expiry||cand.passport_expiry),
+                'Emirates ID':r.emirates_id||cand.emirates_id||'',
+                'EID Expiry':fD(r.eid_expiry||cand.eid_expiry),
+                'Visa Issued Emirate':r.visa_location||cand.visa_location||'',
+                'Visa No':r.visa_no||cand.visa_no||'',
+                'Visa Expiry':fD(r.visa_expiry||cand.visa_expiry),
+                'WP Card No':wpNo,
+                'WP Employer':r.wp_employer||cand.wp_employer||'',
+                'WP Issue Date':fD(r.wp_issue_date||cand.wp_issue_date),
+                'WP Expiry':fD(wpExp),
+                'Med Status':medSt,
+                'Med Report No':medRec,
+                'Med Cert Expiry':fD(medExp),
+                'CICPA Pass No':cicpaNo,
+                'CICPA Expiry':fD(cicpaExp),
+                'ADNOC Med (Mob)':r.adnoc_medical_status||'',
+                'HSE Passport':r.hse_passport_done?'Yes':'',
+                'H2S Done':r.h2s_done?'Yes':'',
+                'Customer':r.customer_name||'',
+                'Location / Site':r.location||'',
+                'Mob Date':fD(r.mobilisation_date),
+                'Status':r.status||'',
+                'Email ID':'admin@satcoarabiaengg.com',
+                'Phone':r.phone||'+971565032032',
+                'Notes':r.notes||'',
+              };
+            });
             const ws=XLSX.utils.json_to_sheet(rows);
-            ws['!cols']=[{wch:6},{wch:22},{wch:14},{wch:26},{wch:16},{wch:12},{wch:14},{wch:22},{wch:18},{wch:14},{wch:14},{wch:28},{wch:16},{wch:16},{wch:16},{wch:18}];
+            ws['!cols']=[
+              {wch:6},{wch:14},{wch:28},{wch:16},{wch:26},
+              {wch:12},{wch:12},{wch:13},{wch:13},{wch:20},
+              {wch:12},{wch:12},{wch:14},{wch:12},{wch:13},
+              {wch:24},{wch:12},{wch:12},{wch:16},{wch:14},
+              {wch:13},{wch:14},{wch:12},{wch:16},{wch:8},
+              {wch:8},{wch:22},{wch:22},{wch:12},{wch:12},
+              {wch:26},{wch:16},{wch:30},
+            ];
             const wb2=XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb2,ws,'Mob Submission List');
-            XLSX.writeFile(wb2,`SATCO_ClientList_${fCust.size?[...fCust].join('-').replace(/\s+/g,'_'):'All'}_${todayStr()}.xlsx`);
+            XLSX.utils.book_append_sheet(wb2,ws,'Mob List');
+            // Sheet 2 — Pending / Missing
+            const pendRows=filtered.filter(r=>{
+              const cand=r._cand||{};
+              return !r.emirates_id&&!cand.emirates_id||!r.passport_no&&!cand.passport_no||!(r.cicpa_pass_no||cand.security_pass_no)||!(r.adnoc_medical_status||cand.adnoc_medical_status);
+            }).map(r=>{
+              const cand=r._cand||{};
+              const miss=[];
+              if(!r.emirates_id&&!cand.emirates_id)miss.push('EID');
+              if(!r.passport_no&&!cand.passport_no)miss.push('Passport');
+              if(!(r.cicpa_pass_no||cand.security_pass_no))miss.push('CICPA');
+              if(!(r.adnoc_medical_status||cand.adnoc_medical_status))miss.push('ADNOC Med');
+              return {'Name':r.full_name,'Designation':r.designation||'','Supplier':r.supplier_name||'','Location':r.location||'','Missing':miss.join(', ')};
+            });
+            if(pendRows.length){const ws2=XLSX.utils.json_to_sheet(pendRows);ws2['!cols']=[{wch:28},{wch:16},{wch:26},{wch:22},{wch:40}];XLSX.utils.book_append_sheet(wb2,ws2,'Pending Actions');}
+            XLSX.writeFile(wb2,`SATCO_MobList_${fCust.size?[...fCust].join('-').replace(/\s+/g,'_'):'All'}_${todayStr()}.xlsx`);
           }}>📊 Client Excel</button>
           <button style={S.btnPri} onClick={blank}>+ Add Person</button>
         </div>
