@@ -8,6 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root {
@@ -861,15 +862,15 @@ Return ONLY a valid JSON object with these fields (include only what is visible)
 {
   "doc_type": "passport|emirates_id|uae_visa|medical_certificate|work_permit|cicpa_gate_pass|hse_passport|h2s_certificate|safety_training|first_aid|bosiet|chubet|scaffolding|fire_warden|other_training|other",
   "full_name": "full name of the ID/passport HOLDER only — from MRZ or photo page, NOT family members listed on other pages",
-  "passport_no": "passport number — CRITICAL: extract this from all document types, it is shown on work permits, EIDs and visas too",
-  "emirates_id": "15-digit UAE ID number",
+  "passport_no": "Passport number — alphanumeric, typically 6-9 characters (e.g. W3296921, AJ330427, C1397511, U7831938). Extract from passports, work permits, medical reports, visas. CRITICAL: NEVER put an Emirates ID number here — Emirates ID always follows the pattern 784-YYYY-XXXXXXX-X (15 digits with hyphens). If you see 784-XXXX-XXXXXXX-X format, that is an Emirates ID — put it in emirates_id field ONLY, leave passport_no null. A passport number NEVER starts with 784-.",
+  "emirates_id": "UAE Emirates ID number — always in format 784-YYYY-XXXXXXX-X (e.g. 784-1996-9593694-0, 784-2001-7855896-9). Extract ONLY this format. Never put this in passport_no.",
   "visa_no": "visa or entry permit number",
   "wp_no": "work permit card number (Card Number field on MOHRE work permit)",
   "wp_employer": "establishment/employer name shown ONLY on a MOHRE Electronic Work Permit document — the 'Establishment Name' field. NEVER extract this from a medical certificate, fitness report, or health questionnaire even if they show a company name under 'To:', 'Company Name', or 'Company:'. Return null for any non-work-permit document.",
   "wp_card_expiry": "YYYY-MM-DD Card Expiry Date shown on MOHRE work permit — this is the work permit expiry",
   "wp_issue_date": "YYYY-MM-DD Card Issuance Date on work permit",
   "wp_designation": "Designation/Job shown on work permit",
-  "cicpa_pass_no": "CICPA / National Guard security pass number — this is the NUMERIC ID on the back of the card (the Arabic الرقم field, e.g. 1219332908). CRITICAL: Do NOT put codes in SUB-XXX-YYYY format here — that is the employee number, not the pass number.",
+  "cicpa_pass_no": "CICPA / National Guard security pass number — the full numeric ID printed on the pass, typically 10 digits (e.g. 1219332908, 1219327208). Found on the back labeled الرقم or on the front as the pass number. CRITICAL: (1) Do NOT put SUB-XXX-YYYY codes here — those are employee numbers. (2) Do NOT truncate — extract the COMPLETE number. (3) If the number shown is fewer than 6 digits it may be a partial read — return null rather than a truncated value.",
   "supplier_emp_no_from_cicpa": "If the CICPA card shows an employee code in SUB-XXX-YYYY format (e.g. SUB-007-1001), extract it here. This is the holder's company employee reference, NOT the CICPA pass number.",
   "site_location": "facility, project or site name shown on the gate pass (e.g. TAZIZ, ADNOC Ruwais, GASCO Habshan)",
   "pass_expiry": "YYYY-MM-DD expiry date of the gate pass or security pass",
@@ -1101,14 +1102,53 @@ function DocumentPanel({entity, entityType, onClose, onApplyAiData}) {
 
   const loadDocs = useCallback(async () => {
     setLoading(true);
-    const { data } = await db.from('mob_documents')
+    // Primary: load docs for this entity
+    const { data: primary } = await db.from('mob_documents')
       .select('*')
       .eq('entity_type', entityType)
       .eq('entity_id', entity.id)
       .order('uploaded_at', {ascending:false});
-    setDocs(data || []);
+
+    let allDocs = primary || [];
+
+    // For candidates: also fetch docs stored under their mob_register records
+    if (entityType === 'candidate') {
+      const { data: mobRecs } = await db.from('mob_register')
+        .select('id')
+        .eq('candidate_id', entity.id);
+      if (mobRecs && mobRecs.length > 0) {
+        const mobIds = mobRecs.map(r => r.id);
+        const { data: mobDocs } = await db.from('mob_documents')
+          .select('*')
+          .eq('entity_type', 'mobilisation')
+          .in('entity_id', mobIds)
+          .order('uploaded_at', {ascending:false});
+        if (mobDocs && mobDocs.length > 0) {
+          // Merge, deduplicating by file_path
+          const seen = new Set(allDocs.map(d => d.file_path));
+          mobDocs.forEach(d => { if (!seen.has(d.file_path)) { allDocs.push(d); seen.add(d.file_path); } });
+        }
+      }
+    }
+
+    // For mob records: also fetch docs stored under the linked candidate
+    if (entityType === 'mobilisation' && entity.candidate_id) {
+      const { data: candDocs } = await db.from('mob_documents')
+        .select('*')
+        .eq('entity_type', 'candidate')
+        .eq('entity_id', entity.candidate_id)
+        .order('uploaded_at', {ascending:false});
+      if (candDocs && candDocs.length > 0) {
+        const seen = new Set(allDocs.map(d => d.file_path));
+        candDocs.forEach(d => { if (!seen.has(d.file_path)) { allDocs.push(d); seen.add(d.file_path); } });
+      }
+    }
+
+    // Sort all by uploaded_at descending
+    allDocs.sort((a,b) => new Date(b.uploaded_at||0) - new Date(a.uploaded_at||0));
+    setDocs(allDocs);
     setLoading(false);
-  }, [entity.id, entityType]);
+  }, [entity.id, entity.candidate_id, entityType]);
 
   useEffect(() => { loadDocs(); }, [loadDocs]);
 
@@ -1141,6 +1181,35 @@ function DocumentPanel({entity, entityType, onClose, onApplyAiData}) {
       a.click();
       document.body.removeChild(a);
     } catch(ex) { setErr(ex.message); }
+  };
+
+  const downloadAll = async () => {
+    if (!docs.length) return;
+    setErr('');
+    try {
+      const JSZip = window.JSZip;
+      if (!JSZip) { setErr('JSZip not loaded — refresh and try again'); return; }
+      const zip = new JSZip();
+      const folder = zip.folder(entity.full_name.replace(/[^a-zA-Z0-9]/g,'_'));
+      let count = 0;
+      for (const doc of docs) {
+        try {
+          const { data: blob, error } = await db.storage.from(DOC_BUCKET).download(doc.file_path);
+          if (error || !blob) continue;
+          const ext = (doc.file_name||'file').split('.').pop();
+          const label = (doc.doc_label||doc.doc_type||'doc').replace(/[^a-zA-Z0-9_-]/g,'_');
+          folder.file(`${label}.${ext}`, blob);
+          count++;
+        } catch(e) { /* skip failed file */ }
+      }
+      if (!count) { setErr('Could not download any files'); return; }
+      const blob = await zip.generateAsync({type:'blob'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${entity.full_name.replace(/\s+/g,'_')}_documents.zip`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    } catch(ex) { setErr('Download failed: ' + ex.message); }
   };
 
   const deleteDoc = async doc => {
@@ -1223,7 +1292,15 @@ function DocumentPanel({entity, entityType, onClose, onApplyAiData}) {
                 {entityType==='mobilisation' && ` · ${entity.customer_name} / ${entity.location}`}
               </div>
             </div>
-            <button onClick={onClose} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'#fff',width:32,height:32,borderRadius:'50%',cursor:'pointer',fontSize:'18px',display:'flex',alignItems:'center',justifyContent:'center'}}>×</button>
+            <div style={{display:'flex',gap:'6px',alignItems:'center',flexShrink:0}}>
+              {docs.length>0&&(
+                <button onClick={downloadAll} title={`Download all ${docs.length} documents as ZIP`}
+                  style={{background:'#b8972a',border:'none',color:'#fff',padding:'5px 10px',borderRadius:6,cursor:'pointer',fontSize:'11px',fontWeight:700,whiteSpace:'nowrap'}}>
+                  ⬇ All ({docs.length})
+                </button>
+              )}
+              <button onClick={onClose} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'#fff',width:32,height:32,borderRadius:'50%',cursor:'pointer',fontSize:'18px',display:'flex',alignItems:'center',justifyContent:'center'}}>×</button>
+            </div>
           </div>
         </div>
 
@@ -1290,7 +1367,10 @@ function DocumentPanel({entity, entityType, onClose, onApplyAiData}) {
 
         {/* Documents list */}
         <div style={{flex:1,padding:'14px 20px',overflowY:'auto'}}>
-          <div style={{fontWeight:700,fontSize:'12px',color:'#0f172a',marginBottom:'10px'}}>📄 Documents ({docs.length})</div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'10px'}}>
+            <div style={{fontWeight:700,fontSize:'12px',color:'#0f172a'}}>📄 Documents ({docs.length})</div>
+            {docs.length>1&&<button style={{...S.btnSm,padding:'3px 10px',fontSize:'11px',background:'#0f172a',color:'#fff',border:'none'}} onClick={downloadAll}>⬇ Download All as ZIP</button>}
+          </div>
           {loading && <div style={{color:'#94a3b8',fontSize:'13px'}}>Loading…</div>}
           {!loading && docs.length===0 && (
             <div style={{textAlign:'center',padding:'30px 20px',color:'#94a3b8',border:'2px dashed #e2e8f0',borderRadius:8}}>
@@ -2602,6 +2682,15 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
   // Apply AI-scanned data back to a candidate record — handles all doc types
   const applyAiData = async (aiData, docType) => {
     if (!docPanel) return;
+    // Global guard: EID-format numbers (784-YYYY-XXXXXXX-X) must never sit in passport_no
+    if (aiData.passport_no && /^784-\d{4}-\d{7}-\d$/.test(aiData.passport_no)) {
+      if (!aiData.emirates_id) aiData.emirates_id = aiData.passport_no;
+      aiData.passport_no = null;
+    }
+    // CICPA guard: if fewer than 6 digits, reject it as truncated
+    if (aiData.cicpa_pass_no && aiData.cicpa_pass_no.replace(/\D/g,'').length < 6) {
+      aiData.cicpa_pass_no = null;
+    }
     const dt = (aiData.doc_type || docType || '').toLowerCase();
     const updates = {};
 
@@ -2629,6 +2718,11 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
     // Passport — only update name if currently empty, never touch designation
     else if (dt.includes('passport') || (aiData.passport_no && !aiData.wp_no)) {
       if (aiData.full_name && !docPanel.entity.full_name) updates.full_name = aiData.full_name;
+      // Guard: if AI put EID-format number (784-YYYY-XXXXXXX-X) in passport_no, move it to EID
+      if (aiData.passport_no && /^784-\d{4}-\d{7}-\d$/.test(aiData.passport_no)) {
+        if (!aiData.emirates_id) aiData.emirates_id = aiData.passport_no;
+        aiData.passport_no = null;
+      }
       if (aiData.passport_no)     updates.passport_no     = aiData.passport_no;
       if (aiData.passport_expiry) updates.passport_expiry = aiData.passport_expiry;
       if (aiData.nationality)     updates.nationality     = aiData.nationality;
@@ -2957,6 +3051,9 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                       // full_name: only if draft currently has no name
                       if (result.full_name && !draft.full_name && !allUpdates.full_name) allUpdates.full_name = result.full_name;
                       // ── Work Permit (MOHRE) ──────────────────────────────
+                      // Global data guards before any field is written
+                      if (result.passport_no && /^784-\d{4}-\d{7}-\d$/.test(result.passport_no)) { if (!result.emirates_id) result.emirates_id = result.passport_no; result.passport_no = null; }
+                      if (result.cicpa_pass_no && result.cicpa_pass_no.replace(/\D/g,'').length < 6) { result.cicpa_pass_no = null; }
                       // CRITICAL: do NOT trigger on result.wp_employer alone — medical reports also
                       // contain a company name which the AI can misread as wp_employer. Only fire when
                       // the doc is actually identified as a work_permit, OR when wp_no is present.
@@ -3379,7 +3476,7 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.nationality||'—'}</td>
                 <td style={{...S.td,fontSize:'12px',whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>{c.date_of_birth?fmtDOB(c.date_of_birth):'—'}</td>
                 {/* Passport — red X if missing, colored expiry */}
-                <Cell col={c.passport_no?ppCol:{bg:'#fee2e2',color:'#991b1b',icon:'✗'}} text={c.passport_no||'Missing'} title={`Passport expiry: ${fmtDate(c.passport_expiry)}`}/>
+{(()=>{ const isEidFormat = c.passport_no && /^784-\d{4}-\d{7}-\d$/.test(c.passport_no); return <Cell col={isEidFormat?{bg:'#fef3c7',color:'#b45309',icon:'⚠'}:c.passport_no?ppCol:{bg:'#fee2e2',color:'#991b1b',icon:'✗'}} text={isEidFormat?'⚠ EID in PP field':c.passport_no||'Missing'} title={isEidFormat?'EID number stored in passport field — edit to fix':`Passport expiry: ${fmtDate(c.passport_expiry)}`}/>; })()}
                 {/* Emirates ID */}
                 <Cell col={c.emirates_id?eidCol:{bg:'#fee2e2',color:'#991b1b',icon:'✗'}} text={c.emirates_id||'Missing'} title="Emirates ID"/>
                 {/* EID Expiry */}
@@ -3389,7 +3486,7 @@ function CandidatesTab({candidates, mobList, suppliers=[], onSave, onDelete, onM
                   {c.visa_location||'—'}
                 </td>
                 {/* Security Pass */}
-                <Cell col={c.security_pass_no?secCol:{bg:'#f1f5f9',color:'#94a3b8',icon:'—'}} text={c.security_pass_no||'—'} title="Security Pass No"/>
+{(()=>{ const shortCicpa = c.security_pass_no && c.security_pass_no.replace(/\D/g,'').length < 6; return <Cell col={shortCicpa?{bg:'#fef3c7',color:'#b45309',icon:'⚠'}:c.security_pass_no?secCol:{bg:'#f1f5f9',color:'#94a3b8',icon:'—'}} text={shortCicpa?`⚠ ${c.security_pass_no}?`:c.security_pass_no||'—'} title={shortCicpa?'CICPA looks incomplete — edit to verify':'Security Pass No'}/>; })()}
                 {/* Security Pass Expiry */}
                 <Cell col={c.security_pass_expiry?secCol:{bg:'#f1f5f9',color:'#94a3b8',icon:'—'}} text={c.security_pass_expiry?fmtDate(c.security_pass_expiry):'—'} title="Security Pass Expiry"/>
                 {/* ADNOC Medical — split into 3 columns: Status | Report No | Expiry */}
