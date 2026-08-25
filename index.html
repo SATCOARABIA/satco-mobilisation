@@ -3952,17 +3952,20 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
   const customerOpts = useMemo(()=>customers.map(c=>({value:c,label:c})),[customers]);
   const locationOpts  = useMemo(()=>locations.map(l=>({value:l,label:l})),[locations]);
 
-  const filtered = useMemo(()=> mobList.filter(m=>{
-    if (fCust.size   && !fCust.has(m.customer_name||''))  return false;
-    if (fLoc.size    && !fLoc.has(m.location||''))         return false;
-    if (fStatus.size && !fStatus.has(m.status||''))        return false;
-    if (fReady.size) {
-      const rd = computeReadiness(m);
-      if (fReady.has('ready')     && !rd.readyForSubmission) return false;
-      if (fReady.has('not_ready') && rd.readyForSubmission)  return false;
-    }
-    return matchSearch(m, search);
-  }), [mobList, search, fCust, fLoc, fStatus, fReady, computeReadiness]);
+  const filtered = useMemo(()=>{
+    const candById = {}; candidates.forEach(c=>{ if(c.id) candById[c.id]=c; });
+    return mobList.filter(m=>{
+      if (fCust.size   && !fCust.has(m.customer_name||''))  return false;
+      if (fLoc.size    && !fLoc.has(m.location||''))         return false;
+      if (fStatus.size && !fStatus.has(m.status||''))        return false;
+      if (fReady.size) {
+        const rd = computeReadiness(m);
+        if (fReady.has('ready')     && !rd.readyForSubmission) return false;
+        if (fReady.has('not_ready') && rd.readyForSubmission)  return false;
+      }
+      return matchSearch(m, search);
+    }).map(m=>({...m, _cand: m.candidate_id ? candById[m.candidate_id] : null}));
+  }, [mobList, candidates, search, fCust, fLoc, fStatus, fReady, computeReadiness]);
 
   const fillFromCandidate = candId => {
     if (!candId) { setDraft(d=>({...d,candidate_id:null})); return; }
@@ -4147,23 +4150,24 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
     const data = rows.map((r, i) => {
       const extraDone  = (r.extra_trainings||[]).filter(t=>t.done).map(t=>t.name).join(', ');
       const extraAll   = (r.extra_trainings||[]).map(t=>t.name).join(', ');
+      const cand = r._cand || {};
       return {
         'S.No':                  i + 1,
         'Name':                  r.full_name || '',
         'Supplier Emp No':       r.supplier_emp_no || '',
-        'Supplier':              r.supplier_name || '',
+        'Supplier':              r.supplier_name || (r.source==='satco_own'?'SATCO Arabia':''),
         'Designation':           r.designation || '',
         'Source':                r.source || '',
-        'Nationality':           r.nationality || '',
-        'Date of Birth':         fD(r.date_of_birth),
-        'Passport No':           r.passport_no || '',
-        'Passport Expiry':       fD(r.passport_expiry),
-        'Emirates ID':           r.emirates_id || '',
-        'EID Expiry':            fD(r.eid_expiry),
-        'Visa No':               r.visa_no || '',
-        'Visa Type':             r.visa_type || '',
-        'Visa Issued Emirate':   r.visa_location || '',
-        'Visa Expiry':           fD(r.visa_expiry),
+        'Nationality':           r.nationality||cand.nationality||'',
+        'Date of Birth':         fD(r.date_of_birth||cand.date_of_birth),
+        'Passport No':           r.passport_no||cand.passport_no||'',
+        'Passport Expiry':       fD(r.passport_expiry||cand.passport_expiry),
+        'Emirates ID':           r.emirates_id||cand.emirates_id||'',
+        'EID Expiry':            fD(r.eid_expiry||cand.eid_expiry),
+        'Visa No':               r.visa_no||cand.visa_no||'',
+        'Visa Type':             r.visa_type||cand.visa_type||'',
+        'Visa Issued Emirate':   r.visa_location||cand.visa_location||'',
+        'Visa Expiry':           fD(r.visa_expiry||cand.visa_expiry),
         'Customer':              r.customer_name || '',
         'Location / Site':       r.location || '',
         'Status':                r.status || '',
@@ -4172,12 +4176,13 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
         'Demob Reason':          r.demob_reason || '',
         'Demob Remarks':         r.demob_remarks || '',
         'WP Action on Demob':    r.wp_action_on_demob || '',
-        'Work Permit No':        r.wp_no || '',
+        'Work Permit No':        r.wp_no||cand.wp_no||'',
+        'WP Employer':           r.wp_employer||cand.wp_employer||'',
         'WP Applied Date':       fD(r.wp_applied_date),
         'WP Approved Date':      fD(r.wp_approved_date),
-        'WP Expiry':             fD(r.wp_expiry),
-        'ADNOC Medical Status':  r.adnoc_medical_status || '',
-        'ADNOC Medical Date':    fD(r.adnoc_medical_date),
+        'WP Expiry':             fD(r.wp_expiry||cand.wp_expiry),
+        'ADNOC Medical Status':  r.adnoc_medical_status||cand.adnoc_medical_status||'',
+        'ADNOC Medical Date':    fD(r.adnoc_medical_date||cand.adnoc_medical_date),
         'Medical Done':          r.medical_done ? 'Yes' : 'No',
         'Medical Date':          fD(r.medical_date),
         'Medical Result':        r.medical_result || '',
@@ -4188,7 +4193,9 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
         'H2S Done':              r.h2s_done ? 'Yes' : 'No',
         'H2S Date':              fD(r.h2s_date),
         'H2S Expiry':            fD(r.h2s_expiry),
-        'CICPA Pass No':         r.cicpa_pass_no || '',
+        'Med Report No':         r.medical_record_no||cand.medical_record_no||'',
+        'Med Cert Expiry':       fD(r.medical_expiry||cand.medical_expiry),
+        'CICPA Pass No':         r.cicpa_pass_no||cand.security_pass_no||'',
         'CICPA Applied Date':    fD(r.cicpa_applied_date),
         'CICPA Approved Date':   fD(r.cicpa_approved_date),
         'CICPA Expiry':          fD(r.cicpa_expiry_date),
@@ -4749,19 +4756,24 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
         <table style={{width:'max-content',minWidth:'100%',borderCollapse:'collapse',tableLayout:'fixed'}}>
           <colgroup>
             <col style={{width:'38px'}}/>{/* ☑ */}
-            <col style={{width:'170px'}}/>{/* Name */}
-            <col style={{width:'130px'}}/>{/* Designation */}
+            <col style={{width:'190px'}}/>{/* Name */}
+            <col style={{width:'120px'}}/>{/* Designation */}
             <col style={{width:'110px'}}/>{/* Emp No */}
-            <col style={{width:'180px'}}/>{/* Supplier */}
-            <col style={{width:'130px'}}/>{/* Customer */}
-            <col style={{width:'110px'}}/>{/* Location */}
-            <col style={{width:'100px'}}/>{/* Work Permit */}
-            <col style={{width:'130px'}}/>{/* Medical */}
-            <col style={{width:'80px'}}/>{/* HSE */}
-            <col style={{width:'80px'}}/>{/* H2S */}
-            <col style={{width:'60px'}}/>{/* Extra */}
-            <col style={{width:'110px'}}/>{/* ADNOC Med */}
-            <col style={{width:'110px'}}/>{/* CICPA */}
+            <col style={{width:'200px'}}/>{/* Supplier */}
+            <col style={{width:'80px'}}/>{/* Nationality */}
+            <col style={{width:'115px'}}/>{/* Passport */}
+            <col style={{width:'90px'}}/>{/* Passport Exp */}
+            <col style={{width:'155px'}}/>{/* EID */}
+            <col style={{width:'90px'}}/>{/* EID Exp */}
+            <col style={{width:'90px'}}/>{/* Visa */}
+            <col style={{width:'115px'}}/>{/* WP No */}
+            <col style={{width:'90px'}}/>{/* WP Exp */}
+            <col style={{width:'120px'}}/>{/* Med Status */}
+            <col style={{width:'95px'}}/>{/* Med Exp */}
+            <col style={{width:'115px'}}/>{/* CICPA */}
+            <col style={{width:'115px'}}/>{/* ADNOC Med */}
+            <col style={{width:'70px'}}/>{/* HSE */}
+            <col style={{width:'70px'}}/>{/* H2S */}
             <col style={{width:'95px'}}/>{/* Mob Date */}
             <col style={{width:'95px'}}/>{/* Demob Date */}
             <col style={{width:'85px'}}/>{/* Status */}
@@ -4777,10 +4789,10 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
               />
             </th>
             <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,background:'#f8fafc',borderRight:'2px solid #e2e8f0'}}>Name</th>
-            {['Emp No','Supplier','Customer','Location','Work Permit','Medical','ADNOC Med','HSE','H2S','Extra','CICPA','Mob Date','Demob Date','Status','Readiness','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,whiteSpace:'nowrap'}}>{h}</th>)}
+            {['Designation','Emp No','Supplier','Nationality','Passport','Passport Exp','EID','EID Exp','Visa','WP No','WP Exp','Med Status','Med Exp','CICPA','ADNOC Med','HSE','H2S','Mob Date','Demob Date','Status','Readiness','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,whiteSpace:'nowrap'}}>{h}</th>)}
           </tr></thead>
           <tbody>
-            {filtered.length===0&&<tr><td colSpan={18} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No records. Use filters or click <strong>+ Add Person</strong>.</td></tr>}
+            {filtered.length===0&&<tr><td colSpan={24} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No records. Use filters or click <strong>+ Add Person</strong>.</td></tr>}
             {filtered.map((r,idx)=>{
               const ex=(r.extra_trainings||[]), exDone=ex.filter(t=>t.done).length;
               const cicpaExpiring = r.cicpa_expiry_date&&daysUntil(r.cicpa_expiry_date)<=30&&daysUntil(r.cicpa_expiry_date)>=0;
@@ -4799,64 +4811,81 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
                 </td>
                 {/* Name — frozen */}
                 <td className="frozen-col" style={{...S.td,fontWeight:700,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',borderLeft:mobSel.has(r.id)?'3px solid #dc2626':docPanel?.entity?.id===r.id?'3px solid #2563eb':'3px solid transparent',borderRight:'2px solid #e2e8f0',background:rowBg,paddingTop:'4px',paddingBottom:'4px'}}>
-                  <div style={{display:'flex',alignItems:'center',gap:'5px',overflow:'hidden'}}>
-                    <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.full_name}</span>
-
-                  </div>
+                  <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.full_name}</span>
                 </td>
-                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px'}}>{r.designation||'—'}</td>
+                {/* Designation */}
+                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px',fontSize:'12px'}}>{r.designation||'—'}</td>
+                {/* Emp No */}
                 <td style={{...S.td,whiteSpace:'nowrap',fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:'#0369a1',paddingTop:'4px',paddingBottom:'4px'}}>{r.supplier_emp_no||'—'}</td>
+                {/* Supplier */}
                 <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px',fontSize:'12px'}}>{r.supplier_name||(r.source==='satco_own'?'SATCO Arabia':'—')}</td>
-                <td style={{...S.td,fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px',fontSize:'12px'}}>{r.customer_name}</td>
-                <td style={{...S.td,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',paddingTop:'4px',paddingBottom:'4px'}}>{r.location}</td>
-                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
-                  {r.wp_approved_date?<span style={{color:'#166534',fontWeight:700,fontSize:'11px'}}>✓ {r.wp_no||'Appr'}</span>
-                   :r.wp_applied_date?<span style={{color:'#b45309',fontSize:'11px'}}>Applied</span>
-                   :<span style={{color:'#dc2626',fontSize:'11px'}}>—</span>}
-                </td>
-                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
-                  {r.medical_done
-                    ? <span style={{color:'#166534',fontWeight:700,fontSize:'11px'}}>✓ {r.medical_result||'Fit'} {r.medical_date?fmtDate(r.medical_date):''}</span>
-                    : <span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
-                </td>
-                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
-                  {r.adnoc_medical_status==='Fit'
+                {/* Nationality */}
+                <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px'}}>{r.nationality||r._cand?.nationality||'—'}</td>
+                {/* Passport */}
+                <td style={{...S.td,whiteSpace:'nowrap',fontFamily:'monospace',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px'}}>{r.passport_no||r._cand?.passport_no||'—'}</td>
+                {/* Passport Expiry */}
+                {(()=>{const d=r.passport_expiry||r._cand?.passport_expiry;const days=d?daysUntil(d):null;return <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px',color:days!==null&&days<90?'#b45309':'inherit'}}>{fmtDate(d)||'—'}</td>;})()} 
+                {/* EID */}
+                <td style={{...S.td,whiteSpace:'nowrap',fontFamily:'monospace',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px'}}>{r.emirates_id||r._cand?.emirates_id||'—'}</td>
+                {/* EID Expiry */}
+                {(()=>{const d=r.eid_expiry||r._cand?.eid_expiry;const days=d?daysUntil(d):null;return <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px',color:days!==null&&days<90?'#b45309':'inherit'}}>{fmtDate(d)||'—'}</td>;})()} 
+                {/* Visa Emirate */}
+                <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px',color:'#0369a1'}}>{r.visa_location||r._cand?.visa_location||'—'}</td>
+                {/* WP No + WP Exp — mob register first, fallback to candidate */}
+                {(()=>{
+                  const wpNo=r.wp_no||r._cand?.wp_no||null;
+                  const wpExp=r.wp_expiry||r._cand?.wp_expiry||null;
+                  const wpOk=wpNo&&wpExp&&new Date(wpExp)>new Date();
+                  const days=wpExp?daysUntil(wpExp):null;
+                  return <>
+                    <td style={{...S.td,whiteSpace:'nowrap',fontFamily:'monospace',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px',color:wpOk?'#166534':'#9ca3af'}}>{wpNo||'—'}</td>
+                    <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px',color:days!==null&&days<90?'#b45309':wpOk?'#166534':'#9ca3af'}}>{fmtDate(wpExp)||'—'}</td>
+                  </>;
+                })()}
+                {/* Med Status + Med Expiry — mob register, fallback to candidate */}
+                {(()=>{
+                  const medSt=r.adnoc_medical_status||r._cand?.adnoc_medical_status||null;
+                  const medExp=r.medical_expiry||r._cand?.medical_expiry||null;
+                  const isUnfit=(medSt||'').toLowerCase().includes('unfit');
+                  const days=medExp?daysUntil(medExp):null;
+                  const expired=days!==null&&days<0; const expiring=days!==null&&days<=90;
+                  const bg=!medSt?'transparent':isUnfit?'#fee2e2':'#dcfce7';
+                  const col=!medSt?'#9ca3af':isUnfit?'#dc2626':'#166534';
+                  return <>
+                    <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'3px',paddingBottom:'3px'}}>
+                      {medSt?<span style={{background:bg,color:col,fontWeight:700,fontSize:'10px',padding:'2px 6px',borderRadius:4,whiteSpace:'nowrap'}}>{isUnfit?'Unfit':medSt}</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
+                    </td>
+                    <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px',color:expired?'#dc2626':expiring?'#b45309':'inherit'}}>{fmtDate(medExp)||'—'}</td>
+                  </>;
+                })()}
+                {/* CICPA — mob register fallback candidate */}
+                {(()=>{
+                  const cicpaNo=r.cicpa_pass_no||r._cand?.security_pass_no||null;
+                  const cicpaExp=r.cicpa_expiry_date||r._cand?.security_pass_expiry||null;
+                  const days=cicpaExp?daysUntil(cicpaExp):null;
+                  const expired=days!==null&&days<0; const expiring=days!==null&&days<=60;
+                  return <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'3px',paddingBottom:'3px'}}>
+                    {cicpaNo?<span style={{fontWeight:700,fontSize:'10px',color:expired?'#dc2626':expiring?'#b45309':'#166534',whiteSpace:'nowrap'}}>{expired?'🔴':expiring?'⚠':'✓'} {cicpaNo}{cicpaExp?` · ${fmtDate(cicpaExp)}`:''}</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
+                  </td>;
+                })()}
+                {/* ADNOC Med — mob register adnoc_medical_status */}
+                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'3px',paddingBottom:'3px'}}>
+                  {(r.adnoc_medical_status||'').toLowerCase().includes('fit')&&!(r.adnoc_medical_status||'').toLowerCase().includes('unfit')
                     ? <span style={{background:'#dcfce7',color:'#166534',fontWeight:700,fontSize:'10px',padding:'2px 6px',borderRadius:4}}>✓ Fit</span>
-                    : r.adnoc_medical_status==='Unfit'
+                    : (r.adnoc_medical_status||'').toLowerCase().includes('unfit')
                     ? <span style={{background:'#fee2e2',color:'#dc2626',fontWeight:700,fontSize:'10px',padding:'2px 6px',borderRadius:4}}>✗ Unfit</span>
-                    : r.adnoc_medical_status==='Pending'
-                    ? <span style={{background:'#fef3c7',color:'#92400e',fontWeight:700,fontSize:'10px',padding:'2px 6px',borderRadius:4}}>⏳ Pending</span>
                     : <span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
                 </td>
+                {/* HSE */}
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
-                  {r.hse_passport_done?<span style={{color:'#166534',fontWeight:700,fontSize:'11px'}}>✓ HSE</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>— HSE</span>}
+                  {r.hse_passport_done?<span style={{color:'#166534',fontWeight:700,fontSize:'12px'}}>✓</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
                 </td>
+                {/* H2S */}
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
-                  {r.h2s_done?<span style={{color:'#166534',fontWeight:700,fontSize:'11px'}}>✓ H2S</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>— H2S</span>}
+                  {r.h2s_done?<span style={{color:'#166534',fontWeight:700,fontSize:'12px'}}>✓</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
                 </td>
-                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
-                  {ex.length>0?<span style={{fontSize:'11px',fontWeight:700,color:exDone===ex.length?'#166534':'#b45309'}}>{exDone}/{ex.length}</span>:<span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
-                </td>
-                <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px'}}>
-                  {r.cicpa_pass_no ? (()=>{
-                    const days = r.cicpa_expiry_date ? daysUntil(r.cicpa_expiry_date) : null;
-                    const expired  = days !== null && days < 0;
-                    const expiring = days !== null && days >= 0 && days <= 60;
-                    return (
-                      <div>
-                        <span style={{fontWeight:700,fontSize:'11px',color:expired?'#dc2626':expiring?'#b45309':'#166534'}}>
-                          {expired?'🔴':expiring?'⚠':'✓'} {r.cicpa_pass_no}
-                        </span>
-                        {r.cicpa_expiry_date&&<div style={{fontSize:'10px',color:expired?'#dc2626':expiring?'#b45309':'#64748b',marginTop:'1px'}}>
-                          Exp: {fmtDate(r.cicpa_expiry_date)}{days!==null&&` (${days<0?Math.abs(days)+'d ago':days+'d'})`}
-                        </div>}
-                      </div>
-                    );
-                  })()
-                  : r.cicpa_applied_date ? <span style={{color:'#b45309',fontSize:'11px'}}>⏳ Applied</span>
-                  : <span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
-                </td>
-                <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px'}}>{fmtDate(r.mobilisation_date)}</td>
+                {/* Mob Date */}
+                <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px'}}>{fmtDate(r.mobilisation_date)||'—'}</td>
                 <td style={{...S.td,whiteSpace:'nowrap',fontSize:'11px',paddingTop:'4px',paddingBottom:'4px'}}>
                   {r.demobilisation_date?<span>{fmtDate(r.demobilisation_date)}</span>:<span style={{color:'#9ca3af'}}>—</span>}
                 </td>
