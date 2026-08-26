@@ -1085,15 +1085,13 @@ async function handleFile(file) {
     onProgress("Starting…", 2);
     const dataUrl = await fileToDataUrl(file);
     const { text, fields } = await extractFromFile(file, onProgress);
-    onProgress("Done", 100);
-    state.upload.extracted = { ...fields, file_data_url: dataUrl, mime: file.type, rawText: text.slice(0, 2000) };
-    if (!text || text.trim().length < 5) {
-      toast("Couldn't find readable text in this file — fill in the fields manually below.");
-    } else {
-      toast("Extracted details below — please double-check before saving.");
-    }
+    onProgress("✓ Done — check fields below", 100);
+    state.upload.extracted = { ...fields, file_data_url: dataUrl, mime: file.type };
+    toast("✓ AI extracted details — please double-check before saving.");
   } catch (e) {
-    toast("Extraction failed: " + e.message + " — you can still fill fields in manually.");
+    const errMsg = e.message || "Unknown error";
+    onProgress("⚠ AI failed: " + errMsg, 100);
+    toast("⚠ AI failed: " + errMsg + " — fill in the fields manually.");
     const dataUrl = await fileToDataUrl(file).catch(() => "");
     state.upload.extracted = { type: "Other", name: "", number: "", nationality: "", issue_date: "", expiry_date: "", file_data_url: dataUrl, mime: file.type };
   }
@@ -1304,6 +1302,8 @@ function renderSettings() {
   return card;
 }
 
+// Always start with a clean upload state — never show stale extracted data from a previous session
+state.upload = { file: null, status: "", progress: 0, extracted: null, busy: false };
 render();
 if (state.pin) loadAll();
 </script>
