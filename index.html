@@ -367,6 +367,30 @@ CREATE TABLE IF NOT EXISTS mob_location_config (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   location text NOT NULL UNIQUE, trainings jsonb DEFAULT '[]', updated_at timestamptz DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS mob_timesheets (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  work_date date NOT NULL,
+  mob_register_id uuid NOT NULL,
+  full_name text NOT NULL,
+  designation text,
+  supplier_name text,
+  supplier_emp_no text,
+  customer_name text NOT NULL,
+  location text NOT NULL,
+  hours numeric(4,1) NOT NULL DEFAULT 0,
+  is_holiday boolean DEFAULT false,
+  holiday_name text,
+  notes text,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE(work_date, mob_register_id)
+);
+ALTER TABLE mob_timesheets ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='mob_timesheets' AND policyname='ts_auth') THEN
+    CREATE POLICY ts_auth ON mob_timesheets FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_mob_cand_name   ON mob_candidates(full_name);
 CREATE INDEX IF NOT EXISTS idx_mob_cand_eid    ON mob_candidates(emirates_id);
 CREATE INDEX IF NOT EXISTS idx_mob_cand_pass   ON mob_candidates(passport_no);
@@ -1056,6 +1080,7 @@ function TopNav({tab, setTab, onSignOut, globalSearch, setGlobalSearch, searchRe
     {k:'loa',         l:'📄 LOA'},
     {k:'candidates',  l:'👥 Candidates'},
     {k:'mobilisation',l:'🏗 Mobilisation'},
+    {k:'timesheet',   l:'🕐 Timesheet'},
     {k:'suppliers',   l:'🏭 Suppliers'},
     {k:'letters',     l:'✉️ Letters'},
     {k:'config',      l:'⚙️ Setup'},
@@ -5557,6 +5582,547 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
   );
 }
 // ── Letters Tab ───────────────────────────────────────────────────────────────
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TIMESHEET TAB
+// ══════════════════════════════════════════════════════════════════════════════
+function TimesheetTab({ mobList = [], onRefresh }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [selDate,     setSelDate]     = useState(today);
+  const [selCustomer, setSelCustomer] = useState('');
+  const [selLocation, setSelLocation] = useState('');
+  const [entries,     setEntries]     = useState({}); // { mob_register_id: { hours, is_holiday, holiday_name, notes } }
+  const [isHoliday,   setIsHoliday]   = useState(false);
+  const [holidayName, setHolidayName] = useState('');
+  const [saved,       setSaved]       = useState({}); // { mob_register_id: saved row }
+  const [saving,      setSaving]      = useState(false);
+  const [loading,     setLoading]     = useState(false);
+  const [saveMsg,     setSaveMsg]     = useState('');
+  const [waPhone,     setWaPhone]     = useState('');
+  const [showWaInput, setShowWaInput] = useState(false);
+  const [viewMode,    setViewMode]    = useState('entry'); // 'entry' | 'history'
+  const [history,     setHistory]     = useState([]);
+  const [histLoading, setHistLoading] = useState(false);
+  const [calMonth,    setCalMonth]    = useState(() => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; });
+  const [exportMsg,   setExportMsg]   = useState('');
+
+  // Distinct customers from active mobilised records
+  const customers = useMemo(() => {
+    const s = new Set(mobList.filter(r=>r.status==='mobilised').map(r=>r.customer_name).filter(Boolean));
+    return [...s].sort();
+  }, [mobList]);
+
+  // Locations for selected customer
+  const locations = useMemo(() => {
+    const s = new Set(mobList.filter(r=>r.status==='mobilised'&&(!selCustomer||r.customer_name===selCustomer)).map(r=>r.location).filter(Boolean));
+    return [...s].sort();
+  }, [mobList, selCustomer]);
+
+  // Workers at selected site
+  const workers = useMemo(() => {
+    return mobList.filter(r =>
+      r.status === 'mobilised' &&
+      (!selCustomer || r.customer_name === selCustomer) &&
+      (!selLocation || r.location === selLocation)
+    ).sort((a,b) => (a.full_name||'').localeCompare(b.full_name||''));
+  }, [mobList, selCustomer, selLocation]);
+
+  // Auto-select if only one customer/location
+  useEffect(() => { if(customers.length===1) setSelCustomer(customers[0]); }, [customers]);
+  useEffect(() => { if(locations.length===1) setSelLocation(locations[0]); }, [locations]);
+
+  // Load existing records for selected date+site
+  useEffect(() => {
+    if (!selDate || !selCustomer || !selLocation) { setSaved({}); setEntries({}); setIsHoliday(false); setHolidayName(''); return; }
+    setLoading(true);
+    db.from('mob_timesheets')
+      .select('*')
+      .eq('work_date', selDate)
+      .eq('customer_name', selCustomer)
+      .eq('location', selLocation)
+      .then(({ data }) => {
+        const sv = {};
+        const en = {};
+        let hol = false, holName = '';
+        (data || []).forEach(row => {
+          sv[row.mob_register_id] = row;
+          en[row.mob_register_id] = { hours: String(row.hours), notes: row.notes || '' };
+          if (row.is_holiday) { hol = true; holName = row.holiday_name || ''; }
+        });
+        setSaved(sv);
+        setEntries(en);
+        setIsHoliday(hol);
+        setHolidayName(holName);
+        setLoading(false);
+      });
+  }, [selDate, selCustomer, selLocation]);
+
+  const setHours = (id, val) => setEntries(e => ({ ...e, [id]: { ...(e[id]||{}), hours: val } }));
+  const setNotes = (id, val) => setEntries(e => ({ ...e, [id]: { ...(e[id]||{}), notes: val } }));
+
+  const handleSave = async () => {
+    if (!selDate || !selCustomer || !selLocation) return;
+    setSaving(true); setSaveMsg('');
+    const rows = workers.map(w => ({
+      work_date:       selDate,
+      mob_register_id: w.id,
+      full_name:       w.full_name || '',
+      designation:     w.designation || '',
+      supplier_name:   w.supplier_name || '',
+      supplier_emp_no: w.supplier_emp_no || '',
+      customer_name:   selCustomer,
+      location:        selLocation,
+      hours:           parseFloat((entries[w.id]?.hours) ?? '0') || 0,
+      is_holiday:      isHoliday,
+      holiday_name:    isHoliday ? holidayName : null,
+      notes:           entries[w.id]?.notes || null,
+      updated_at:      new Date().toISOString(),
+    }));
+    const { error } = await db.from('mob_timesheets').upsert(rows, { onConflict: 'work_date,mob_register_id' });
+    if (error) { setSaveMsg('❌ Error: ' + error.message); }
+    else {
+      setSaveMsg('✅ Saved successfully!');
+      // Refresh saved state
+      const { data } = await db.from('mob_timesheets').select('*').eq('work_date', selDate).eq('customer_name', selCustomer).eq('location', selLocation);
+      const sv = {}; (data||[]).forEach(r => sv[r.mob_register_id] = r);
+      setSaved(sv);
+    }
+    setSaving(false);
+    setTimeout(() => setSaveMsg(''), 3000);
+  };
+
+  // History load
+  const loadHistory = async () => {
+    if (!selCustomer || !selLocation) return;
+    setHistLoading(true);
+    const from = new Date(); from.setDate(from.getDate() - 30);
+    const { data } = await db.from('mob_timesheets')
+      .select('*')
+      .eq('customer_name', selCustomer)
+      .eq('location', selLocation)
+      .gte('work_date', from.toISOString().slice(0,10))
+      .order('work_date', { ascending: false });
+    setHistory(data || []);
+    setHistLoading(false);
+  };
+  useEffect(() => {
+    if (viewMode === 'history' && selCustomer && selLocation) loadHistoryForMonth(calMonth);
+  }, [viewMode, selCustomer, selLocation, calMonth]);
+
+  // Export to Excel
+  const exportExcel = () => {
+    const XLSX = window.XLSX;
+    if (!XLSX) return alert('SheetJS not loaded — refresh page.');
+    if (!history.length) return alert('No history to export.');
+    // Group by date then worker
+    const rows = history.map((r,i) => ({
+      'Date':        r.work_date,
+      'Holiday':     r.is_holiday ? (r.holiday_name || 'Holiday') : '',
+      'Emp No':      r.supplier_emp_no || '',
+      'Name':        r.full_name || '',
+      'Designation': r.designation || '',
+      'Supplier':    r.supplier_name || '',
+      'Hours':       r.hours,
+      'Notes':       r.notes || '',
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{wch:12},{wch:16},{wch:12},{wch:26},{wch:16},{wch:28},{wch:7},{wch:24}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Timesheet');
+    const site = selLocation.replace(/\s+/g,'_');
+    XLSX.writeFile(wb, `Timesheet_${site}_Last30Days.xlsx`);
+  };
+
+  const fmtDate = d => { if(!d) return ''; const dt=new Date(d+'T00:00:00'); return dt.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); };
+
+  const sendWhatsApp = () => {
+    const dateStr = selDate ? new Date(selDate+'T00:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric'}) : '';
+    const holLine = isHoliday ? `\n🌙 PUBLIC HOLIDAY: ${holidayName||'Holiday'} (×1.5 rate)` : '';
+    const lines = workers.map((w,i) => {
+      const dispName = (w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' ');
+      const hrs = entries[w.id]?.hours || '';
+      return `${i+1}. ${dispName} (${w.supplier_emp_no||'—'}) — ${hrs ? hrs+' hrs' : '__ hrs'}`;
+    }).join('\n');
+    const msg = `SATCO TIMESHEET\n${selCustomer} | ${selLocation}\nDate: ${dateStr}${holLine}\n\n${lines}\n\nPlease fill in hours and send back.`;
+    const encoded = encodeURIComponent(msg);
+    const phone = waPhone.replace(/[^0-9]/g,'');
+    const url = phone ? `https://wa.me/${phone}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
+    window.open(url, '_blank');
+  };
+  const totalHours = workers.reduce((s,w) => s + (parseFloat(entries[w.id]?.hours)||0), 0);
+
+  // History grouped by date
+  const histByDate = useMemo(() => {
+    const m = {};
+    history.forEach(r => { if(!m[r.work_date]) m[r.work_date]=[]; m[r.work_date].push(r); });
+    return Object.entries(m).sort((a,b)=>b[0].localeCompare(a[0]));
+  }, [history]);
+
+  // Calendar: map of date -> { total, isHoliday, holidayName, count }
+  const calDayMap = useMemo(() => {
+    const m = {};
+    history.forEach(r => {
+      if (!m[r.work_date]) m[r.work_date] = { total:0, isHoliday:false, holidayName:'', count:0 };
+      m[r.work_date].total += parseFloat(r.hours||0);
+      m[r.work_date].count += 1;
+      if (r.is_holiday) { m[r.work_date].isHoliday=true; m[r.work_date].holidayName=r.holiday_name||''; }
+    });
+    return m;
+  }, [history]);
+
+  // Load history whenever calMonth changes (fetch whole month)
+  const loadHistoryForMonth = async (ym) => {
+    if (!selCustomer || !selLocation) return;
+    setHistLoading(true);
+    const [y,m] = ym.split('-').map(Number);
+    const from = `${y}-${String(m).padStart(2,'0')}-01`;
+    const lastDay = new Date(y,m,0).getDate();
+    const to = `${y}-${String(m).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+    const { data } = await db.from('mob_timesheets')
+      .select('*')
+      .eq('customer_name', selCustomer)
+      .eq('location', selLocation)
+      .gte('work_date', from)
+      .lte('work_date', to)
+      .order('work_date', { ascending: false });
+    setHistory(data || []);
+    setHistLoading(false);
+  };
+
+  return (
+    <div style={{maxWidth:'900px',margin:'0 auto',padding:'16px 8px'}}>
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'16px',flexWrap:'wrap'}}>
+        <div>
+          <div style={{fontSize:'18px',fontWeight:800,color:'#0f172a'}}>🕐 Timesheet</div>
+          <div style={{fontSize:'11px',color:'#64748b',marginTop:'2px'}}>Daily hours per employee per site</div>
+        </div>
+        <div style={{marginLeft:'auto',display:'flex',gap:'6px'}}>
+          <button onClick={()=>setViewMode('entry')} style={{padding:'5px 14px',fontSize:'12px',fontWeight:700,border:'none',borderRadius:6,cursor:'pointer',background:viewMode==='entry'?'#0f172a':'#e2e8f0',color:viewMode==='entry'?'#fff':'#374151'}}>📝 Daily Entry</button>
+          <button onClick={()=>setViewMode('history')} style={{padding:'5px 14px',fontSize:'12px',fontWeight:700,border:'none',borderRadius:6,cursor:'pointer',background:viewMode==='history'?'#0f172a':'#e2e8f0',color:viewMode==='history'?'#fff':'#374151'}}>📅 History</button>
+        </div>
+      </div>
+
+      {/* Site + Date selectors */}
+      <div style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'14px 16px',marginBottom:'14px',display:'flex',gap:'12px',flexWrap:'wrap',alignItems:'flex-end'}}>
+        <div>
+          <div style={{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}}>Customer</div>
+          <select value={selCustomer} onChange={e=>{setSelCustomer(e.target.value);setSelLocation('');}}
+            style={{padding:'6px 10px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:'13px',fontWeight:600,minWidth:'180px'}}>
+            <option value=''>— Select Customer —</option>
+            {customers.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}}>Site / Location</div>
+          <select value={selLocation} onChange={e=>setSelLocation(e.target.value)}
+            style={{padding:'6px 10px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:'13px',fontWeight:600,minWidth:'180px'}}>
+            <option value=''>— Select Location —</option>
+            {locations.map(l=><option key={l} value={l}>{l}</option>)}
+          </select>
+        </div>
+        {viewMode==='entry' && (
+          <div>
+            <div style={{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}}>Date</div>
+            <input type='date' value={selDate} onChange={e=>setSelDate(e.target.value)}
+              style={{padding:'6px 10px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:'13px',fontWeight:600}} />
+          </div>
+        )}
+      </div>
+
+      {/* ── DAILY ENTRY VIEW ── */}
+      {viewMode==='entry' && selCustomer && selLocation && (
+        <div style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',overflow:'hidden'}}>
+          {/* Date bar */}
+          <div style={{background:'#0f172a',padding:'10px 16px',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}}>
+            <div style={{fontWeight:800,fontSize:'14px',color:'#f8fafc'}}>📅 {fmtDate(selDate)}</div>
+            <div style={{fontSize:'12px',color:'#94a3b8'}}>{selCustomer} · {selLocation}</div>
+            {/* Holiday toggle */}
+            <label style={{display:'flex',alignItems:'center',gap:'7px',cursor:'pointer',marginLeft:'auto',background:'#1e293b',padding:'5px 12px',borderRadius:20,border:`2px solid ${isHoliday?'#f59e0b':'#334155'}`}}>
+              <input type='checkbox' checked={isHoliday} onChange={e=>setIsHoliday(e.target.checked)}
+                style={{width:15,height:15,accentColor:'#f59e0b',cursor:'pointer'}} />
+              <span style={{fontSize:'12px',fontWeight:700,color:isHoliday?'#fde68a':'#94a3b8'}}>🌙 Public Holiday</span>
+            </label>
+          </div>
+
+          {/* Holiday name input */}
+          {isHoliday && (
+            <div style={{background:'#fffbeb',borderBottom:'1px solid #fde68a',padding:'8px 16px',display:'flex',alignItems:'center',gap:'10px'}}>
+              <span style={{fontSize:'12px',fontWeight:700,color:'#92400e'}}>Holiday Name:</span>
+              <input value={holidayName} onChange={e=>setHolidayName(e.target.value)}
+                placeholder='e.g. Mawlid al-Nabi' 
+                style={{padding:'4px 10px',border:'1px solid #fde68a',borderRadius:6,fontSize:'12px',flex:1,maxWidth:'280px'}} />
+              <span style={{fontSize:'11px',color:'#b45309'}}>× 1.5 rate applies — noted for records</span>
+            </div>
+          )}
+
+          {loading ? (
+            <div style={{padding:'32px',textAlign:'center',color:'#94a3b8'}}>Loading…</div>
+          ) : workers.length === 0 ? (
+            <div style={{padding:'32px',textAlign:'center',color:'#94a3b8'}}>No mobilised employees found for this site.</div>
+          ) : (
+            <>
+              <table style={{width:'100%',borderCollapse:'collapse'}}>
+                <thead>
+                  <tr style={{background:'#f8fafc',borderBottom:'2px solid #e2e8f0'}}>
+                    <th style={{...S.th,width:'40px',textAlign:'center'}}>#</th>
+                    <th style={{...S.th,width:'110px'}}>Emp No</th>
+                    <th style={{...S.th}}>Name</th>
+                    <th style={{...S.th,width:'130px'}}>Designation</th>
+                    <th style={{...S.th,width:'90px',textAlign:'center'}}>Hours</th>
+                    <th style={{...S.th,width:'36px',textAlign:'center'}}>✓</th>
+                    <th style={{...S.th}}>Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {workers.map((w,i) => {
+                    const hrs = entries[w.id]?.hours ?? '';
+                    const isSaved = !!saved[w.id];
+                    const rowBg = isHoliday ? (i%2===0?'#fffbeb':'#fef9e7') : (i%2===0?'#fff':'#fafafa');
+                    return (
+                      <tr key={w.id} style={{background:rowBg,borderBottom:'1px solid #f1f5f9'}}>
+                        <td style={{...S.td,textAlign:'center',color:'#94a3b8',fontSize:'12px'}}>{i+1}</td>
+                        <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:'#0369a1'}}>{w.supplier_emp_no||'—'}</td>
+                        <td style={{...S.td,fontWeight:700}}>
+                          {(w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' ')}
+                          <span style={{display:'block',fontSize:'10px',color:'#94a3b8',fontWeight:400,lineHeight:1.2,marginTop:'1px'}}>{w.full_name}</span>
+                        </td>
+                        <td style={{...S.td,fontSize:'12px',color:'#475569'}}>{w.designation||'—'}</td>
+                        <td style={{...S.td,textAlign:'center',padding:'4px 6px'}}>
+                          <input
+                            type='number' min='0' max='24' step='0.5'
+                            value={hrs}
+                            onChange={e=>setHours(w.id, e.target.value)}
+                            placeholder='0'
+                            style={{width:'64px',padding:'5px 8px',border:`2px solid ${isHoliday?'#f59e0b':'#cbd5e1'}`,borderRadius:6,fontSize:'14px',fontWeight:700,textAlign:'center',background:isHoliday?'#fffbeb':'#fff'}}
+                          />
+                        </td>
+                        <td style={{...S.td,textAlign:'center'}}>
+                          {isSaved && parseFloat(saved[w.id]?.hours)===parseFloat(hrs||0)
+                            ? <span style={{color:'#16a34a',fontSize:'16px'}} title='Saved'>✓</span>
+                            : <span style={{color:'#e2e8f0',fontSize:'16px'}}>○</span>}
+                        </td>
+                        <td style={{...S.td,padding:'4px 8px'}}>
+                          <input value={entries[w.id]?.notes||''} onChange={e=>setNotes(w.id,e.target.value)}
+                            placeholder='optional'
+                            style={{width:'100%',padding:'4px 8px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:'11px'}} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr style={{background:'#f0f9ff',borderTop:'2px solid #bae6fd'}}>
+                    <td colSpan={4} style={{...S.td,fontWeight:800,fontSize:'13px',color:'#0369a1',textAlign:'right',paddingRight:'12px'}}>Total Hours</td>
+                    <td style={{...S.td,textAlign:'center',fontWeight:800,fontSize:'16px',color:isHoliday?'#b45309':'#0369a1'}}>{totalHours.toFixed(1)}</td>
+                    <td colSpan={2} style={{...S.td}}>
+                      {isHoliday && <span style={{fontSize:'11px',color:'#b45309',fontWeight:700}}>🌙 Holiday rate × 1.5</span>}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+              {/* Save bar */}
+              <div style={{padding:'12px 16px',background:'#f8fafc',borderTop:'1px solid #e2e8f0',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}}>
+                <button onClick={handleSave} disabled={saving}
+                  style={{padding:'8px 24px',background:'#166534',color:'#fff',border:'none',borderRadius:7,fontWeight:800,fontSize:'13px',cursor:'pointer',opacity:saving?0.6:1}}>
+                  {saving ? 'Saving…' : '💾 Save Timesheet'}
+                </button>
+                {saveMsg && <span style={{fontSize:'13px',fontWeight:700,color:saveMsg.startsWith('✅')?'#16a34a':'#dc2626'}}>{saveMsg}</span>}
+                {/* WhatsApp button */}
+                <div style={{display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap'}}>
+                  {showWaInput && (
+                    <input
+                      type='tel'
+                      value={waPhone}
+                      onChange={e=>setWaPhone(e.target.value)}
+                      placeholder='971xxxxxxxxx (with country code)'
+                      style={{padding:'6px 10px',border:'1px solid #25d366',borderRadius:6,fontSize:'12px',width:'220px'}}
+                    />
+                  )}
+                  <button
+                    onClick={()=>{ if(!showWaInput){setShowWaInput(true);}else{sendWhatsApp();} }}
+                    style={{padding:'8px 16px',background:'#25d366',color:'#fff',border:'none',borderRadius:7,fontWeight:800,fontSize:'13px',cursor:'pointer',display:'flex',alignItems:'center',gap:'6px'}}>
+                    <svg width='16' height='16' viewBox='0 0 24 24' fill='white'><path d='M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z'/><path d='M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.11 1.522 5.83L.044 23.956l6.278-1.647A11.93 11.93 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.794 9.794 0 01-5.001-1.37l-.358-.213-3.724.977.993-3.63-.234-.374A9.787 9.787 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182c5.43 0 9.818 4.388 9.818 9.818 0 5.43-4.388 9.818-9.818 9.818z'/></svg>
+                    {showWaInput ? 'Send Now' : '📲 Send WhatsApp Template'}
+                  </button>
+                  {showWaInput && <button onClick={()=>setShowWaInput(false)} style={{padding:'6px 10px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:'12px',background:'#fff',cursor:'pointer',color:'#64748b'}}>Cancel</button>}
+                </div>
+                <div style={{marginLeft:'auto',fontSize:'11px',color:'#94a3b8'}}>
+                  {Object.keys(saved).length > 0 ? `${Object.keys(saved).length} records saved for this date` : 'Not yet saved for this date'}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {!selCustomer && viewMode==='entry' && (
+        <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:10,padding:'40px',textAlign:'center',color:'#94a3b8'}}>
+          <div style={{fontSize:'32px',marginBottom:'8px'}}>🏗️</div>
+          <div style={{fontWeight:700}}>Select a customer and site above to start entering hours</div>
+        </div>
+      )}
+
+      {/* ── CALENDAR / HISTORY VIEW ── */}
+      {viewMode==='history' && selCustomer && selLocation && (()=>{
+        const [calY, calM] = calMonth.split('-').map(Number);
+        const firstDay = new Date(calY, calM-1, 1).getDay(); // 0=Sun
+        const daysInMonth = new Date(calY, calM, 0).getDate();
+        const todayStr = new Date().toISOString().slice(0,10);
+        const DAY_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        const prevMonth = () => {
+          const d = new Date(calY, calM-2, 1);
+          setCalMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+        };
+        const nextMonth = () => {
+          const d = new Date(calY, calM, 1);
+          setCalMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+        };
+        const monthName = new Date(calY, calM-1, 1).toLocaleDateString('en-GB',{month:'long',year:'numeric'});
+        // Selected date detail
+        const detailRows = selDate && calDayMap[selDate] ? (histByDate.find(([d])=>d===selDate)||[null,[]])[1] : [];
+        const selDayData = selDate ? calDayMap[selDate] : null;
+        return (
+          <div>
+            {/* Calendar card */}
+            <div style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',overflow:'hidden',marginBottom:'12px'}}>
+              {/* Header */}
+              <div style={{background:'#0f172a',padding:'10px 16px',display:'flex',alignItems:'center',gap:'10px'}}>
+                <button onClick={prevMonth} style={{background:'none',border:'1px solid #334155',color:'#94a3b8',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontSize:'16px',fontWeight:700}}>‹</button>
+                <div style={{fontWeight:800,fontSize:'14px',color:'#f8fafc',flex:1,textAlign:'center'}}>{monthName}</div>
+                <button onClick={nextMonth} style={{background:'none',border:'1px solid #334155',color:'#94a3b8',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontSize:'16px',fontWeight:700}}>›</button>
+                <button onClick={exportExcel}
+                  style={{marginLeft:'8px',padding:'5px 14px',background:'#166534',color:'#fff',border:'none',borderRadius:6,fontWeight:700,fontSize:'11px',cursor:'pointer'}}>
+                  ⬇ Export Excel
+                </button>
+              </div>
+              {histLoading ? (
+                <div style={{padding:'32px',textAlign:'center',color:'#94a3b8'}}>Loading…</div>
+              ) : (
+                <div style={{padding:'12px'}}>
+                  {/* Day labels */}
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'4px',marginBottom:'4px'}}>
+                    {DAY_LABELS.map(d=>(
+                      <div key={d} style={{textAlign:'center',fontSize:'10px',fontWeight:700,color:'#94a3b8',padding:'4px 0'}}>{d}</div>
+                    ))}
+                  </div>
+                  {/* Day cells */}
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'4px'}}>
+                    {/* Empty cells for offset */}
+                    {Array.from({length:firstDay}).map((_,i)=><div key={'e'+i}/>)}
+                    {/* Day cells */}
+                    {Array.from({length:daysInMonth}).map((_,i)=>{
+                      const d = i+1;
+                      const dateStr = `${calY}-${String(calM).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                      const dayData = calDayMap[dateStr];
+                      const isToday = dateStr===todayStr;
+                      const isSel   = dateStr===selDate;
+                      const isFuture= dateStr>todayStr;
+                      const isHol   = dayData?.isHoliday;
+                      const hasDat  = !!dayData;
+                      let bg = '#f8fafc', border = '1px solid #e2e8f0', color = '#374151';
+                      if (isFuture)  { bg='#f8fafc'; color='#cbd5e1'; border='1px solid #f1f5f9'; }
+                      if (hasDat)    { bg=isHol?'#fffbeb':'#f0fdf4'; border=isHol?'1px solid #fde68a':'1px solid #86efac'; color='#0f172a'; }
+                      if (isToday)   { border='2px solid #3b82f6'; }
+                      if (isSel)     { bg='#1e40af'; border='2px solid #1e40af'; color='#fff'; }
+                      return (
+                        <div key={d}
+                          onClick={()=>{ if(!isFuture){ setSelDate(dateStr); } }}
+                          style={{borderRadius:8,border,background:bg,color,padding:'6px 4px',textAlign:'center',cursor:isFuture?'default':'pointer',minHeight:'58px',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'flex-start',transition:'all .1s'}}>
+                          <div style={{fontWeight:isToday||isSel?800:600,fontSize:'13px',marginBottom:'2px'}}>{d}</div>
+                          {hasDat && !isSel && (
+                            <>
+                              <div style={{fontSize:'11px',fontWeight:800,color:isHol?'#b45309':'#166534'}}>{dayData.total.toFixed(0)}h</div>
+                              {isHol && <div style={{fontSize:'8px',color:'#b45309',lineHeight:1}}>🌙</div>}
+                            </>
+                          )}
+                          {isSel && hasDat && (
+                            <div style={{fontSize:'11px',fontWeight:800,color:'#bfdbfe'}}>{dayData.total.toFixed(0)}h</div>
+                          )}
+                          {!hasDat && !isFuture && (
+                            <div style={{fontSize:'9px',color:'#cbd5e1',marginTop:'2px'}}>—</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {/* Legend */}
+                  <div style={{display:'flex',gap:'14px',marginTop:'10px',padding:'6px 4px',flexWrap:'wrap'}}>
+                    <span style={{fontSize:'10px',color:'#64748b',display:'flex',alignItems:'center',gap:'4px'}}><span style={{width:12,height:12,borderRadius:3,background:'#f0fdf4',border:'1px solid #86efac',display:'inline-block'}}/>Hours saved</span>
+                    <span style={{fontSize:'10px',color:'#64748b',display:'flex',alignItems:'center',gap:'4px'}}><span style={{width:12,height:12,borderRadius:3,background:'#fffbeb',border:'1px solid #fde68a',display:'inline-block'}}/>🌙 Holiday</span>
+                    <span style={{fontSize:'10px',color:'#64748b',display:'flex',alignItems:'center',gap:'4px'}}><span style={{width:12,height:12,borderRadius:3,background:'#f8fafc',border:'1px solid #cbd5e1',display:'inline-block'}}/>No record — click to add</span>
+                    <span style={{fontSize:'10px',color:'#64748b',display:'flex',alignItems:'center',gap:'4px'}}><span style={{width:12,height:12,borderRadius:3,background:'#1e40af',border:'2px solid #1e40af',display:'inline-block'}}/>Selected</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Selected date detail panel */}
+            {selDate && (
+              <div style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',overflow:'hidden'}}>
+                <div style={{background:selDayData?.isHoliday?'#92400e':'#1e3a5f',padding:'10px 16px',display:'flex',alignItems:'center',gap:'10px'}}>
+                  <div style={{fontWeight:800,fontSize:'14px',color:'#f8fafc'}}>
+                    📅 {fmtDate(selDate)}
+                    {selDayData?.isHoliday && <span style={{marginLeft:'10px',background:'#fde68a',color:'#92400e',fontSize:'10px',padding:'2px 8px',borderRadius:10,fontWeight:700}}>🌙 {selDayData.holidayName||'Holiday'} · ×1.5</span>}
+                  </div>
+                  <div style={{marginLeft:'auto',display:'flex',gap:'8px',alignItems:'center'}}>
+                    {selDayData && <span style={{fontSize:'12px',fontWeight:700,color:'#bfdbfe'}}>{selDayData.total.toFixed(1)} hrs total · {selDayData.count} workers</span>}
+                    <button
+                      onClick={()=>setViewMode('entry')}
+                      style={{padding:'5px 14px',background:'#b8972a',color:'#fff',border:'none',borderRadius:6,fontWeight:700,fontSize:'12px',cursor:'pointer'}}>
+                      ✏️ {selDayData ? 'Edit This Day' : 'Add Hours for This Day'}
+                    </button>
+                  </div>
+                </div>
+                {selDayData ? (
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12px'}}>
+                    <thead>
+                      <tr style={{background:'#f8fafc',borderBottom:'2px solid #e2e8f0'}}>
+                        <th style={{...S.th,width:'110px'}}>Emp No</th>
+                        <th style={{...S.th}}>Name</th>
+                        <th style={{...S.th,width:'130px'}}>Designation</th>
+                        <th style={{...S.th,width:'80px',textAlign:'center'}}>Hours</th>
+                        <th style={{...S.th}}>Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(histByDate.find(([d])=>d===selDate)||[null,[]])[1].map((r,i)=>(
+                        <tr key={r.id} style={{background:i%2===0?'#fff':'#fafafa',borderBottom:'1px solid #f1f5f9'}}>
+                          <td style={{...S.td,fontFamily:'monospace',fontSize:'11px',color:'#0369a1',fontWeight:700}}>{r.supplier_emp_no||'—'}</td>
+                          <td style={{...S.td,fontWeight:600}}>
+                            {(r.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' ')}
+                            <span style={{display:'block',fontSize:'10px',color:'#94a3b8',fontWeight:400,lineHeight:1.2}}>{r.full_name}</span>
+                          </td>
+                          <td style={{...S.td,color:'#475569'}}>{r.designation||'—'}</td>
+                          <td style={{...S.td,textAlign:'center',fontWeight:800,fontSize:'15px',color:selDayData?.isHoliday?'#b45309':'#166534'}}>{parseFloat(r.hours||0).toFixed(1)}</td>
+                          <td style={{...S.td,color:'#94a3b8',fontSize:'11px'}}>{r.notes||''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div style={{padding:'28px',textAlign:'center',color:'#94a3b8'}}>
+                    <div style={{fontSize:'24px',marginBottom:'6px'}}>📋</div>
+                    <div style={{fontWeight:700,marginBottom:'4px'}}>No hours recorded for this date</div>
+                    <div style={{fontSize:'12px'}}>Click <strong>Add Hours for This Day</strong> above to enter timesheet</div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {!selCustomer && viewMode==='history' && (
+        <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:10,padding:'40px',textAlign:'center',color:'#94a3b8'}}>
+          <div style={{fontSize:'32px',marginBottom:'8px'}}>📅</div>
+          <div style={{fontWeight:700}}>Select a customer and site to view history</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LettersTab({mobList, candidates=[]}) {
   const [letterType,setLetterType] = useState('client');
   const [fCust,setFCust]   = useState(new Set());
@@ -7176,6 +7742,7 @@ function App() {
             {tab==='requirements' &&<RequirementsTab requirements={data.requirements} onSave={onSave}/>}
             {tab==='loa'          &&<LoaTab loaList={data.loaList} usedMap={loaUsed} onSave={onSave}/>}
             {tab==='mobilisation' &&<MobilisationTab mobList={data.mobList} candidates={data.candidates} loaList={data.loaList} requirements={data.requirements} usedMap={loaUsed} locConfigs={data.locConfigs} onSave={onSave} onDemob={onDemob} onRefresh={loadAll} initialStatus={filterStatus} tabSearch={tabSearch} bulkMobFilter={bulkMobFilter} onClearBulkFilter={()=>setBulkMobFilter(null)}/>}
+            {tab==='timesheet'    &&<TimesheetTab mobList={data.mobList} onRefresh={loadAll}/>}
             {tab==='suppliers'    &&<SuppliersTab suppliers={data.suppliers} onRefresh={loadAll}/>}
             {tab==='letters'      &&<LettersTab mobList={data.mobList} candidates={data.candidates}/>}
             {tab==='config'       &&<ConfigTab locConfigs={data.locConfigs} suppliers={data.suppliers} onSave={onSave}/>}
