@@ -4716,8 +4716,8 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
       const cand = r._cand || {};
       return {
         'S.No':                  i + 1,
+        'Emp No':                r.supplier_emp_no || cand.supplier_emp_no || '',
         'Name':                  r.full_name || '',
-        'Supplier Emp No':       r.supplier_emp_no || cand.supplier_emp_no || '',
         'Supplier':              r.supplier_name || (r.source==='satco_own'||cand.source==='satco_own'?'SATCO Arabia':cand.supplier_name) || '',
         'Designation':           r.designation || '',
         'Source':                r.source || '',
@@ -4773,8 +4773,8 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
     });
     const ws = XLSX.utils.json_to_sheet(data);
     ws['!cols'] = [
-      // S.No, Name, EmpNo, Supplier, Designation, Source, Nationality, DOB
-      {wch:5},{wch:28},{wch:14},{wch:32},{wch:20},{wch:10},{wch:12},{wch:12},
+      // S.No, EmpNo, Name, Supplier, Designation, Source, Nationality, DOB
+      {wch:5},{wch:14},{wch:28},{wch:32},{wch:20},{wch:10},{wch:12},{wch:12},
       // Passport No, PP Expiry, Emirates ID, EID Expiry, Visa No, Visa Type, Visa Emirate, Visa Expiry
       {wch:13},{wch:14},{wch:20},{wch:12},{wch:16},{wch:12},{wch:16},{wch:12},
       // Customer, Location, Status, Mob Date, Demob Date, Demob Reason, Demob Remarks, WP Action on Demob
@@ -5263,13 +5263,15 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
                 <div style={{overflowX:'auto'}}>
                   <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12px'}}>
                     <thead><tr style={{background:'#f0fdf4',borderBottom:'1px solid #86efac'}}>
-                      {['Name','Designation','Supplier/EmpNo','Mob Date','WP','CICPA','Actions'].map(h=>(
+                      {['Sl.No','Emp No','Name','Designation','Supplier/EmpNo','Mob Date','WP','CICPA','Actions'].map(h=>(
                         <th key={h} style={{...S.th,fontSize:'11px'}}>{h}</th>
                       ))}
                     </tr></thead>
                     <tbody>
                       {site.mobilised.map((r_raw,i)=>{ const r=candMerge(r_raw); return (
                         <tr key={r.id} style={{background:i%2===0?'#fff':'#f8fafc',borderBottom:'1px solid #f1f5f9'}}>
+                          <td style={{...S.td,textAlign:'center',fontWeight:700,color:'#475569',fontSize:'12px',width:'42px'}}>{i+1}</td>
+                          <td style={{...S.td,whiteSpace:'nowrap',fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:'#0369a1'}}>{r.supplier_emp_no||r._cand?.supplier_emp_no||'—'}</td>
                           <td style={{...S.td,fontWeight:700,whiteSpace:'nowrap'}}>{r.full_name}</td>
                           <td style={{...S.td,whiteSpace:'nowrap'}}>{r.designation||'—'}</td>
                           <td style={{...S.td,whiteSpace:'nowrap',color:'#64748b',fontSize:'11px'}}>{r.supplier_name||(r._cand?.source==='satco_own'?'SATCO Arabia':r._cand?.supplier_name)||'—'} · {r.supplier_emp_no||r._cand?.supplier_emp_no||'—'}</td>
@@ -5375,9 +5377,10 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
         <table style={{width:'max-content',minWidth:'100%',borderCollapse:'collapse',tableLayout:'fixed'}}>
           <colgroup>
             <col style={{width:'38px'}}/>{/* ☑ */}
+            <col style={{width:'50px'}}/>{/* Sl.No */}
+            <col style={{width:'110px'}}/>{/* Emp No */}
             <col style={{width:'190px'}}/>{/* Name */}
             <col style={{width:'120px'}}/>{/* Designation */}
-            <col style={{width:'110px'}}/>{/* Emp No */}
             <col style={{width:'200px'}}/>{/* Supplier */}
             <col style={{width:'80px'}}/>{/* Nationality */}
             <col style={{width:'115px'}}/>{/* Passport */}
@@ -5407,8 +5410,10 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
                 onChange={()=> mobSel.size===filtered.length ? setMobSel(new Set()) : setMobSel(new Set(filtered.map(r=>r.id)))}
               />
             </th>
+            <th style={{...S.th,position:'sticky',top:0,zIndex:13,background:'#f8fafc',whiteSpace:'nowrap',textAlign:'center',width:'50px'}}>Sl. No</th>
+            <th style={{...S.th,position:'sticky',top:0,zIndex:13,background:'#f8fafc',whiteSpace:'nowrap'}}>Emp No</th>
             <th style={{...S.th,position:'sticky',top:0,left:0,zIndex:14,background:'#f8fafc',borderRight:'2px solid #e2e8f0'}}>Name</th>
-            {['Designation','Emp No','Supplier','Nationality','Passport','Passport Exp','EID','EID Exp','Visa','WP No','WP Exp','Med Status','Med Exp','CICPA','ADNOC Med','HSE','H2S','Mob Date','Demob Date','Status','Readiness','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,whiteSpace:'nowrap'}}>{h}</th>)}
+            {['Designation','Supplier','Nationality','Passport','Passport Exp','EID','EID Exp','Visa','WP No','WP Exp','Med Status','Med Exp','CICPA','ADNOC Med','HSE','H2S','Mob Date','Demob Date','Status','Readiness','Actions'].map(h=><th key={h} style={{...S.th,position:'sticky',top:0,zIndex:12,whiteSpace:'nowrap'}}>{h}</th>)}
           </tr></thead>
           <tbody>
             {filtered.length===0&&<tr><td colSpan={24} style={{padding:'24px',textAlign:'center',color:'#94a3b8'}}>No records. Use filters or click <strong>+ Add Person</strong>.</td></tr>}
@@ -5428,14 +5433,16 @@ function MobilisationTab({mobList, candidates, loaList, requirements, usedMap, l
                   <input type="checkbox" checked={mobSel.has(r.id)} readOnly
                     style={{width:14,height:14,accentColor:'#dc2626',cursor:'pointer'}}/>
                 </td>
+                {/* Sl. No */}
+                <td style={{...S.td,width:'50px',textAlign:'center',fontWeight:700,color:'#475569',fontSize:'12px',paddingTop:'4px',paddingBottom:'4px'}}>{idx+1}</td>
+                {/* Emp No */}
+                <td style={{...S.td,whiteSpace:'nowrap',fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:'#0369a1',paddingTop:'4px',paddingBottom:'4px'}}>{r.supplier_emp_no||'—'}</td>
                 {/* Name — frozen */}
                 <td className="frozen-col" style={{...S.td,fontWeight:700,whiteSpace:'nowrap',borderLeft:mobSel.has(r.id)?'3px solid #dc2626':docPanel?.entity?.id===r.id?'3px solid #2563eb':'3px solid transparent',borderRight:'2px solid #e2e8f0',background:rowBg,paddingTop:'4px',paddingBottom:'4px'}}>
                   <span style={{whiteSpace:'nowrap'}}>{r.full_name}</span>
                 </td>
                 {/* Designation */}
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px',fontSize:'12px'}}>{r.designation||'—'}</td>
-                {/* Emp No */}
-                <td style={{...S.td,whiteSpace:'nowrap',fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:'#0369a1',paddingTop:'4px',paddingBottom:'4px'}}>{r.supplier_emp_no||'—'}</td>
                 {/* Supplier */}
                 <td style={{...S.td,whiteSpace:'nowrap',paddingTop:'4px',paddingBottom:'4px',fontSize:'12px'}}>{r.supplier_name||(r.source==='satco_own'?'SATCO Arabia':'—')}</td>
                 {/* Nationality */}
