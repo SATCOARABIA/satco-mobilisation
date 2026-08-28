@@ -5598,8 +5598,22 @@ function TimesheetTab({ mobList = [], onRefresh }) {
   const [saving,      setSaving]      = useState(false);
   const [loading,     setLoading]     = useState(false);
   const [saveMsg,     setSaveMsg]     = useState('');
-  const [waPhone,     setWaPhone]     = useState('');
-  const [showWaInput, setShowWaInput] = useState(false);
+  const [waPhone,       setWaPhone]       = useState('');
+  const [showWaInput,   setShowWaInput]   = useState(false);
+  const [showTsExport,  setShowTsExport]  = useState(false);
+  const [tsSettings,    setTsSettings]    = useState({
+    clientName:    'ALGHANIM INTERNATIONAL GENERAL TRADING & CONTRACTING CO., ABU DHABI',
+    poNo:          '072-46',
+    costCode:      '509062',
+    project:       'VOLTA Project - TAZIZ Derivatives Park (TDP), RUWAIS, Abu Dhabi, UAE',
+    craft:         'Grinder',
+    rate:          '24',
+    vat:           '5',
+    currency:      'AED',
+    checkedBy:     'Quality International',
+    approvedBy:    'Alghanim International',
+    subcontractor: 'SATCO ARABIA GENERAL CONTRACTING LLC SPC',
+  });
   const [viewMode,    setViewMode]    = useState('entry'); // 'entry' | 'history'
   const [history,     setHistory]     = useState([]);
   const [histLoading, setHistLoading] = useState(false);
@@ -5710,12 +5724,12 @@ function TimesheetTab({ mobList = [], onRefresh }) {
   }, [viewMode, selCustomer, selLocation, calMonth]);
 
   // Export to Excel
+  // ── Simple raw export (internal use) ──────────────────────────────────────
   const exportExcel = () => {
     const XLSX = window.XLSX;
     if (!XLSX) return alert('SheetJS not loaded — refresh page.');
     if (!history.length) return alert('No history to export.');
-    // Group by date then worker
-    const rows = history.map((r,i) => ({
+    const rows = history.map(r => ({
       'Date':        r.work_date,
       'Holiday':     r.is_holiday ? (r.holiday_name || 'Holiday') : '',
       'Emp No':      r.supplier_emp_no || '',
@@ -5729,8 +5743,204 @@ function TimesheetTab({ mobList = [], onRefresh }) {
     ws['!cols'] = [{wch:12},{wch:16},{wch:12},{wch:26},{wch:16},{wch:28},{wch:7},{wch:24}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Timesheet');
-    const site = selLocation.replace(/\s+/g,'_');
-    XLSX.writeFile(wb, `Timesheet_${site}_Last30Days.xlsx`);
+    XLSX.writeFile(wb, `Timesheet_${(selLocation||'').replace(/\s+/g,'_')}_${calMonth}.xlsx`);
+  };
+
+  // ── CLIENT TIMESHEET EXPORT (Alghanim format) ────────────────────────────
+  const exportClientTimesheet = (cfg=tsSettings) => {
+    const XLSX = window.XLSX;
+    if (!XLSX) return alert('SheetJS not loaded — refresh page.');
+    if (!history.length) return alert('No timesheet records for this month.');
+
+    const [calY, calM] = calMonth.split('-').map(Number);
+    const daysInMonth  = new Date(calY, calM, 0).getDate();
+    const monthName    = new Date(calY, calM-1, 1).toLocaleDateString('en-GB',{month:'long',year:'numeric'}).toUpperCase();
+    const RATE         = parseFloat(cfg.rate) || 24;
+    const VAT_PCT      = (parseFloat(cfg.vat) || 5) / 100;
+    const DAY_ABBR     = ['SUN','MON','TUE','WED','THU','FRI','SAT'];
+
+    // Build day headers: day number 1..daysInMonth
+    const dayHeaders = Array.from({length:daysInMonth},(_,i)=>i+1);
+
+    // Build per-worker hour map: workerId -> { dayNo -> hours, is_holiday set }
+    // Workers: unique by supplier_emp_no+full_name from history
+    const workerMap = {}; // key = mob_register_id
+    const holDays = new Set(); // day numbers that are holidays
+    history.forEach(r => {
+      const d = new Date(r.work_date+'T00:00:00').getDate();
+      if (!workerMap[r.mob_register_id]) {
+        workerMap[r.mob_register_id] = {
+          empNo: r.supplier_emp_no||'',
+          name:  r.full_name||'',
+          desig: r.designation||cfg.craft,
+          supp:  r.supplier_name||'SATCO ARABIA GENERAL CONTRACTING - L.L.C - S.P.C',
+          days:  {},
+        };
+      }
+      workerMap[r.mob_register_id].days[d] = parseFloat(r.hours||0);
+      if (r.is_holiday) holDays.add(d);
+    });
+
+    const workers = Object.values(workerMap);
+
+    // Build rows array for sheet_add_aoa
+    const aoa = [];
+
+    // ── ROW 0: SATCO header title ──
+    aoa.push([cfg.subcontractor,'','','','',
+      ...Array(daysInMonth+6).fill('')]);
+
+    // ── ROW 1: Title ──
+    aoa.push([`TIMESHEET FOR THE MONTH OF ${monthName}`,'','','','',
+      ...Array(daysInMonth+6).fill('')]);
+
+    // ── ROW 2: Sub-contractor label ──
+    aoa.push([`Sub-Contractor: ${cfg.subcontractor}`,'','','','',
+      ...Array(daysInMonth+6).fill('')]);
+
+    // ── ROW 3: Client info ──
+    aoa.push([`Client: ${cfg.clientName}`,
+      '','','',`PO No: ${cfg.poNo}`,`Cost Code: ${cfg.costCode}`,
+      `Project: ${cfg.project}`,
+      ...Array(daysInMonth).fill(''),'','','','','']);
+
+    // ── ROW 4: blank ──
+    aoa.push([]);
+
+    // ── ROW 5: Column headers ──
+    const fixedHdrs = ['Sl.No','Emp No','Name','Craft','Subcontractor'];
+    const dayHdrs   = dayHeaders.map(d => {
+      const dow = new Date(calY, calM-1, d).getDay();
+      return `${DAY_ABBR[dow]}\n${d}`;
+    });
+    const tailHdrs  = ['Total\nHours','Rate\n(AED)','Gross\nAmount','VAT\n5%','Total\nAmount'];
+    aoa.push([...fixedHdrs, ...dayHdrs, ...tailHdrs]);
+
+    // ── ROW 6: day-of-week sub-header (date numbers only) ──
+    // Already in combined header above — skip
+
+    // ── DATA ROWS ──
+    let grandTotalHrs = 0, grandGross = 0, grandVat = 0, grandTotal = 0;
+    workers.forEach((w, idx) => {
+      const totalHrs = Object.values(w.days).reduce((s,h)=>s+h, 0);
+      const gross    = totalHrs * RATE;
+      const vat      = gross * VAT_PCT;
+      const total    = gross + vat;
+      grandTotalHrs += totalHrs;
+      grandGross    += gross;
+      grandVat      += vat;
+      grandTotal    += total;
+
+      const dayVals = dayHeaders.map(d => w.days[d] || 0);
+      aoa.push([
+        idx+1,
+        w.empNo,
+        w.name,
+        w.desig || cfg.craft,
+        cfg.subcontractor,
+        ...dayVals,
+        totalHrs,
+        RATE,
+        gross,
+        Math.round(vat*100)/100,
+        Math.round(total*100)/100,
+      ]);
+    });
+
+    // ── BLANK ROW ──
+    aoa.push([]);
+
+    // ── TOTALS ROW ──
+    const totRow = ['','','','','TOTAL',...Array(daysInMonth).fill(''),
+      grandTotalHrs, '', grandGross,
+      Math.round(grandVat*100)/100,
+      Math.round(grandTotal*100)/100];
+    aoa.push(totRow);
+
+    // ── BLANK ──
+    aoa.push([]);
+
+    // ── SUMMARY BY CRAFT ──
+    aoa.push([`SUMMARY BY CRAFT`,'','Total Hours',`Gross Amount (${cfg.currency})`,`VAT (${cfg.vat}%)`,`Total Amount (${cfg.currency})`]);
+    // Group by designation
+    const craftMap = {};
+    workers.forEach(w => {
+      const c = w.desig||cfg.craft;
+      if (!craftMap[c]) craftMap[c]={hrs:0,gross:0,vat:0,total:0};
+      const h = Object.values(w.days).reduce((s,v)=>s+v,0);
+      const g = h*RATE; const v=g*VAT_PCT;
+      craftMap[c].hrs+=h; craftMap[c].gross+=g; craftMap[c].vat+=v; craftMap[c].total+=g+v;
+    });
+    Object.entries(craftMap).forEach(([craft,d])=>{
+      aoa.push(['',craft,
+        d.hrs,
+        Math.round(d.gross*100)/100,
+        Math.round(d.vat*100)/100,
+        Math.round(d.total*100)/100]);
+    });
+    aoa.push(['','Grand Total',
+      grandTotalHrs,
+      Math.round(grandGross*100)/100,
+      Math.round(grandVat*100)/100,
+      Math.round(grandTotal*100)/100]);
+
+    // ── BLANK ──
+    aoa.push([]);
+
+    // ── HOLIDAY NOTE ──
+    if (holDays.size > 0) {
+      const holList = [...holDays].sort((a,b)=>a-b).join(', ');
+      aoa.push([`NOTE: Day(s) ${holList} marked as Public Holiday — overtime rate applies per UAE Labour Law`]);
+    }
+
+    // ── BLANK ──
+    aoa.push([]);
+
+    // ── SIGNATURES ──
+    aoa.push(['PREPARED BY','','','CHECKED BY\n(Quality International)','','','APPROVED BY\n(Alghanim)']);
+    aoa.push(['SATCO ARABIA GENERAL CONTRACTING LLC SPC']);
+    aoa.push(['Mr. Shaik Zaheerudeen, PMP — CEO & Founder']);
+    aoa.push(['Tel: +971568007585 | Email: shaik.zaheerudeen@satcoarabiaengg.com']);
+    aoa.push([`Reference: PO ${cfg.poNo} | Cost Code: ${cfg.costCode} | Project: ${cfg.project}`]);
+
+    // ── CREATE SHEET ──
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+    // ── COLUMN WIDTHS ──
+    ws['!cols'] = [
+      {wch:6},   // Sl.No
+      {wch:13},  // Emp No
+      {wch:26},  // Name
+      {wch:16},  // Craft
+      {wch:38},  // Subcontractor
+      ...Array(daysInMonth).fill({wch:5}), // day cols
+      {wch:8},   // Total Hours
+      {wch:7},   // Rate
+      {wch:12},  // Gross
+      {wch:8},   // VAT
+      {wch:12},  // Total Amount
+    ];
+
+    // ── MERGES: title rows span full width ──
+    const totalCols = 5 + daysInMonth + 5 - 1;
+    ws['!merges'] = [
+      {s:{r:0,c:0},e:{r:0,c:totalCols}},  // SATCO header
+      {s:{r:1,c:0},e:{r:1,c:totalCols}},  // Title
+      {s:{r:2,c:0},e:{r:2,c:totalCols}},  // Sub-contractor
+      {s:{r:3,c:0},e:{r:3,c:4}},          // Client label
+    ];
+
+    // ── BASIC CELL STYLES via column/row metadata (SheetJS CE supports limited styling) ──
+    // Mark header row for reference
+    const headerRowIdx = 5;
+    const lastDataRow  = headerRowIdx + workers.length;
+
+    // ── WORKBOOK ──
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Timesheet');
+
+    const fname = `SATCO_ClientTimesheet_${(selCustomer||'').replace(/\s+/g,'_')}_${calMonth}_PO${cfg.poNo.replace(/[^a-zA-Z0-9]/g,'')}.xlsx`;
+    XLSX.writeFile(wb, fname);
   };
 
   const fmtDate = d => { if(!d) return ''; const dt=new Date(d+'T00:00:00'); return dt.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); };
@@ -5993,7 +6203,11 @@ function TimesheetTab({ mobList = [], onRefresh }) {
                 <button onClick={nextMonth} style={{background:'none',border:'1px solid #334155',color:'#94a3b8',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontSize:'16px',fontWeight:700}}>›</button>
                 <button onClick={exportExcel}
                   style={{marginLeft:'8px',padding:'5px 14px',background:'#166534',color:'#fff',border:'none',borderRadius:6,fontWeight:700,fontSize:'11px',cursor:'pointer'}}>
-                  ⬇ Export Excel
+                  ⬇ Raw Excel
+                </button>
+                <button onClick={()=>setShowTsExport(true)}
+                  style={{marginLeft:'4px',padding:'5px 14px',background:'#b8972a',color:'#fff',border:'none',borderRadius:6,fontWeight:700,fontSize:'11px',cursor:'pointer'}}>
+                  📋 Client Timesheet
                 </button>
               </div>
               {histLoading ? (
@@ -6118,6 +6332,61 @@ function TimesheetTab({ mobList = [], onRefresh }) {
           <div style={{fontSize:'32px',marginBottom:'8px'}}>📅</div>
           <div style={{fontWeight:700}}>Select a customer and site to view history</div>
         </div>
+
+      {/* ── CLIENT TIMESHEET SETTINGS MODAL ── */}
+      {showTsExport && (
+        <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.55)',zIndex:999,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}}>
+          <div style={{background:'#fff',borderRadius:14,width:'100%',maxWidth:'560px',boxShadow:'0 20px 60px rgba(0,0,0,0.3)',overflow:'hidden'}}>
+            {/* Modal header */}
+            <div style={{background:'#0f172a',padding:'14px 20px',display:'flex',alignItems:'center',gap:'10px'}}>
+              <span style={{fontSize:'16px',fontWeight:800,color:'#fff'}}>📋 Client Timesheet Settings</span>
+              <span style={{fontSize:'11px',color:'#94a3b8',marginLeft:'4px'}}>Review & edit before downloading</span>
+              <button onClick={()=>setShowTsExport(false)} style={{marginLeft:'auto',background:'none',border:'none',color:'#94a3b8',fontSize:'20px',cursor:'pointer',lineHeight:1}}>×</button>
+            </div>
+            {/* Fields */}
+            <div style={{padding:'20px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',maxHeight:'70vh',overflowY:'auto'}}>
+              {[
+                {key:'clientName',    label:'Client Name',         full:true},
+                {key:'project',       label:'Project / Site',      full:true},
+                {key:'poNo',          label:'PO Number',           full:false},
+                {key:'costCode',      label:'Cost Code',           full:false},
+                {key:'craft',         label:'Default Craft / Position', full:false},
+                {key:'rate',          label:'Rate per Hour',       full:false, type:'number'},
+                {key:'vat',           label:'VAT %',               full:false, type:'number'},
+                {key:'currency',      label:'Currency',            full:false},
+                {key:'subcontractor', label:'Subcontractor Name',  full:true},
+                {key:'checkedBy',     label:'Checked By',          full:false},
+                {key:'approvedBy',    label:'Approved By',         full:false},
+              ].map(f=>(
+                <div key={f.key} style={{gridColumn:f.full?'1 / -1':'auto'}}>
+                  <div style={{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}}>{f.label}</div>
+                  <input
+                    type={f.type||'text'}
+                    value={tsSettings[f.key]}
+                    onChange={e=>setTsSettings(s=>({...s,[f.key]:e.target.value}))}
+                    style={{width:'100%',padding:'7px 10px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:'13px',boxSizing:'border-box',fontWeight:f.key==='rate'?700:400,color:f.key==='rate'?'#0369a1':'#0f172a'}}
+                  />
+                </div>
+              ))}
+            </div>
+            {/* Preview bar */}
+            <div style={{background:'#f0fdf4',borderTop:'1px solid #86efac',padding:'10px 20px',fontSize:'11px',color:'#166534',fontWeight:600}}>
+              {`${history.length} records · ${calMonth} · Rate: ${tsSettings.currency} ${tsSettings.rate}/hr · VAT: ${tsSettings.vat}% · ${tsSettings.craft}`}
+            </div>
+            {/* Actions */}
+            <div style={{padding:'14px 20px',borderTop:'1px solid #e2e8f0',display:'flex',gap:'10px',justifyContent:'flex-end'}}>
+              <button onClick={()=>setShowTsExport(false)}
+                style={{padding:'8px 20px',border:'1px solid #e2e8f0',borderRadius:7,background:'#fff',cursor:'pointer',fontSize:'13px',fontWeight:600,color:'#475569'}}>
+                Cancel
+              </button>
+              <button onClick={()=>{exportClientTimesheet(tsSettings);setShowTsExport(false);}}
+                style={{padding:'8px 24px',background:'#b8972a',color:'#fff',border:'none',borderRadius:7,fontWeight:800,fontSize:'13px',cursor:'pointer'}}>
+                ⬇ Download Timesheet
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       )}
     </div>
   );
