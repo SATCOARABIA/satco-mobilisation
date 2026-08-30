@@ -1007,91 +1007,12 @@ const applyMerge=async()=>{
 };
 
 // ── Excel exports ─────────────────────────────────────────────────────────
-const exportCustomerExcel=()=>{
-  const XLSX=window.XLSX;if(!XLSX)return alert('SheetJS not loaded');
-  if(!history.length)return alert('No data for this month');
-  const{days,workerMap}=buildMonthPivot();
-  const[calY,calM]=calMonth.split('-').map(Number);
-  const monthName=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'}).toUpperCase();
-  const workerIds=[...new Set(history.map(r=>r.mob_register_id))];
-  const workers2=workerIds.map(id=>history.find(h=>h.mob_register_id===id)).filter(Boolean);
-  workers2.sort((a,b)=>{const na=parseInt((a.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');const nb=parseInt((b.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');return na-nb;});
-  const aoa=[];
-  aoa.push(['','','','','Client','',settings.clientName,'','','','','','Month: '+monthName,'','','','','','','','','','','','','','','','',settings.project.split(',')[0]||'','','','','','']);
-  aoa.push(['SL NO','EMP No.','NAME','CRAFT',...days.map(d=>String(d.d)),'TOTAL HRS']);
-  aoa.push(['','','','',...days.map(d=>d.label),'']);
-  let sl=1;
-  workers2.forEach(w=>{
-    const wm=workerMap[w.mob_register_id]||{dayHours:{}};
-    const dayVals=days.map(d=>wm.dayHours[d.d]||'');
-    const total=days.reduce((s,d)=>s+(wm.dayHours[d.d]||0),0);
-    const shortName=(w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' ');
-    aoa.push([sl++,w.supplier_emp_no||'',shortName,w.designation||'',...dayVals,total]);
-  });
-  aoa.push([]);
-  const craftMap={};workers2.forEach(w=>{const c=w.designation||'Other';if(!craftMap[c])craftMap[c]=0;const wm=workerMap[w.mob_register_id]||{dayHours:{}};craftMap[c]+=Object.values(wm.dayHours).reduce((s,h)=>s+h,0);});
-  const emptyRow=Array(36+days.length).fill('');emptyRow[27]='Sl No.';emptyRow[28]='Craft';emptyRow[32]='Hours';aoa.push(emptyRow);
-  let csl=1;Object.entries(craftMap).forEach(([c,h])=>{const r=Array(36+days.length).fill('');r[27]=csl++;r[28]=c;r[32]=h;aoa.push(r);});
-  const totR=Array(36+days.length).fill('');totR[27]='Total';totR[32]=Object.values(craftMap).reduce((s,h)=>s+h,0);aoa.push(totR);
-  aoa.push([]);aoa.push([]);
-  const sigR=Array(36+days.length).fill('');sigR[1]='PREPARED BY';sigR[7]='CHECKED BY';sigR[20]='APPROVED BY';aoa.push(sigR);
-  const prepR=Array(36+days.length).fill('');prepR[1]='SATCO ARABIA GENERAL CONTRACTING LLC SPC';prepR[7]=settings.checkedBy||'';prepR[20]=settings.approvedBy||'';aoa.push(prepR);
-  const ws=XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols']=[{wch:6},{wch:14},{wch:22},{wch:16},...days.map(()=>({wch:4})),{wch:10}];
-  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Timesheet');
-  XLSX.writeFile(wb,`SATCO_CustomerTS_${(selCustomer||'').split(' ')[0]}_${calMonth}.xlsx`);
-};
-
-const exportSupplierExcel=(suppName)=>{
-  const XLSX=window.XLSX;if(!XLSX)return alert('SheetJS not loaded');
-  if(!history.length)return alert('No data for this month');
-  const{days,workerMap}=buildMonthPivot();
-  const[calY,calM]=calMonth.split('-').map(Number);
-  const monthName=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'}).toUpperCase();
-  const VAT=parseFloat(settings.vat||'5')/100;
-  const filtH=suppName?history.filter(r=>r.supplier_name===suppName):history;
-  const workerIds=[...new Set(filtH.map(r=>r.mob_register_id))];
-  const workers2=workerIds.map(id=>history.find(h=>h.mob_register_id===id)).filter(Boolean);
-  workers2.sort((a,b)=>{const na=parseInt((a.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');const nb=parseInt((b.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');return na-nb;});
-  const wb=XLSX.utils.book_new();
-  const buildSheet=(workers3,sheetSupp)=>{
-    const aoa2=[];
-    aoa2.push(['','','','',`TIMESHEET FOR THE MONTH OF ${monthName}`]);
-    aoa2.push([]);
-    aoa2.push(['','','','','','','','','','','','','','','','','','','','','','','','','','Sub-Contractor- '+(sheetSupp||settings.subcontractor)]);
-    aoa2.push(['SL No','EMP No','NAME','CRAFT','Subcontractor',...days.map(d=>String(d.d)),'Total Hour','Rate','Deduction','Gross Amount','Vat Value','Amount']);
-    aoa2.push(['','','','','',...days.map(d=>d.label),'','','Deduction','','','']);
-    aoa2.push(['SL No','EMP No','NAME','CRAFT','Subcontractor',...days.map(d=>String(d.d)),'Total Hour','Rate','Deduction','Gross Amount','Vat Value','Amount']);
-    let sl=1,gHrs=0,gGross=0,gVat=0,gAmt=0;
-    workers3.forEach(w=>{
-      const wm=workerMap[w.mob_register_id]||{dayHours:{}};
-      const dayVals=days.map(d=>wm.dayHours[d.d]||0);
-      const totalHrs=dayVals.reduce((s,h)=>s+h,0);
-      const craft=w.designation||'Other';
-      const rate=parseFloat((rates[craft]||{}).supplierRate||settings.defaultSupplierRate||16);
-      const otPol2=settings.otPolicy||'flat';const otThr2=parseFloat(settings.otDailyThreshold||10);const otDM2=parseFloat(settings.otDailyMultiplier||1.25);const otWM2=parseFloat(settings.otWeekendMultiplier||1.5);
-      let gross=0;if(otPol2==='flat'){gross=totalHrs*rate;}else{days.forEach(day=>{const h=wm.dayHours[day.d]||0;if(h<=0)return;if(day.isOff){gross+=h*rate*otWM2;}else if(h>otThr2){gross+=otThr2*rate+(h-otThr2)*rate*otDM2;}else{gross+=h*rate;}});}
-      const vat=gross*VAT;const amt=gross+vat;
-      gHrs+=totalHrs;gGross+=gross;gVat+=vat;gAmt+=amt;
-      const sn=(w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' ');
-      aoa2.push([sl++,w.supplier_emp_no||'',sn,craft,w.supplier_name||sheetSupp||'',...dayVals,totalHrs,rate,0,Math.round(gross*100)/100,Math.round(vat*100)/100,Math.round(amt*100)/100]);
-    });
-    aoa2.push(['','Total','','','',...Array(days.length).fill(''),Math.round(gHrs*100)/100,'',0,Math.round(gGross*100)/100,Math.round(gVat*100)/100,Math.round(gAmt*100)/100]);
-    aoa2.push([]);
-    const craftMap2={};workers3.forEach(w=>{const c=w.designation||'Other';if(!craftMap2[c]){craftMap2[c]={hrs:0,gross:0,vat:0,amt:0};}const wm=workerMap[w.mob_register_id]||{dayHours:{}};const hrs=Object.values(wm.dayHours).reduce((s,h)=>s+h,0);const rate=parseFloat((rates[c]||{}).supplierRate||settings.defaultSupplierRate||16);const gross=hrs*rate;const vat=gross*VAT;craftMap2[c].hrs+=hrs;craftMap2[c].gross+=gross;craftMap2[c].vat+=vat;craftMap2[c].amt+=gross+vat;});
-    aoa2.push(['','CRAFTS','TOTAL HOURS','GROSS AMOUNT','DEDUCT.','VAT','TOTAL AMOUNT']);
-    Object.entries(craftMap2).forEach(([c,d])=>aoa2.push(['',c,Math.round(d.hrs*100)/100,Math.round(d.gross*100)/100,0,Math.round(d.vat*100)/100,Math.round(d.amt*100)/100]));
-    aoa2.push(['','Grand Total',Math.round(gHrs*100)/100,Math.round(gGross*100)/100,0,Math.round(gVat*100)/100,Math.round(gAmt*100)/100]);
-    aoa2.push([]);
-    const sigR=['','','','','','','','PREPARED BY','','','','','','','','','','','','','','CHECKED BY','','','','','','','','','','','','','','APPROVED BY'];aoa2.push(sigR);
-    const ws=XLSX.utils.aoa_to_sheet(aoa2);
-    ws['!cols']=[{wch:6},{wch:14},{wch:22},{wch:16},{wch:28},...days.map(()=>({wch:4})),{wch:10},{wch:8},{wch:10},{wch:14},{wch:10},{wch:14}];
-    return ws;
-  };
-  const allSheet=buildSheet(workers2,'ALL SUPPLIERS');XLSX.utils.book_append_sheet(wb,allSheet,'All Suppliers');
-  if(!suppName){const suppNames=[...new Set(history.map(r=>r.supplier_name).filter(Boolean))].sort();suppNames.forEach(sn=>{const sw=workers2.filter(w=>w.supplier_name===sn);if(!sw.length)return;const ws2=buildSheet(sw,sn);XLSX.utils.book_append_sheet(wb,ws2,sn.replace(/[^a-zA-Z0-9 ]/g,'').substring(0,28)||'Supplier');});}
-  XLSX.writeFile(wb,suppName?`SATCO_Supplier_${suppName.replace(/\s+/g,'_').substring(0,30)}_${calMonth}.xlsx`:`SATCO_AllSuppliers_${calMonth}.xlsx`);
-};
+const sortWorkers=ws=>[...ws].sort((a,b)=>{const pa=(a.supplier_emp_no||'').split('-');const pb=(b.supplier_emp_no||'').split('-');try{const d=parseInt(pa[1])-parseInt(pb[1]);return d!==0?d:parseInt(pa[2])-parseInt(pb[2]);}catch{return 0;}});
+const shortSupplier=(name,max=18)=>{const skip=new Set(['L.L.C','S.P.C','AND','GENERAL','CONTRACTING','LLC','SPC','-','&','MAINTENANCE','WORKS','CO.','COMPANY','SERVICES','TRADING','EST']);const words=(name||'').toUpperCase().split(' ').filter(w=>!skip.has(w));let r='';for(const w of words){if((r+(r?' ':'')+w).length<=max)r+=(r?' ':'')+w.charAt(0)+w.slice(1).toLowerCase();else break;}return r||name.slice(0,max);};
+const buildTsData=()=>({year:parseInt(calMonth.split('-')[0]),month:parseInt(calMonth.split('-')[1]),settings,rates,holidays,workers:sortWorkers([...new Set(history.map(r=>r.mob_register_id))].map(id=>{const r=history.find(h=>h.mob_register_id===id);if(!r)return null;const dayHours={};history.filter(h=>h.mob_register_id===id).forEach(h=>{const d=new Date(h.work_date+'T00:00:00').getDate();if(parseFloat(h.hours)>0)dayHours[String(d)]=parseFloat(h.hours);});return{emp:r.supplier_emp_no||'',name:r.full_name||'',craft:r.designation||'Other',supplier:r.supplier_name||'',hours:dayHours};}).filter(Boolean))});
+const callTsApi=async(payload,filename)=>{try{const res=await fetch('/api/generate-timesheet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,filename})});if(!res.ok){const txt=await res.text();throw new Error(txt||'API error '+res.status);}const blob=await res.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);}catch(ex){alert('Export failed: '+ex.message);}};
+const exportCustomerExcel=async()=>{if(!history.length)return alert('No timesheet data for this month.');const[calY,calM]=calMonth.split('-').map(Number);const mn=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'short',year:'numeric'}).replace(' ','');await callTsApi({type:'customer',data:buildTsData()},`SATCO_Customer_${(selCustomer||'').split(' ')[0]}_${mn}.xlsx`);};
+const exportSupplierExcel=async(suppName)=>{if(!history.length)return alert('No timesheet data for this month.');const[calY,calM]=calMonth.split('-').map(Number);const mn=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'short',year:'numeric'}).replace(' ','');const s=n=>{const sk=new Set(['L.L.C','S.P.C','AND','GENERAL','CONTRACTING','LLC','SPC','-','&','MAINTENANCE']);return(n||'ALL').split(' ').filter(w=>!sk.has(w.toUpperCase())).slice(0,2).join('_');};await callTsApi({type:'supplier',supplier:suppName||null,data:buildTsData()},suppName?`SATCO_Supplier_${s(suppName)}_${mn}.xlsx`:`SATCO_AllSuppliers_${mn}.xlsx`);}
 
 const monthSuppliers=React.useMemo(()=>[...new Set(history.map(r=>r.supplier_name).filter(Boolean))].sort(),[history]);
 const calDayMap=React.useMemo(()=>{const m={};history.forEach(r=>{const d=r.work_date;if(!m[d])m[d]={total:0,count:0};m[d].total+=parseFloat(r.hours||0);m[d].count+=1;});return m;},[history]);
@@ -1192,7 +1113,7 @@ const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
         React.createElement('th',{style:{...S.th,color:'#fff',background:hdrBg,width:'150px',position:'sticky',left:'136px',zIndex:12}},'Name'),
         React.createElement('th',{style:{...S.th,color:'#fff',background:hdrBg,width:'110px'}},'Craft'),
         showFinancials&&React.createElement('th',{style:{...S.th,color:'#fff',background:hdrBg,width:'120px'}},'Supplier'),
-        ...days.map(day=>React.createElement('th',{key:day.d,style:{...S.th,color:day.isHol?'#fde68a':day.isOff?'#94a3b8':'#fff',background:day.isOff?'#1e293b':hdrBg,width:'30px',textAlign:'center',padding:'4px 2px',fontSize:'9px',borderRight:'1px solid rgba(255,255,255,0.1)'}},
+        ...days.map(day=>React.createElement('th',{key:day.d,style:{...S.th,color:day.isOff?'#94a3b8':'#fff',background:day.isOff?'#1e293b':hdrBg,width:'30px',textAlign:'center',padding:'4px 2px',fontSize:'9px',borderRight:'1px solid rgba(255,255,255,0.1)'}},
           React.createElement('div',null,String(day.d)),React.createElement('div',null,day.label)
         )),
         React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'50px',textAlign:'center'}},'HRS'),
@@ -1394,11 +1315,11 @@ const HolidaysPanel=({holidays,setHolidays,newHolDate,setNewHolDate,newHolName,s
       Array.from({length:daysInMonth},(_,i)=>{
         const d=i+1;const dateStr=`${calY}-${String(calM).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
         const isHol=!!holidays[dateStr];const isWknd=isWeekend(dateStr);
-        return React.createElement('div',{key:d,style:{background:isHol?'#fef3c7':isWknd?'#f1f5f9':'#fff',border:`2px solid ${isHol?'#f59e0b':isWknd?'#e2e8f0':'#e2e8f0'}`,borderRadius:8,padding:'6px 4px',textAlign:'center',cursor:'pointer',minHeight:'52px'},
+        return React.createElement('div',{key:d,style:{background:isHol?'#f1f5f9':isWknd?'#f1f5f9':'#fff',border:`2px solid ${isHol?'#cbd5e1':isWknd?'#e2e8f0':'#e2e8f0'}`,borderRadius:8,padding:'6px 4px',textAlign:'center',cursor:'pointer',minHeight:'52px'},
           onClick:()=>{if(isHol){const h={...holidays};delete h[dateStr];setHolidays(h);}else{setNewHolDate(dateStr);setNewHolName('Public Holiday');}}},
-          React.createElement('div',{style:{fontWeight:700,fontSize:'13px',color:isHol?'#92400e':isWknd?'#94a3b8':'#374151'}},d),
-          isHol&&React.createElement('div',{style:{fontSize:'8px',color:'#b45309',lineHeight:1.3,marginTop:'2px'}},'🌙 ',holidays[dateStr]?.substring(0,12)),
-          isWknd&&!isHol&&React.createElement('div',{style:{fontSize:'8px',color:'#94a3b8',marginTop:'2px'}},'off')
+          React.createElement('div',{style:{fontWeight:700,fontSize:'13px',color:isHol?'#94a3b8':isWknd?'#94a3b8':'#374151'}},d),
+          (isHol||isWknd)&&React.createElement('div',{style:{fontSize:'8px',color:'#94a3b8',marginTop:'2px'}},isHol?(holidays[dateStr]?.substring(0,10)||'Holiday'):'off'),
+          
         );
       })
     ),
