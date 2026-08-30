@@ -749,7 +749,7 @@ const[calMonth,setCalMonth]=React.useState(()=>{const d=new Date();return`${d.ge
 
 // ── Settings (per project, localStorage) ─────────────────────────────────
 const settingsKey=`satco_ts_cfg_${selCustomer}__${selLocation}`;
-const DEF={clientName:'ALGHANIM INTERNATIONAL GENERAL TRADING & CONTRACTING CO., ABU DHABI',project:'VOLTA Project - TAZIZ Derivatives Park (TDP), RUWAIS, Abu Dhabi, UAE',poNo:'072-46',costCode:'509062',subcontractor:'SATCO ARABIA GENERAL CONTRACTING LLC SPC',checkedBy:'Quality International',approvedBy:'Alghanim International',vat:'5',currency:'AED',weekendDay:'fri',defaultCustomerRate:'24',defaultSupplierRate:'20'};
+const DEF={clientName:'ALGHANIM INTERNATIONAL GENERAL TRADING & CONTRACTING CO., ABU DHABI',project:'VOLTA Project - TAZIZ Derivatives Park (TDP), RUWAIS, Abu Dhabi, UAE',poNo:'072-46',costCode:'509062',subcontractor:'SATCO ARABIA GENERAL CONTRACTING LLC SPC',checkedBy:'Quality International',approvedBy:'Alghanim International',vat:'5',currency:'AED',weekendDay:'sun',otPolicy:'flat',otWeekendMultiplier:'1.5',otDailyMultiplier:'1.25',otDailyThreshold:'10',workingHrsPerDay:'10',workingDaysPerMonth:'26',defaultCustomerRate:'24',defaultSupplierRate:'20'};
 const[settings,setSettingsRaw]=React.useState(DEF);
 const[settingsDraft,setSettingsDraft]=React.useState(null);
 React.useEffect(()=>{try{const v=localStorage.getItem(settingsKey);if(v)setSettingsRaw({...DEF,...JSON.parse(v)});}catch{}},[settingsKey]);
@@ -797,7 +797,7 @@ const workers=React.useMemo(()=>mobList.filter(r=>r.status==='mobilised'&&(!selC
   const numB=parseInt((b.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');
   return numA-numB;
 }),[mobList,selCustomer,selLocation]);
-const isWeekend=dateStr=>{const dow=new Date(dateStr+'T00:00:00').getDay();const wd=settings.weekendDay||'fri';if(wd==='fri')return dow===5||dow===6;if(wd==='sun')return dow===0||dow===6;return dow===0||dow===5||dow===6;};
+const isWeekend=dateStr=>{const dow=new Date(dateStr+'T00:00:00').getDay();const wd=settings.weekendDay||'sun';return wd==='fri'?dow===5:dow===0;};// 1 day off/week — Sat always working
 const isHolidayDate=dateStr=>!!(holidays[dateStr]);
 const isOffDay=dateStr=>isWeekend(dateStr)||isHolidayDate(dateStr);
 const dayLabel=dateStr=>{const dow=new Date(dateStr+'T00:00:00').getDay();return['SUN','MON','TUE','WED','THU','FRI','SAT'][dow];};
@@ -1069,7 +1069,9 @@ const exportSupplierExcel=(suppName)=>{
       const totalHrs=dayVals.reduce((s,h)=>s+h,0);
       const craft=w.designation||'Other';
       const rate=parseFloat((rates[craft]||{}).supplierRate||settings.defaultSupplierRate||20);
-      const gross=totalHrs*rate;const vat=gross*VAT;const amt=gross+vat;
+      const otPol2=settings.otPolicy||'flat';const otThr2=parseFloat(settings.otDailyThreshold||10);const otDM2=parseFloat(settings.otDailyMultiplier||1.25);const otWM2=parseFloat(settings.otWeekendMultiplier||1.5);
+      let gross=0;if(otPol2==='flat'){gross=totalHrs*rate;}else{days.forEach(day=>{const h=wm.dayHours[day.d]||0;if(h<=0)return;if(day.isOff){gross+=h*rate*otWM2;}else if(h>otThr2){gross+=otThr2*rate+(h-otThr2)*rate*otDM2;}else{gross+=h*rate;}});}
+      const vat=gross*VAT;const amt=gross+vat;
       gHrs+=totalHrs;gGross+=gross;gVat+=vat;gAmt+=amt;
       const sn=(w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' ');
       aoa2.push([sl++,w.supplier_emp_no||'',sn,craft,w.supplier_name||sheetSupp||'',...dayVals,totalHrs,rate,0,Math.round(gross*100)/100,Math.round(vat*100)/100,Math.round(amt*100)/100]);
@@ -1204,7 +1206,9 @@ const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
         const totalHrs=days.reduce((s,d)=>s+(wm.dayHours[d.d]||0),0);
         const craft=w.designation||'Other';
         const rate=parseFloat((rates[craft]||{}).supplierRate||settings.defaultSupplierRate||20);
-        const gross=totalHrs*rate;const vat=gross*VAT;const amt=gross+vat;
+        const otPol=settings.otPolicy||'flat';const otThr=parseFloat(settings.otDailyThreshold||10);const otDM=parseFloat(settings.otDailyMultiplier||1.25);const otWM=parseFloat(settings.otWeekendMultiplier||1.5);
+        let gross=0;if(otPol==='flat'){gross=totalHrs*rate;}else{days.forEach(day=>{const h=wm.dayHours[day.d]||0;if(h<=0)return;if(day.isOff){gross+=h*rate*otWM;}else if(h>otThr){gross+=otThr*rate+(h-otThr)*rate*otDM;}else{gross+=h*rate;}});}
+        const vat=gross*VAT;const amt=gross+vat;
         const rowBg=i%2===0?'#fff':'#f8fafc';
         const sn=(w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' ');
         return React.createElement('tr',{key:w.mob_register_id,className:'hr-row',style:{background:rowBg}},
@@ -1338,11 +1342,19 @@ const RatesPanel=()=>{
         React.createElement(Field,{label:'Currency'},React.createElement('input',{value:sett.currency,onChange:e=>setS('currency',e.target.value),style:S.input})),
         React.createElement(Field,{label:'Default Customer Rate/hr ('+sett.currency+')'},React.createElement('input',{type:'number',value:sett.defaultCustomerRate,onChange:e=>setS('defaultCustomerRate',e.target.value),style:S.input})),
         React.createElement(Field,{label:'Default Supplier Rate/hr ('+sett.currency+')'},React.createElement('input',{type:'number',value:sett.defaultSupplierRate,onChange:e=>setS('defaultSupplierRate',e.target.value),style:S.input})),
-        React.createElement(Field,{label:'Weekend / Off Days'},React.createElement('select',{value:sett.weekendDay,onChange:e=>setS('weekendDay',e.target.value),style:S.input},
-          React.createElement('option',{value:'fri'},'Friday + Saturday (most UAE sites)'),
-          React.createElement('option',{value:'sun'},'Saturday + Sunday'),
-          React.createElement('option',{value:'both'},'Fri + Sat + Sun')
+        React.createElement(Field,{label:'Weekly Off Day (Saturday always working)'},React.createElement('select',{value:sett.weekendDay,onChange:e=>setS('weekendDay',e.target.value),style:S.input},
+          React.createElement('option',{value:'sun'},'Sunday (default — most sites)'),
+          React.createElement('option',{value:'fri'},'Friday (some sites)')
         )),
+        React.createElement(Field,{label:'Rate Policy for this Contract'},React.createElement('select',{value:sett.otPolicy||'flat',onChange:e=>setS('otPolicy',e.target.value),style:S.input},
+          React.createElement('option',{value:'flat'},'Flat Rate — same rate all days (no OT)'),
+          React.createElement('option',{value:'ot'},'Overtime applies')
+        )),
+        React.createElement(Field,{label:'Standard working hrs/day'},React.createElement('input',{type:'number',value:sett.workingHrsPerDay||'10',onChange:e=>setS('workingHrsPerDay',e.target.value),style:S.input,placeholder:'10'})),
+        React.createElement(Field,{label:'Working days/month'},React.createElement('input',{type:'number',value:sett.workingDaysPerMonth||'26',onChange:e=>setS('workingDaysPerMonth',e.target.value),style:S.input,placeholder:'26'})),
+        (sett.otPolicy||'flat')==='ot'&&React.createElement(Field,{label:'Daily OT threshold (hrs)'},React.createElement('input',{type:'number',value:sett.otDailyThreshold||'10',onChange:e=>setS('otDailyThreshold',e.target.value),style:S.input,placeholder:'10'})),
+        (sett.otPolicy||'flat')==='ot'&&React.createElement(Field,{label:'Daily OT multiplier (e.g. 1.25×)'},React.createElement('input',{type:'number',step:'0.05',value:sett.otDailyMultiplier||'1.25',onChange:e=>setS('otDailyMultiplier',e.target.value),style:S.input,placeholder:'1.25'})),
+        (sett.otPolicy||'flat')==='ot'&&React.createElement(Field,{label:'Sunday/Friday/Holiday OT multiplier (e.g. 1.5×)'},React.createElement('input',{type:'number',step:'0.05',value:sett.otWeekendMultiplier||'1.5',onChange:e=>setS('otWeekendMultiplier',e.target.value),style:S.input,placeholder:'1.5'})),
         React.createElement(Field,{label:'Checked By'},React.createElement('input',{value:sett.checkedBy,onChange:e=>setS('checkedBy',e.target.value),style:S.input})),
         React.createElement(Field,{label:'Approved By'},React.createElement('input',{value:sett.approvedBy,onChange:e=>setS('approvedBy',e.target.value),style:S.input})),
         React.createElement(Field,{label:'Subcontractor Name (on supplier sheet)'},React.createElement('input',{value:sett.subcontractor,onChange:e=>setS('subcontractor',e.target.value),style:S.input}))
@@ -1383,7 +1395,7 @@ const HolidaysPanel=()=>{
         const d=i+1;const dateStr=`${calY}-${String(calM).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
         const isHol=!!holidays[dateStr];const isWknd=isWeekend(dateStr);
         return React.createElement('div',{key:d,style:{background:isHol?'#fef3c7':isWknd?'#f1f5f9':'#fff',border:`2px solid ${isHol?'#f59e0b':isWknd?'#e2e8f0':'#e2e8f0'}`,borderRadius:8,padding:'6px 4px',textAlign:'center',cursor:'pointer',minHeight:'52px'},
-          onClick:()=>{if(isHol){const h={...holidays};delete h[dateStr];setHolidays(h);}else{const name=prompt('Holiday name for '+fmtDate(dateStr)+'?','Public Holiday');if(name!==null&&name.trim())setHolidays({...holidays,[dateStr]:name.trim()||'Public Holiday'});}}},
+          onClick:()=>{if(isHol){const h={...holidays};delete h[dateStr];setHolidays(h);}else{setNewHolDate(dateStr);setNewHolName('Public Holiday');}}},
           React.createElement('div',{style:{fontWeight:700,fontSize:'13px',color:isHol?'#92400e':isWknd?'#94a3b8':'#374151'}},d),
           isHol&&React.createElement('div',{style:{fontSize:'8px',color:'#b45309',lineHeight:1.3,marginTop:'2px'}},'🌙 ',holidays[dateStr]?.substring(0,12)),
           isWknd&&!isHol&&React.createElement('div',{style:{fontSize:'8px',color:'#94a3b8',marginTop:'2px'}},'off')
