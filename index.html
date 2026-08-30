@@ -793,9 +793,8 @@ const importFileRef=React.useRef(null);
 const customers=React.useMemo(()=>[...new Set(mobList.filter(r=>r.status==='mobilised').map(r=>r.customer_name).filter(Boolean))].sort(),[mobList]);
 const locations=React.useMemo(()=>[...new Set(mobList.filter(r=>r.status==='mobilised'&&(!selCustomer||r.customer_name===selCustomer)).map(r=>r.location).filter(Boolean))].sort(),[mobList,selCustomer]);
 const workers=React.useMemo(()=>mobList.filter(r=>r.status==='mobilised'&&(!selCustomer||r.customer_name===selCustomer)&&(!selLocation||r.location===selLocation)).sort((a,b)=>{
-  const numA=parseInt((a.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');
-  const numB=parseInt((b.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');
-  return numA-numB;
+  const pa=(a.supplier_emp_no||'').split('-');const pb=(b.supplier_emp_no||'').split('-');
+  try{const d=parseInt(pa[1]||'0')-parseInt(pb[1]||'0');return d!==0?d:parseInt(pa[2]||'0')-parseInt(pb[2]||'0');}catch{return 0;}
 }),[mobList,selCustomer,selLocation]);
 const isWeekend=dateStr=>{const dow=new Date(dateStr+'T00:00:00').getDay();const wd=settings.weekendDay||'sun';return wd==='fri'?dow===5:dow===0;};// 1 day off/week — Sat always working
 const isHolidayDate=dateStr=>!!(holidays[dateStr]);
