@@ -556,9 +556,8 @@ const supplierRec=suppliersList.find(s=>s.name===supplierName);const supplierCod
 const existing=candidates.filter(c=>c.supplier_name===supplierName&&c.supplier_emp_no).map(c=>{// Handle both old format (BALA1001) and new format (SUB-001-1001)
 const m=(c.supplier_emp_no||'').match(/(\d+)$/);return m?parseInt(m[1]):0;}).filter(n=>!isNaN(n)&&n>0);const next=existing.length>0?Math.max(...existing)+1:1001;return`${prefix}${next}`;},[candidates]);const activeCandIds=useMemo(()=>new Set(mobList.filter(m=>m.status==='mobilised').map(m=>m.candidate_id).filter(Boolean)),[mobList]);const activeNames=useMemo(()=>new Set(mobList.filter(m=>m.status==='mobilised'&&!m.candidate_id).map(m=>(m.full_name||'').toLowerCase().trim())),[mobList]);const candSiteMap=useMemo(()=>{const m={};mobList.filter(r=>r.status==='mobilised'&&r.candidate_id).forEach(r=>{m[r.candidate_id]=r.location||'On Site';});return m;},[mobList]);const[excludeOnSite,setExcludeOnSite]=useState(false);// isOnSite: check mob_register, name fallback, AND HR portal mob_demob for SATCO employees
 const isOnSiteFn=useCallback(c=>{if(activeCandIds.has(c.id))return true;if(activeNames.has((c.full_name||'').toLowerCase().trim()))return true;if(c.source==='satco_own'&&c.supplier_emp_no&&hrMobActive.has(c.supplier_emp_no))return true;return false;},[activeCandIds,activeNames,hrMobActive]);// Build supplier list from mob_suppliers (full registry) + any names already in candidates
-const supplierList=useMemo(()=>{const fromRegistry=suppliers.map(s=>s.name).filter(Boolean);const fromCandidates=candidates.map(c=>c.supplier_name).filter(Boolean);return[...new Set([...fromRegistry,...fromCandidates])].sort();},[suppliers,candidates]);const filtered=useMemo(()=>{const list=candidates.filter(c=>{if(excludeOnSite&&(activeCandIds.has(c.id)||activeNames.has((c.full_name||'').toLowerCase().trim())))return false;if(suppF.size){const candSupplierKey=c.source==='satco_own'?'SATCO Arabia':c.supplier_name||'';if(!suppF.has(candSupplierKey))return false;}if(desigF.size&&!desigF.has(normalizeDesig(c.designation)))return false;if(cicpaLocF.size&&!cicpaLocF.has(canonicalCicpa(c.cicpa_location)))return false;if(readyF.size){const docOk=!!c.passport_no&&!!c.emirates_id&&!!c.visa_no;const mob=mobList.filter(m=>m.candidate_id===c.id||m.full_name===c.full_name).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];const cicpaCandOk=c.cicpa_status==='active'&&!!c.security_pass_no;const adnocCandOk=!!c.adnoc_medical_status&&c.adnoc_medical_status!=='Unfit';const mobOk=!!mob?.hse_passport_done&&!!mob?.h2s_done&&cicpaCandOk&&adnocCandOk&&(c.source==='satco_own'||!!mob?.wp_approved_date);const allGreen=docOk&&mobOk;if(readyF.has('ready')&&!allGreen)return false;if(readyF.has('not_ready')&&allGreen)return false;}return matchSearch(c,search);});// Sort: supplier name A→Z, then emp number numerically
-list.sort((a,b)=>{const sA=(a.source==='satco_own'?'SATCO Arabia':a.supplier_name||'').toLowerCase();const sB=(b.source==='satco_own'?'SATCO Arabia':b.supplier_name||'').toLowerCase();if(sA!==sB)return sA.localeCompare(sB);// Within same supplier: sort by trailing number in emp no
-const nA=parseInt((a.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');const nB=parseInt((b.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');return nA-nB;});return list;},[candidates,mobList,search,suppF,readyF,desigF,cicpaLocF,excludeOnSite]);// Unique values for filter dropdowns — normalized & deduplicated
+const supplierList=useMemo(()=>{const fromRegistry=suppliers.map(s=>s.name).filter(Boolean);const fromCandidates=candidates.map(c=>c.supplier_name).filter(Boolean);return[...new Set([...fromRegistry,...fromCandidates])].sort();},[suppliers,candidates]);const filtered=useMemo(()=>{const list=candidates.filter(c=>{if(excludeOnSite&&(activeCandIds.has(c.id)||activeNames.has((c.full_name||'').toLowerCase().trim())))return false;if(suppF.size){const candSupplierKey=c.source==='satco_own'?'SATCO Arabia':c.supplier_name||'';if(!suppF.has(candSupplierKey))return false;}if(desigF.size&&!desigF.has(normalizeDesig(c.designation)))return false;if(cicpaLocF.size&&!cicpaLocF.has(canonicalCicpa(c.cicpa_location)))return false;if(readyF.size){const docOk=!!c.passport_no&&!!c.emirates_id&&!!c.visa_no;const mob=mobList.filter(m=>m.candidate_id===c.id||m.full_name===c.full_name).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];const cicpaCandOk=c.cicpa_status==='active'&&!!c.security_pass_no;const adnocCandOk=!!c.adnoc_medical_status&&c.adnoc_medical_status!=='Unfit';const mobOk=!!mob?.hse_passport_done&&!!mob?.h2s_done&&cicpaCandOk&&adnocCandOk&&(c.source==='satco_own'||!!mob?.wp_approved_date);const allGreen=docOk&&mobOk;if(readyF.has('ready')&&!allGreen)return false;if(readyF.has('not_ready')&&allGreen)return false;}return matchSearch(c,search);});// Sort: SATCO Own first, then SUB-XXX prefix order, then seq within group
+list.sort((a,b)=>{const aSatco=a.source==='satco_own',bSatco=b.source==='satco_own';if(aSatco&&!bSatco)return -1;if(!aSatco&&bSatco)return 1;if(aSatco&&bSatco){const nA=parseInt((a.supplier_emp_no||'').replace(/[^0-9]/g,'')||'0');const nB=parseInt((b.supplier_emp_no||'').replace(/[^0-9]/g,'')||'0');return nA-nB;}const prefA=(a.supplier_emp_no||'').match(/^(SUB-\d+)/i)?.[1]||a.supplier_emp_no||'';const prefB=(b.supplier_emp_no||'').match(/^(SUB-\d+)/i)?.[1]||b.supplier_emp_no||'';const numA=parseInt((prefA.match(/\d+/)||['9999'])[0]);const numB=parseInt((prefB.match(/\d+/)||['9999'])[0]);if(numA!==numB)return numA-numB;const seqA=parseInt((a.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');const seqB=parseInt((b.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');return seqA-seqB;});return list;},[candidates,mobList,search,suppF,readyF,desigF,cicpaLocF,excludeOnSite]);// Unique values for filter dropdowns — normalized & deduplicated
 const designationOpts=useMemo(()=>{// Group by normalized key, keep best canonical label (longest/most capitalized)
 const map=new Map();// normalizedKey -> {label, count}
 candidates.forEach(c=>{if(!c.designation)return;const key=normalizeDesig(c.designation);if(!map.has(key))map.set(key,{label:canonicalDesig(c.designation),count:0});map.get(key).count++;});return[...map.entries()].sort((a,b)=>a[1].label.localeCompare(b[1].label)).map(([value,{label,count}])=>({value,label,count}));},[candidates]);const cicpaLocationOpts=useMemo(()=>{const map=new Map();// canonicalEnglish -> count
@@ -683,70 +682,704 @@ const alreadyMob=mobList.filter(m=>m.customer_name===draft.customer_name&&m.loca
 // ══════════════════════════════════════════════════════════════════════════════
 // TIMESHEET TAB
 // ══════════════════════════════════════════════════════════════════════════════
-function TimesheetTab({mobList=[],onRefresh}){const today=new Date().toISOString().slice(0,10);const[selDate,setSelDate]=useState(today);const[selCustomer,setSelCustomer]=useState('');const[selLocation,setSelLocation]=useState('');const[entries,setEntries]=useState({});// { mob_register_id: { hours, is_holiday, holiday_name, notes } }
-const[isHoliday,setIsHoliday]=useState(false);const[holidayName,setHolidayName]=useState('');const[saved,setSaved]=useState({});// { mob_register_id: saved row }
-const[saving,setSaving]=useState(false);const[loading,setLoading]=useState(false);const[saveMsg,setSaveMsg]=useState('');const[waPhone,setWaPhone]=useState('');const[showWaInput,setShowWaInput]=useState(false);const[showTsExport,setShowTsExport]=useState(false);const[tsSettings,setTsSettings]=useState({clientName:'ALGHANIM INTERNATIONAL GENERAL TRADING & CONTRACTING CO., ABU DHABI',poNo:'072-46',costCode:'509062',project:'VOLTA Project - TAZIZ Derivatives Park (TDP), RUWAIS, Abu Dhabi, UAE',craft:'Grinder',rate:'24',vat:'5',currency:'AED',checkedBy:'Quality International',approvedBy:'Alghanim International',subcontractor:'SATCO ARABIA GENERAL CONTRACTING LLC SPC'});const[viewMode,setViewMode]=useState('entry');// 'entry' | 'history'
-const[history,setHistory]=useState([]);const[histLoading,setHistLoading]=useState(false);const[calMonth,setCalMonth]=useState(()=>{const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;});const[exportMsg,setExportMsg]=useState('');// Distinct customers from active mobilised records
-const customers=useMemo(()=>{const s=new Set(mobList.filter(r=>r.status==='mobilised').map(r=>r.customer_name).filter(Boolean));return[...s].sort();},[mobList]);// Locations for selected customer
-const locations=useMemo(()=>{const s=new Set(mobList.filter(r=>r.status==='mobilised'&&(!selCustomer||r.customer_name===selCustomer)).map(r=>r.location).filter(Boolean));return[...s].sort();},[mobList,selCustomer]);// Workers at selected site
-const workers=useMemo(()=>{return mobList.filter(r=>r.status==='mobilised'&&(!selCustomer||r.customer_name===selCustomer)&&(!selLocation||r.location===selLocation)).sort((a,b)=>(a.full_name||'').localeCompare(b.full_name||''));},[mobList,selCustomer,selLocation]);// Auto-select if only one customer/location
-useEffect(()=>{if(customers.length===1)setSelCustomer(customers[0]);},[customers]);useEffect(()=>{if(locations.length===1)setSelLocation(locations[0]);},[locations]);// Load existing records for selected date+site
-useEffect(()=>{if(!selDate||!selCustomer||!selLocation){setSaved({});setEntries({});setIsHoliday(false);setHolidayName('');return;}setLoading(true);db.from('mob_timesheets').select('*').eq('work_date',selDate).eq('customer_name',selCustomer).eq('location',selLocation).then(({data})=>{const sv={};const en={};let hol=false,holName='';(data||[]).forEach(row=>{sv[row.mob_register_id]=row;en[row.mob_register_id]={hours:String(row.hours),notes:row.notes||''};if(row.is_holiday){hol=true;holName=row.holiday_name||'';}});setSaved(sv);setEntries(en);setIsHoliday(hol);setHolidayName(holName);setLoading(false);});},[selDate,selCustomer,selLocation]);const setHours=(id,val)=>setEntries(e=>({...e,[id]:{...(e[id]||{}),hours:val}}));const setNotes=(id,val)=>setEntries(e=>({...e,[id]:{...(e[id]||{}),notes:val}}));const handleSave=async()=>{if(!selDate||!selCustomer||!selLocation)return;setSaving(true);setSaveMsg('');const rows=workers.map(w=>({work_date:selDate,mob_register_id:w.id,full_name:w.full_name||'',designation:w.designation||'',supplier_name:w.supplier_name||'',supplier_emp_no:w.supplier_emp_no||'',customer_name:selCustomer,location:selLocation,hours:parseFloat(entries[w.id]?.hours??'0')||0,is_holiday:isHoliday,holiday_name:isHoliday?holidayName:null,notes:entries[w.id]?.notes||null,updated_at:new Date().toISOString()}));const{error}=await db.from('mob_timesheets').upsert(rows,{onConflict:'work_date,mob_register_id'});if(error){setSaveMsg('❌ Error: '+error.message);}else{setSaveMsg('✅ Saved successfully!');// Refresh saved state
-const{data}=await db.from('mob_timesheets').select('*').eq('work_date',selDate).eq('customer_name',selCustomer).eq('location',selLocation);const sv={};(data||[]).forEach(r=>sv[r.mob_register_id]=r);setSaved(sv);}setSaving(false);setTimeout(()=>setSaveMsg(''),3000);};// History load
-const loadHistory=async()=>{if(!selCustomer||!selLocation)return;setHistLoading(true);const from=new Date();from.setDate(from.getDate()-30);const{data}=await db.from('mob_timesheets').select('*').eq('customer_name',selCustomer).eq('location',selLocation).gte('work_date',from.toISOString().slice(0,10)).order('work_date',{ascending:false});setHistory(data||[]);setHistLoading(false);};useEffect(()=>{if(viewMode==='history'&&selCustomer&&selLocation)loadHistoryForMonth(calMonth);},[viewMode,selCustomer,selLocation,calMonth]);// Export to Excel
-// ── Simple raw export (internal use) ──────────────────────────────────────
-const exportExcel=()=>{const XLSX=window.XLSX;if(!XLSX)return alert('SheetJS not loaded — refresh page.');if(!history.length)return alert('No history to export.');const rows=history.map(r=>({'Date':r.work_date,'Holiday':r.is_holiday?r.holiday_name||'Holiday':'','Emp No':r.supplier_emp_no||'','Name':r.full_name||'','Designation':r.designation||'','Supplier':r.supplier_name||'','Hours':r.hours,'Notes':r.notes||''}));const ws=XLSX.utils.json_to_sheet(rows);ws['!cols']=[{wch:12},{wch:16},{wch:12},{wch:26},{wch:16},{wch:28},{wch:7},{wch:24}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Timesheet');XLSX.writeFile(wb,`Timesheet_${(selLocation||'').replace(/\s+/g,'_')}_${calMonth}.xlsx`);};// ── CLIENT TIMESHEET EXPORT (Alghanim format) ────────────────────────────
-const exportClientTimesheet=(cfg=tsSettings)=>{const XLSX=window.XLSX;if(!XLSX)return alert('SheetJS not loaded — refresh page.');if(!history.length)return alert('No timesheet records for this month.');const[calY,calM]=calMonth.split('-').map(Number);const daysInMonth=new Date(calY,calM,0).getDate();const monthName=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'}).toUpperCase();const RATE=parseFloat(cfg.rate)||24;const VAT_PCT=(parseFloat(cfg.vat)||5)/100;const DAY_ABBR=['SUN','MON','TUE','WED','THU','FRI','SAT'];// Build day headers: day number 1..daysInMonth
-const dayHeaders=Array.from({length:daysInMonth},(_,i)=>i+1);// Build per-worker hour map: workerId -> { dayNo -> hours, is_holiday set }
-// Workers: unique by supplier_emp_no+full_name from history
-const workerMap={};// key = mob_register_id
-const holDays=new Set();// day numbers that are holidays
-history.forEach(r=>{const d=new Date(r.work_date+'T00:00:00').getDate();if(!workerMap[r.mob_register_id]){workerMap[r.mob_register_id]={empNo:r.supplier_emp_no||'',name:r.full_name||'',desig:r.designation||cfg.craft,supp:r.supplier_name||'SATCO ARABIA GENERAL CONTRACTING - L.L.C - S.P.C',days:{}};}workerMap[r.mob_register_id].days[d]=parseFloat(r.hours||0);if(r.is_holiday)holDays.add(d);});const workers=Object.values(workerMap);// Build rows array for sheet_add_aoa
-const aoa=[];// ── ROW 0: SATCO header title ──
-aoa.push([cfg.subcontractor,'','','','',...Array(daysInMonth+6).fill('')]);// ── ROW 1: Title ──
-aoa.push([`TIMESHEET FOR THE MONTH OF ${monthName}`,'','','','',...Array(daysInMonth+6).fill('')]);// ── ROW 2: Sub-contractor label ──
-aoa.push([`Sub-Contractor: ${cfg.subcontractor}`,'','','','',...Array(daysInMonth+6).fill('')]);// ── ROW 3: Client info ──
-aoa.push([`Client: ${cfg.clientName}`,'','','',`PO No: ${cfg.poNo}`,`Cost Code: ${cfg.costCode}`,`Project: ${cfg.project}`,...Array(daysInMonth).fill(''),'','','','','']);// ── ROW 4: blank ──
-aoa.push([]);// ── ROW 5: Column headers ──
-const fixedHdrs=['Sl.No','Emp No','Name','Craft','Subcontractor'];const dayHdrs=dayHeaders.map(d=>{const dow=new Date(calY,calM-1,d).getDay();return`${DAY_ABBR[dow]}\n${d}`;});const tailHdrs=['Total\nHours','Rate\n(AED)','Gross\nAmount','VAT\n5%','Total\nAmount'];aoa.push([...fixedHdrs,...dayHdrs,...tailHdrs]);// ── ROW 6: day-of-week sub-header (date numbers only) ──
-// Already in combined header above — skip
-// ── DATA ROWS ──
-let grandTotalHrs=0,grandGross=0,grandVat=0,grandTotal=0;workers.forEach((w,idx)=>{const totalHrs=Object.values(w.days).reduce((s,h)=>s+h,0);const gross=totalHrs*RATE;const vat=gross*VAT_PCT;const total=gross+vat;grandTotalHrs+=totalHrs;grandGross+=gross;grandVat+=vat;grandTotal+=total;const dayVals=dayHeaders.map(d=>w.days[d]||0);aoa.push([idx+1,w.empNo,w.name,w.desig||cfg.craft,cfg.subcontractor,...dayVals,totalHrs,RATE,gross,Math.round(vat*100)/100,Math.round(total*100)/100]);});// ── BLANK ROW ──
-aoa.push([]);// ── TOTALS ROW ──
-const totRow=['','','','','TOTAL',...Array(daysInMonth).fill(''),grandTotalHrs,'',grandGross,Math.round(grandVat*100)/100,Math.round(grandTotal*100)/100];aoa.push(totRow);// ── BLANK ──
-aoa.push([]);// ── SUMMARY BY CRAFT ──
-aoa.push([`SUMMARY BY CRAFT`,'','Total Hours',`Gross Amount (${cfg.currency})`,`VAT (${cfg.vat}%)`,`Total Amount (${cfg.currency})`]);// Group by designation
-const craftMap={};workers.forEach(w=>{const c=w.desig||cfg.craft;if(!craftMap[c])craftMap[c]={hrs:0,gross:0,vat:0,total:0};const h=Object.values(w.days).reduce((s,v)=>s+v,0);const g=h*RATE;const v=g*VAT_PCT;craftMap[c].hrs+=h;craftMap[c].gross+=g;craftMap[c].vat+=v;craftMap[c].total+=g+v;});Object.entries(craftMap).forEach(([craft,d])=>{aoa.push(['',craft,d.hrs,Math.round(d.gross*100)/100,Math.round(d.vat*100)/100,Math.round(d.total*100)/100]);});aoa.push(['','Grand Total',grandTotalHrs,Math.round(grandGross*100)/100,Math.round(grandVat*100)/100,Math.round(grandTotal*100)/100]);// ── BLANK ──
-aoa.push([]);// ── HOLIDAY NOTE ──
-if(holDays.size>0){const holList=[...holDays].sort((a,b)=>a-b).join(', ');aoa.push([`NOTE: Day(s) ${holList} marked as Public Holiday — overtime rate applies per UAE Labour Law`]);}// ── BLANK ──
-aoa.push([]);// ── SIGNATURES ──
-aoa.push(['PREPARED BY','','','CHECKED BY\n(Quality International)','','','APPROVED BY\n(Alghanim)']);aoa.push(['SATCO ARABIA GENERAL CONTRACTING LLC SPC']);aoa.push(['Mr. Shaik Zaheerudeen, PMP — CEO & Founder']);aoa.push(['Tel: +971568007585 | Email: shaik.zaheerudeen@satcoarabiaengg.com']);aoa.push([`Reference: PO ${cfg.poNo} | Cost Code: ${cfg.costCode} | Project: ${cfg.project}`]);// ── CREATE SHEET ──
-const ws=XLSX.utils.aoa_to_sheet(aoa);// ── COLUMN WIDTHS ──
-ws['!cols']=[{wch:6},// Sl.No
-{wch:13},// Emp No
-{wch:26},// Name
-{wch:16},// Craft
-{wch:38},// Subcontractor
-...Array(daysInMonth).fill({wch:5}),// day cols
-{wch:8},// Total Hours
-{wch:7},// Rate
-{wch:12},// Gross
-{wch:8},// VAT
-{wch:12}// Total Amount
-];// ── MERGES: title rows span full width ──
-const totalCols=5+daysInMonth+5-1;ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:totalCols}},// SATCO header
-{s:{r:1,c:0},e:{r:1,c:totalCols}},// Title
-{s:{r:2,c:0},e:{r:2,c:totalCols}},// Sub-contractor
-{s:{r:3,c:0},e:{r:3,c:4}}// Client label
-];// ── BASIC CELL STYLES via column/row metadata (SheetJS CE supports limited styling) ──
-// Mark header row for reference
-const headerRowIdx=5;const lastDataRow=headerRowIdx+workers.length;// ── WORKBOOK ──
-const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Timesheet');const fname=`SATCO_ClientTimesheet_${(selCustomer||'').replace(/\s+/g,'_')}_${calMonth}_PO${cfg.poNo.replace(/[^a-zA-Z0-9]/g,'')}.xlsx`;XLSX.writeFile(wb,fname);};const fmtDate=d=>{if(!d)return'';const dt=new Date(d+'T00:00:00');return dt.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});};const sendWhatsApp=()=>{const dateStr=selDate?new Date(selDate+'T00:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric'}):'';const holLine=isHoliday?`\n🌙 PUBLIC HOLIDAY: ${holidayName||'Holiday'} (×1.5 rate)`:'';const lines=workers.map((w,i)=>{const dispName=(w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' ');const hrs=entries[w.id]?.hours||'';return`${i+1}. ${dispName} (${w.supplier_emp_no||'—'}) — ${hrs?hrs+' hrs':'__ hrs'}`;}).join('\n');const msg=`SATCO TIMESHEET\n${selCustomer} | ${selLocation}\nDate: ${dateStr}${holLine}\n\n${lines}\n\nPlease fill in hours and send back.`;const encoded=encodeURIComponent(msg);const phone=waPhone.replace(/[^0-9]/g,'');const url=phone?`https://wa.me/${phone}?text=${encoded}`:`https://wa.me/?text=${encoded}`;window.open(url,'_blank');};const totalHours=workers.reduce((s,w)=>s+(parseFloat(entries[w.id]?.hours)||0),0);// History grouped by date
-const histByDate=useMemo(()=>{const m={};history.forEach(r=>{if(!m[r.work_date])m[r.work_date]=[];m[r.work_date].push(r);});return Object.entries(m).sort((a,b)=>b[0].localeCompare(a[0]));},[history]);// Calendar: map of date -> { total, isHoliday, holidayName, count }
-const calDayMap=useMemo(()=>{const m={};history.forEach(r=>{if(!m[r.work_date])m[r.work_date]={total:0,isHoliday:false,holidayName:'',count:0};m[r.work_date].total+=parseFloat(r.hours||0);m[r.work_date].count+=1;if(r.is_holiday){m[r.work_date].isHoliday=true;m[r.work_date].holidayName=r.holiday_name||'';}});return m;},[history]);// Load history whenever calMonth changes (fetch whole month)
-const loadHistoryForMonth=async ym=>{if(!selCustomer||!selLocation)return;setHistLoading(true);const[y,m]=ym.split('-').map(Number);const from=`${y}-${String(m).padStart(2,'0')}-01`;const lastDay=new Date(y,m,0).getDate();const to=`${y}-${String(m).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;const{data}=await db.from('mob_timesheets').select('*').eq('customer_name',selCustomer).eq('location',selLocation).gte('work_date',from).lte('work_date',to).order('work_date',{ascending:false});setHistory(data||[]);setHistLoading(false);};return/*#__PURE__*/React.createElement("div",{style:{maxWidth:'900px',margin:'0 auto',padding:'16px 8px'}},/*#__PURE__*/React.createElement("div",{style:{display:'flex',alignItems:'center',gap:'12px',marginBottom:'16px',flexWrap:'wrap'}},/*#__PURE__*/React.createElement("div",null,/*#__PURE__*/React.createElement("div",{style:{fontSize:'18px',fontWeight:800,color:'#0f172a'}},"🕐 Timesheet"),/*#__PURE__*/React.createElement("div",{style:{fontSize:'11px',color:'#64748b',marginTop:'2px'}},"Daily hours per employee per site")),/*#__PURE__*/React.createElement("div",{style:{marginLeft:'auto',display:'flex',gap:'6px'}},/*#__PURE__*/React.createElement("button",{onClick:()=>setViewMode('entry'),style:{padding:'5px 14px',fontSize:'12px',fontWeight:700,border:'none',borderRadius:6,cursor:'pointer',background:viewMode==='entry'?'#0f172a':'#e2e8f0',color:viewMode==='entry'?'#fff':'#374151'}},"📝 Daily Entry"),/*#__PURE__*/React.createElement("button",{onClick:()=>setViewMode('history'),style:{padding:'5px 14px',fontSize:'12px',fontWeight:700,border:'none',borderRadius:6,cursor:'pointer',background:viewMode==='history'?'#0f172a':'#e2e8f0',color:viewMode==='history'?'#fff':'#374151'}},"📅 History"))),/*#__PURE__*/React.createElement("div",{style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'14px 16px',marginBottom:'14px',display:'flex',gap:'12px',flexWrap:'wrap',alignItems:'flex-end'}},/*#__PURE__*/React.createElement("div",null,/*#__PURE__*/React.createElement("div",{style:{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}},"Customer"),/*#__PURE__*/React.createElement("select",{value:selCustomer,onChange:e=>{setSelCustomer(e.target.value);setSelLocation('');},style:{padding:'6px 10px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:'13px',fontWeight:600,minWidth:'180px'}},/*#__PURE__*/React.createElement("option",{value:""},"— Select Customer —"),customers.map(c=>/*#__PURE__*/React.createElement("option",{key:c,value:c},c)))),/*#__PURE__*/React.createElement("div",null,/*#__PURE__*/React.createElement("div",{style:{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}},"Site / Location"),/*#__PURE__*/React.createElement("select",{value:selLocation,onChange:e=>setSelLocation(e.target.value),style:{padding:'6px 10px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:'13px',fontWeight:600,minWidth:'180px'}},/*#__PURE__*/React.createElement("option",{value:""},"— Select Location —"),locations.map(l=>/*#__PURE__*/React.createElement("option",{key:l,value:l},l)))),viewMode==='entry'&&/*#__PURE__*/React.createElement("div",null,/*#__PURE__*/React.createElement("div",{style:{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}},"Date"),/*#__PURE__*/React.createElement("input",{type:"date",value:selDate,onChange:e=>setSelDate(e.target.value),style:{padding:'6px 10px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:'13px',fontWeight:600}}))),viewMode==='entry'&&selCustomer&&selLocation&&/*#__PURE__*/React.createElement("div",{style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',overflow:'hidden'}},/*#__PURE__*/React.createElement("div",{style:{background:'#0f172a',padding:'10px 16px',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}},/*#__PURE__*/React.createElement("div",{style:{fontWeight:800,fontSize:'14px',color:'#f8fafc'}},"📅 ",fmtDate(selDate)),/*#__PURE__*/React.createElement("div",{style:{fontSize:'12px',color:'#94a3b8'}},selCustomer," · ",selLocation),/*#__PURE__*/React.createElement("label",{style:{display:'flex',alignItems:'center',gap:'7px',cursor:'pointer',marginLeft:'auto',background:'#1e293b',padding:'5px 12px',borderRadius:20,border:`2px solid ${isHoliday?'#f59e0b':'#334155'}`}},/*#__PURE__*/React.createElement("input",{type:"checkbox",checked:isHoliday,onChange:e=>setIsHoliday(e.target.checked),style:{width:15,height:15,accentColor:'#f59e0b',cursor:'pointer'}}),/*#__PURE__*/React.createElement("span",{style:{fontSize:'12px',fontWeight:700,color:isHoliday?'#fde68a':'#94a3b8'}},"🌙 Public Holiday"))),isHoliday&&/*#__PURE__*/React.createElement("div",{style:{background:'#fffbeb',borderBottom:'1px solid #fde68a',padding:'8px 16px',display:'flex',alignItems:'center',gap:'10px'}},/*#__PURE__*/React.createElement("span",{style:{fontSize:'12px',fontWeight:700,color:'#92400e'}},"Holiday Name:"),/*#__PURE__*/React.createElement("input",{value:holidayName,onChange:e=>setHolidayName(e.target.value),placeholder:"e.g. Mawlid al-Nabi",style:{padding:'4px 10px',border:'1px solid #fde68a',borderRadius:6,fontSize:'12px',flex:1,maxWidth:'280px'}}),/*#__PURE__*/React.createElement("span",{style:{fontSize:'11px',color:'#b45309'}},"× 1.5 rate applies — noted for records")),loading?/*#__PURE__*/React.createElement("div",{style:{padding:'32px',textAlign:'center',color:'#94a3b8'}},"Loading…"):workers.length===0?/*#__PURE__*/React.createElement("div",{style:{padding:'32px',textAlign:'center',color:'#94a3b8'}},"No mobilised employees found for this site."):/*#__PURE__*/React.createElement(React.Fragment,null,/*#__PURE__*/React.createElement("table",{style:{width:'100%',borderCollapse:'collapse'}},/*#__PURE__*/React.createElement("thead",null,/*#__PURE__*/React.createElement("tr",{style:{background:'#f8fafc',borderBottom:'2px solid #e2e8f0'}},/*#__PURE__*/React.createElement("th",{style:{...S.th,width:'40px',textAlign:'center'}},"#"),/*#__PURE__*/React.createElement("th",{style:{...S.th,width:'110px'}},"Emp No"),/*#__PURE__*/React.createElement("th",{style:{...S.th}},"Name"),/*#__PURE__*/React.createElement("th",{style:{...S.th,width:'130px'}},"Designation"),/*#__PURE__*/React.createElement("th",{style:{...S.th,width:'90px',textAlign:'center'}},"Hours"),/*#__PURE__*/React.createElement("th",{style:{...S.th,width:'36px',textAlign:'center'}},"✓"),/*#__PURE__*/React.createElement("th",{style:{...S.th}},"Notes"))),/*#__PURE__*/React.createElement("tbody",null,workers.map((w,i)=>{const hrs=entries[w.id]?.hours??'';const isSaved=!!saved[w.id];const rowBg=isHoliday?i%2===0?'#fffbeb':'#fef9e7':i%2===0?'#fff':'#fafafa';return/*#__PURE__*/React.createElement("tr",{key:w.id,style:{background:rowBg,borderBottom:'1px solid #f1f5f9'}},/*#__PURE__*/React.createElement("td",{style:{...S.td,textAlign:'center',color:'#94a3b8',fontSize:'12px'}},i+1),/*#__PURE__*/React.createElement("td",{style:{...S.td,fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:'#0369a1'}},w.supplier_emp_no||'—'),/*#__PURE__*/React.createElement("td",{style:{...S.td,fontWeight:700}},(w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' '),/*#__PURE__*/React.createElement("span",{style:{display:'block',fontSize:'10px',color:'#94a3b8',fontWeight:400,lineHeight:1.2,marginTop:'1px'}},w.full_name)),/*#__PURE__*/React.createElement("td",{style:{...S.td,fontSize:'12px',color:'#475569'}},w.designation||'—'),/*#__PURE__*/React.createElement("td",{style:{...S.td,textAlign:'center',padding:'4px 6px'}},/*#__PURE__*/React.createElement("input",{type:"number",min:"0",max:"24",step:"0.5",value:hrs,onChange:e=>setHours(w.id,e.target.value),placeholder:"0",style:{width:'64px',padding:'5px 8px',border:`2px solid ${isHoliday?'#f59e0b':'#cbd5e1'}`,borderRadius:6,fontSize:'14px',fontWeight:700,textAlign:'center',background:isHoliday?'#fffbeb':'#fff'}})),/*#__PURE__*/React.createElement("td",{style:{...S.td,textAlign:'center'}},isSaved&&parseFloat(saved[w.id]?.hours)===parseFloat(hrs||0)?/*#__PURE__*/React.createElement("span",{style:{color:'#16a34a',fontSize:'16px'},title:"Saved"},"✓"):/*#__PURE__*/React.createElement("span",{style:{color:'#e2e8f0',fontSize:'16px'}},"○")),/*#__PURE__*/React.createElement("td",{style:{...S.td,padding:'4px 8px'}},/*#__PURE__*/React.createElement("input",{value:entries[w.id]?.notes||'',onChange:e=>setNotes(w.id,e.target.value),placeholder:"optional",style:{width:'100%',padding:'4px 8px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:'11px'}})));})),/*#__PURE__*/React.createElement("tfoot",null,/*#__PURE__*/React.createElement("tr",{style:{background:'#f0f9ff',borderTop:'2px solid #bae6fd'}},/*#__PURE__*/React.createElement("td",{colSpan:4,style:{...S.td,fontWeight:800,fontSize:'13px',color:'#0369a1',textAlign:'right',paddingRight:'12px'}},"Total Hours"),/*#__PURE__*/React.createElement("td",{style:{...S.td,textAlign:'center',fontWeight:800,fontSize:'16px',color:isHoliday?'#b45309':'#0369a1'}},totalHours.toFixed(1)),/*#__PURE__*/React.createElement("td",{colSpan:2,style:{...S.td}},isHoliday&&/*#__PURE__*/React.createElement("span",{style:{fontSize:'11px',color:'#b45309',fontWeight:700}},"🌙 Holiday rate × 1.5"))))),/*#__PURE__*/React.createElement("div",{style:{padding:'12px 16px',background:'#f8fafc',borderTop:'1px solid #e2e8f0',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}},/*#__PURE__*/React.createElement("button",{onClick:handleSave,disabled:saving,style:{padding:'8px 24px',background:'#166534',color:'#fff',border:'none',borderRadius:7,fontWeight:800,fontSize:'13px',cursor:'pointer',opacity:saving?0.6:1}},saving?'Saving…':'💾 Save Timesheet'),saveMsg&&/*#__PURE__*/React.createElement("span",{style:{fontSize:'13px',fontWeight:700,color:saveMsg.startsWith('✅')?'#16a34a':'#dc2626'}},saveMsg),/*#__PURE__*/React.createElement("div",{style:{display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap'}},showWaInput&&/*#__PURE__*/React.createElement("input",{type:"tel",value:waPhone,onChange:e=>setWaPhone(e.target.value),placeholder:"971xxxxxxxxx (with country code)",style:{padding:'6px 10px',border:'1px solid #25d366',borderRadius:6,fontSize:'12px',width:'220px'}}),/*#__PURE__*/React.createElement("button",{onClick:()=>{if(!showWaInput){setShowWaInput(true);}else{sendWhatsApp();}},style:{padding:'8px 16px',background:'#25d366',color:'#fff',border:'none',borderRadius:7,fontWeight:800,fontSize:'13px',cursor:'pointer',display:'flex',alignItems:'center',gap:'6px'}},/*#__PURE__*/React.createElement("svg",{width:"16",height:"16",viewBox:"0 0 24 24",fill:"white"},/*#__PURE__*/React.createElement("path",{d:"M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"}),/*#__PURE__*/React.createElement("path",{d:"M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.11 1.522 5.83L.044 23.956l6.278-1.647A11.93 11.93 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.794 9.794 0 01-5.001-1.37l-.358-.213-3.724.977.993-3.63-.234-.374A9.787 9.787 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182c5.43 0 9.818 4.388 9.818 9.818 0 5.43-4.388 9.818-9.818 9.818z"})),showWaInput?'Send Now':'📲 Send WhatsApp Template'),showWaInput&&/*#__PURE__*/React.createElement("button",{onClick:()=>setShowWaInput(false),style:{padding:'6px 10px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:'12px',background:'#fff',cursor:'pointer',color:'#64748b'}},"Cancel")),/*#__PURE__*/React.createElement("div",{style:{marginLeft:'auto',fontSize:'11px',color:'#94a3b8'}},Object.keys(saved).length>0?`${Object.keys(saved).length} records saved for this date`:'Not yet saved for this date')))),!selCustomer&&viewMode==='entry'&&/*#__PURE__*/React.createElement("div",{style:{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:10,padding:'40px',textAlign:'center',color:'#94a3b8'}},/*#__PURE__*/React.createElement("div",{style:{fontSize:'32px',marginBottom:'8px'}},"🏗️"),/*#__PURE__*/React.createElement("div",{style:{fontWeight:700}},"Select a customer and site above to start entering hours")),viewMode==='history'&&selCustomer&&selLocation&&(()=>{const[calY,calM]=calMonth.split('-').map(Number);const firstDay=new Date(calY,calM-1,1).getDay();// 0=Sun
-const daysInMonth=new Date(calY,calM,0).getDate();const todayStr=new Date().toISOString().slice(0,10);const DAY_LABELS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];const prevMonth=()=>{const d=new Date(calY,calM-2,1);setCalMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);};const nextMonth=()=>{const d=new Date(calY,calM,1);setCalMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);};const monthName=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'});// Selected date detail
-const detailRows=selDate&&calDayMap[selDate]?(histByDate.find(([d])=>d===selDate)||[null,[]])[1]:[];const selDayData=selDate?calDayMap[selDate]:null;return/*#__PURE__*/React.createElement("div",null,/*#__PURE__*/React.createElement("div",{style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',overflow:'hidden',marginBottom:'12px'}},/*#__PURE__*/React.createElement("div",{style:{background:'#0f172a',padding:'10px 16px',display:'flex',alignItems:'center',gap:'10px'}},/*#__PURE__*/React.createElement("button",{onClick:prevMonth,style:{background:'none',border:'1px solid #334155',color:'#94a3b8',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontSize:'16px',fontWeight:700}},"‹"),/*#__PURE__*/React.createElement("div",{style:{fontWeight:800,fontSize:'14px',color:'#f8fafc',flex:1,textAlign:'center'}},monthName),/*#__PURE__*/React.createElement("button",{onClick:nextMonth,style:{background:'none',border:'1px solid #334155',color:'#94a3b8',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontSize:'16px',fontWeight:700}},"›"),/*#__PURE__*/React.createElement("button",{onClick:exportExcel,style:{marginLeft:'8px',padding:'5px 14px',background:'#166534',color:'#fff',border:'none',borderRadius:6,fontWeight:700,fontSize:'11px',cursor:'pointer'}},"⬇ Raw Excel"),/*#__PURE__*/React.createElement("button",{onClick:()=>setShowTsExport(true),style:{marginLeft:'4px',padding:'5px 14px',background:'#b8972a',color:'#fff',border:'none',borderRadius:6,fontWeight:700,fontSize:'11px',cursor:'pointer'}},"📋 Client Timesheet")),histLoading?/*#__PURE__*/React.createElement("div",{style:{padding:'32px',textAlign:'center',color:'#94a3b8'}},"Loading…"):/*#__PURE__*/React.createElement("div",{style:{padding:'12px'}},/*#__PURE__*/React.createElement("div",{style:{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'4px',marginBottom:'4px'}},DAY_LABELS.map(d=>/*#__PURE__*/React.createElement("div",{key:d,style:{textAlign:'center',fontSize:'10px',fontWeight:700,color:'#94a3b8',padding:'4px 0'}},d))),/*#__PURE__*/React.createElement("div",{style:{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'4px'}},Array.from({length:firstDay}).map((_,i)=>/*#__PURE__*/React.createElement("div",{key:'e'+i})),Array.from({length:daysInMonth}).map((_,i)=>{const d=i+1;const dateStr=`${calY}-${String(calM).padStart(2,'0')}-${String(d).padStart(2,'0')}`;const dayData=calDayMap[dateStr];const isToday=dateStr===todayStr;const isSel=dateStr===selDate;const isFuture=dateStr>todayStr;const isHol=dayData?.isHoliday;const hasDat=!!dayData;let bg='#f8fafc',border='1px solid #e2e8f0',color='#374151';if(isFuture){bg='#f8fafc';color='#cbd5e1';border='1px solid #f1f5f9';}if(hasDat){bg=isHol?'#fffbeb':'#f0fdf4';border=isHol?'1px solid #fde68a':'1px solid #86efac';color='#0f172a';}if(isToday){border='2px solid #3b82f6';}if(isSel){bg='#1e40af';border='2px solid #1e40af';color='#fff';}return/*#__PURE__*/React.createElement("div",{key:d,onClick:()=>{if(!isFuture){setSelDate(dateStr);}},style:{borderRadius:8,border,background:bg,color,padding:'6px 4px',textAlign:'center',cursor:isFuture?'default':'pointer',minHeight:'58px',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'flex-start',transition:'all .1s'}},/*#__PURE__*/React.createElement("div",{style:{fontWeight:isToday||isSel?800:600,fontSize:'13px',marginBottom:'2px'}},d),hasDat&&!isSel&&/*#__PURE__*/React.createElement(React.Fragment,null,/*#__PURE__*/React.createElement("div",{style:{fontSize:'11px',fontWeight:800,color:isHol?'#b45309':'#166534'}},dayData.total.toFixed(0),"h"),isHol&&/*#__PURE__*/React.createElement("div",{style:{fontSize:'8px',color:'#b45309',lineHeight:1}},"🌙")),isSel&&hasDat&&/*#__PURE__*/React.createElement("div",{style:{fontSize:'11px',fontWeight:800,color:'#bfdbfe'}},dayData.total.toFixed(0),"h"),!hasDat&&!isFuture&&/*#__PURE__*/React.createElement("div",{style:{fontSize:'9px',color:'#cbd5e1',marginTop:'2px'}},"—"));})),/*#__PURE__*/React.createElement("div",{style:{display:'flex',gap:'14px',marginTop:'10px',padding:'6px 4px',flexWrap:'wrap'}},/*#__PURE__*/React.createElement("span",{style:{fontSize:'10px',color:'#64748b',display:'flex',alignItems:'center',gap:'4px'}},/*#__PURE__*/React.createElement("span",{style:{width:12,height:12,borderRadius:3,background:'#f0fdf4',border:'1px solid #86efac',display:'inline-block'}}),"Hours saved"),/*#__PURE__*/React.createElement("span",{style:{fontSize:'10px',color:'#64748b',display:'flex',alignItems:'center',gap:'4px'}},/*#__PURE__*/React.createElement("span",{style:{width:12,height:12,borderRadius:3,background:'#fffbeb',border:'1px solid #fde68a',display:'inline-block'}}),"🌙 Holiday"),/*#__PURE__*/React.createElement("span",{style:{fontSize:'10px',color:'#64748b',display:'flex',alignItems:'center',gap:'4px'}},/*#__PURE__*/React.createElement("span",{style:{width:12,height:12,borderRadius:3,background:'#f8fafc',border:'1px solid #cbd5e1',display:'inline-block'}}),"No record — click to add"),/*#__PURE__*/React.createElement("span",{style:{fontSize:'10px',color:'#64748b',display:'flex',alignItems:'center',gap:'4px'}},/*#__PURE__*/React.createElement("span",{style:{width:12,height:12,borderRadius:3,background:'#1e40af',border:'2px solid #1e40af',display:'inline-block'}}),"Selected")))),selDate&&/*#__PURE__*/React.createElement("div",{style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',overflow:'hidden'}},/*#__PURE__*/React.createElement("div",{style:{background:selDayData?.isHoliday?'#92400e':'#1e3a5f',padding:'10px 16px',display:'flex',alignItems:'center',gap:'10px'}},/*#__PURE__*/React.createElement("div",{style:{fontWeight:800,fontSize:'14px',color:'#f8fafc'}},"📅 ",fmtDate(selDate),selDayData?.isHoliday&&/*#__PURE__*/React.createElement("span",{style:{marginLeft:'10px',background:'#fde68a',color:'#92400e',fontSize:'10px',padding:'2px 8px',borderRadius:10,fontWeight:700}},"🌙 ",selDayData.holidayName||'Holiday'," · ×1.5")),/*#__PURE__*/React.createElement("div",{style:{marginLeft:'auto',display:'flex',gap:'8px',alignItems:'center'}},selDayData&&/*#__PURE__*/React.createElement("span",{style:{fontSize:'12px',fontWeight:700,color:'#bfdbfe'}},selDayData.total.toFixed(1)," hrs total · ",selDayData.count," workers"),/*#__PURE__*/React.createElement("button",{onClick:()=>setViewMode('entry'),style:{padding:'5px 14px',background:'#b8972a',color:'#fff',border:'none',borderRadius:6,fontWeight:700,fontSize:'12px',cursor:'pointer'}},"✏️ ",selDayData?'Edit This Day':'Add Hours for This Day'))),selDayData?/*#__PURE__*/React.createElement("table",{style:{width:'100%',borderCollapse:'collapse',fontSize:'12px'}},/*#__PURE__*/React.createElement("thead",null,/*#__PURE__*/React.createElement("tr",{style:{background:'#f8fafc',borderBottom:'2px solid #e2e8f0'}},/*#__PURE__*/React.createElement("th",{style:{...S.th,width:'110px'}},"Emp No"),/*#__PURE__*/React.createElement("th",{style:{...S.th}},"Name"),/*#__PURE__*/React.createElement("th",{style:{...S.th,width:'130px'}},"Designation"),/*#__PURE__*/React.createElement("th",{style:{...S.th,width:'80px',textAlign:'center'}},"Hours"),/*#__PURE__*/React.createElement("th",{style:{...S.th}},"Notes"))),/*#__PURE__*/React.createElement("tbody",null,(histByDate.find(([d])=>d===selDate)||[null,[]])[1].map((r,i)=>/*#__PURE__*/React.createElement("tr",{key:r.id,style:{background:i%2===0?'#fff':'#fafafa',borderBottom:'1px solid #f1f5f9'}},/*#__PURE__*/React.createElement("td",{style:{...S.td,fontFamily:'monospace',fontSize:'11px',color:'#0369a1',fontWeight:700}},r.supplier_emp_no||'—'),/*#__PURE__*/React.createElement("td",{style:{...S.td,fontWeight:600}},(r.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' '),/*#__PURE__*/React.createElement("span",{style:{display:'block',fontSize:'10px',color:'#94a3b8',fontWeight:400,lineHeight:1.2}},r.full_name)),/*#__PURE__*/React.createElement("td",{style:{...S.td,color:'#475569'}},r.designation||'—'),/*#__PURE__*/React.createElement("td",{style:{...S.td,textAlign:'center',fontWeight:800,fontSize:'15px',color:selDayData?.isHoliday?'#b45309':'#166534'}},parseFloat(r.hours||0).toFixed(1)),/*#__PURE__*/React.createElement("td",{style:{...S.td,color:'#94a3b8',fontSize:'11px'}},r.notes||''))))):/*#__PURE__*/React.createElement("div",{style:{padding:'28px',textAlign:'center',color:'#94a3b8'}},/*#__PURE__*/React.createElement("div",{style:{fontSize:'24px',marginBottom:'6px'}},"📋"),/*#__PURE__*/React.createElement("div",{style:{fontWeight:700,marginBottom:'4px'}},"No hours recorded for this date"),/*#__PURE__*/React.createElement("div",{style:{fontSize:'12px'}},"Click ",/*#__PURE__*/React.createElement("strong",null,"Add Hours for This Day")," above to enter timesheet"))));})(),!selCustomer&&viewMode==='history'&&/*#__PURE__*/React.createElement("div",{style:{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:10,padding:'40px',textAlign:'center',color:'#94a3b8'}},/*#__PURE__*/React.createElement("div",{style:{fontSize:'32px',marginBottom:'8px'}},"📅"),/*#__PURE__*/React.createElement("div",{style:{fontWeight:700}},"Select a customer and site to view history")),showTsExport&&/*#__PURE__*/React.createElement("div",{style:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.55)',zIndex:999,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}},/*#__PURE__*/React.createElement("div",{style:{background:'#fff',borderRadius:14,width:'100%',maxWidth:'560px',boxShadow:'0 20px 60px rgba(0,0,0,0.3)',overflow:'hidden'}},/*#__PURE__*/React.createElement("div",{style:{background:'#0f172a',padding:'14px 20px',display:'flex',alignItems:'center',gap:'10px'}},/*#__PURE__*/React.createElement("span",{style:{fontSize:'16px',fontWeight:800,color:'#fff'}},"📋 Client Timesheet Settings"),/*#__PURE__*/React.createElement("span",{style:{fontSize:'11px',color:'#94a3b8',marginLeft:'4px'}},"Review & edit before downloading"),/*#__PURE__*/React.createElement("button",{onClick:()=>setShowTsExport(false),style:{marginLeft:'auto',background:'none',border:'none',color:'#94a3b8',fontSize:'20px',cursor:'pointer',lineHeight:1}},"×")),/*#__PURE__*/React.createElement("div",{style:{padding:'20px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',maxHeight:'70vh',overflowY:'auto'}},[{key:'clientName',label:'Client Name',full:true},{key:'project',label:'Project / Site',full:true},{key:'poNo',label:'PO Number',full:false},{key:'costCode',label:'Cost Code',full:false},{key:'craft',label:'Default Craft / Position',full:false},{key:'rate',label:'Rate per Hour',full:false,type:'number'},{key:'vat',label:'VAT %',full:false,type:'number'},{key:'currency',label:'Currency',full:false},{key:'subcontractor',label:'Subcontractor Name',full:true},{key:'checkedBy',label:'Checked By',full:false},{key:'approvedBy',label:'Approved By',full:false}].map(f=>/*#__PURE__*/React.createElement("div",{key:f.key,style:{gridColumn:f.full?'1 / -1':'auto'}},/*#__PURE__*/React.createElement("div",{style:{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}},f.label),/*#__PURE__*/React.createElement("input",{type:f.type||'text',value:tsSettings[f.key],onChange:e=>setTsSettings(s=>({...s,[f.key]:e.target.value})),style:{width:'100%',padding:'7px 10px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:'13px',boxSizing:'border-box',fontWeight:f.key==='rate'?700:400,color:f.key==='rate'?'#0369a1':'#0f172a'}})))),/*#__PURE__*/React.createElement("div",{style:{background:'#f0fdf4',borderTop:'1px solid #86efac',padding:'10px 20px',fontSize:'11px',color:'#166534',fontWeight:600}},`${history.length} records · ${calMonth} · Rate: ${tsSettings.currency} ${tsSettings.rate}/hr · VAT: ${tsSettings.vat}% · ${tsSettings.craft}`),/*#__PURE__*/React.createElement("div",{style:{padding:'14px 20px',borderTop:'1px solid #e2e8f0',display:'flex',gap:'10px',justifyContent:'flex-end'}},/*#__PURE__*/React.createElement("button",{onClick:()=>setShowTsExport(false),style:{padding:'8px 20px',border:'1px solid #e2e8f0',borderRadius:7,background:'#fff',cursor:'pointer',fontSize:'13px',fontWeight:600,color:'#475569'}},"Cancel"),/*#__PURE__*/React.createElement("button",{onClick:()=>{exportClientTimesheet(tsSettings);setShowTsExport(false);},style:{padding:'8px 24px',background:'#b8972a',color:'#fff',border:'none',borderRadius:7,fontWeight:800,fontSize:'13px',cursor:'pointer'}},"⬇ Download Timesheet")))));}function LettersTab({mobList,candidates=[]}){const[letterType,setLetterType]=useState('client');const[fCust,setFCust]=useState(new Set());const[fLoc,setFLoc]=useState(new Set());const[search,setSearch]=useState('');const[selected,setSelected]=useState(new Set());const[subject,setSubject]=useState('');const[arrival,setArrival]=useState('');const[date,setDate]=useState(todayStr());const customers=[...new Set(mobList.map(m=>m.customer_name).filter(Boolean))].sort();const locations=[...new Set(mobList.map(m=>m.location).filter(Boolean))].sort();const customerOptsL=useMemo(()=>customers.map(c=>({value:c,label:c})),[customers]);const locationOptsL=useMemo(()=>locations.map(l=>({value:l,label:l})),[locations]);// Build candidate lookup + merge helper for letters tab
+function TimesheetTab({mobList=[],onRefresh,candidates=[],suppliers=[]}){
+const[subTab,setSubTab]=React.useState('entry');
+const today=new Date().toISOString().slice(0,10);
+const[selDate,setSelDate]=React.useState(today);
+const[selCustomer,setSelCustomer]=React.useState('');
+const[selLocation,setSelLocation]=React.useState('');
+const[calMonth,setCalMonth]=React.useState(()=>{const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;});
+
+// ── Settings (per project, localStorage) ─────────────────────────────────
+const settingsKey=`satco_ts_cfg_${selCustomer}__${selLocation}`;
+const DEF={clientName:'ALGHANIM INTERNATIONAL GENERAL TRADING & CONTRACTING CO., ABU DHABI',project:'VOLTA Project - TAZIZ Derivatives Park (TDP), RUWAIS, Abu Dhabi, UAE',poNo:'072-46',costCode:'509062',subcontractor:'SATCO ARABIA GENERAL CONTRACTING LLC SPC',checkedBy:'Quality International',approvedBy:'Alghanim International',vat:'5',currency:'AED',weekendDay:'fri',defaultCustomerRate:'24',defaultSupplierRate:'20'};
+const[settings,setSettingsRaw]=React.useState(DEF);
+const[settingsDraft,setSettingsDraft]=React.useState(null);
+React.useEffect(()=>{try{const v=localStorage.getItem(settingsKey);if(v)setSettingsRaw({...DEF,...JSON.parse(v)});}catch{}},[settingsKey]);
+const saveSettings=s=>{setSettingsRaw(s);try{localStorage.setItem(settingsKey,JSON.stringify(s));}catch{}};
+
+// ── Rates (per project, per designation) ─────────────────────────────────
+const ratesKey=`satco_ts_rates_${selCustomer}__${selLocation}`;
+const[rates,setRatesRaw]=React.useState({});
+const[ratesDraft,setRatesDraft]=React.useState(null);
+React.useEffect(()=>{try{const v=localStorage.getItem(ratesKey);setRatesRaw(v?JSON.parse(v):{});}catch{}},[ratesKey]);
+const saveRates=r=>{setRatesRaw(r);try{localStorage.setItem(ratesKey,JSON.stringify(r));}catch{}};
+
+// ── Holidays (per project+month) ──────────────────────────────────────────
+const holKey=`satco_ts_hol_${selCustomer}__${selLocation}_${calMonth}`;
+const[holidays,setHolidaysRaw]=React.useState({});
+const[newHolDate,setNewHolDate]=React.useState('');
+const[newHolName,setNewHolName]=React.useState('');
+React.useEffect(()=>{try{const v=localStorage.getItem(holKey);setHolidaysRaw(v?JSON.parse(v):{});}catch{setHolidaysRaw({});}},[holKey]);
+const setHolidays=h=>{setHolidaysRaw(h);try{localStorage.setItem(holKey,JSON.stringify(h));}catch{}};
+
+// ── Daily entry state ─────────────────────────────────────────────────────
+const[entries,setEntries]=React.useState({});
+const[saved,setSaved]=React.useState({});
+const[loading,setLoading]=React.useState(false);
+const[saving,setSaving]=React.useState(false);
+const[saveMsg,setSaveMsg]=React.useState('');
+const[history,setHistory]=React.useState([]);
+const[histLoading,setHistLoading]=React.useState(false);
+
+// ── Import state ──────────────────────────────────────────────────────────
+const[importRows,setImportRows]=React.useState(null);// parsed client data: [{empNo,name,days:{1:h,2:h,...}}]
+const[importMonth,setImportMonth]=React.useState('');
+const[importLoading,setImportLoading]=React.useState(false);
+const[importMsg,setImportMsg]=React.useState('');
+const[ourRows,setOurRows]=React.useState(null);// our DB data for same month
+const[mergeDecisions,setMergeDecisions]=React.useState({});// mob_register_id → 'ours'|'client'|number
+const[applyingMerge,setApplyingMerge]=React.useState(false);
+const importFileRef=React.useRef(null);
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+const customers=React.useMemo(()=>[...new Set(mobList.filter(r=>r.status==='mobilised').map(r=>r.customer_name).filter(Boolean))].sort(),[mobList]);
+const locations=React.useMemo(()=>[...new Set(mobList.filter(r=>r.status==='mobilised'&&(!selCustomer||r.customer_name===selCustomer)).map(r=>r.location).filter(Boolean))].sort(),[mobList,selCustomer]);
+const workers=React.useMemo(()=>mobList.filter(r=>r.status==='mobilised'&&(!selCustomer||r.customer_name===selCustomer)&&(!selLocation||r.location===selLocation)).sort((a,b)=>{
+  const numA=parseInt((a.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');
+  const numB=parseInt((b.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');
+  return numA-numB;
+}),[mobList,selCustomer,selLocation]);
+const isWeekend=dateStr=>{const dow=new Date(dateStr+'T00:00:00').getDay();const wd=settings.weekendDay||'fri';if(wd==='fri')return dow===5||dow===6;if(wd==='sun')return dow===0||dow===6;return dow===0||dow===5||dow===6;};
+const isHolidayDate=dateStr=>!!(holidays[dateStr]);
+const isOffDay=dateStr=>isWeekend(dateStr)||isHolidayDate(dateStr);
+const dayLabel=dateStr=>{const dow=new Date(dateStr+'T00:00:00').getDay();return['SUN','MON','TUE','WED','THU','FRI','SAT'][dow];};
+
+// ── Load daily entries ────────────────────────────────────────────────────
+React.useEffect(()=>{
+  if(!selDate||!selCustomer||!selLocation){setSaved({});setEntries({});return;}
+  setLoading(true);
+  db.from('mob_timesheets').select('*').eq('work_date',selDate).eq('customer_name',selCustomer).eq('location',selLocation)
+    .then(({data})=>{const sv={};const en={};(data||[]).forEach(row=>{sv[row.mob_register_id]=row;en[row.mob_register_id]={hours:String(row.hours),notes:row.notes||''};});setSaved(sv);setEntries(en);setLoading(false);});
+},[selDate,selCustomer,selLocation]);
+
+// ── Load month history ────────────────────────────────────────────────────
+const loadHistoryForMonth=React.useCallback(async ym=>{
+  if(!selCustomer||!selLocation)return;
+  setHistLoading(true);
+  const[y,m]=ym.split('-').map(Number);
+  const from=`${y}-${String(m).padStart(2,'0')}-01`;
+  const to=`${y}-${String(m).padStart(2,'0')}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`;
+  const{data}=await db.from('mob_timesheets').select('*').eq('customer_name',selCustomer).eq('location',selLocation).gte('work_date',from).lte('work_date',to).order('work_date',{ascending:true});
+  setHistory(data||[]);setHistLoading(false);
+},[selCustomer,selLocation]);
+React.useEffect(()=>{if((subTab==='customer'||subTab==='supplier'||subTab==='import')&&selCustomer&&selLocation)loadHistoryForMonth(calMonth);},[subTab,selCustomer,selLocation,calMonth]);
+
+const setHours=(id,val)=>setEntries(e=>({...e,[id]:{...(e[id]||{}),hours:val}}));
+const setNotes=(id,val)=>setEntries(e=>({...e,[id]:{...(e[id]||{}),notes:val}}));
+const totalHours=workers.reduce((s,w)=>s+(parseFloat(entries[w.id]?.hours)||0),0);
+
+const handleSave=async()=>{
+  if(!selDate||!selCustomer||!selLocation)return;
+  setSaving(true);setSaveMsg('');
+  const isHol=isHolidayDate(selDate);
+  const rows=workers.map(w=>({work_date:selDate,mob_register_id:w.id,full_name:w.full_name||'',designation:w.designation||'',supplier_name:w.supplier_name||'',supplier_emp_no:w.supplier_emp_no||'',customer_name:selCustomer,location:selLocation,hours:parseFloat(entries[w.id]?.hours??'0')||0,is_holiday:isHol,holiday_name:isHol?holidays[selDate]||'':null,notes:entries[w.id]?.notes||null,updated_at:new Date().toISOString()}));
+  const{error}=await db.from('mob_timesheets').upsert(rows,{onConflict:'work_date,mob_register_id'});
+  if(error){setSaveMsg('❌ '+error.message);}else{setSaveMsg('✅ Saved!');const{data}=await db.from('mob_timesheets').select('*').eq('work_date',selDate).eq('customer_name',selCustomer).eq('location',selLocation);const sv={};(data||[]).forEach(r=>sv[r.mob_register_id]=r);setSaved(sv);}
+  setSaving(false);setTimeout(()=>setSaveMsg(''),3000);
+};
+
+// ── Build monthly pivot ───────────────────────────────────────────────────
+const buildMonthPivot=React.useCallback((hist=history)=>{
+  const[calY,calM]=calMonth.split('-').map(Number);
+  const daysInMonth=new Date(calY,calM,0).getDate();
+  const days=Array.from({length:daysInMonth},(_,i)=>{const d=i+1;const dateStr=`${calY}-${String(calM).padStart(2,'0')}-${String(d).padStart(2,'0')}`;return{d,dateStr,label:dayLabel(dateStr),isOff:isOffDay(dateStr),isHol:isHolidayDate(dateStr),holName:holidays[dateStr]||''};});
+  const workerMap={};hist.forEach(r=>{const key=r.mob_register_id||r.full_name;if(!workerMap[key])workerMap[key]={...r,dayHours:{}};workerMap[key].dayHours[new Date(r.work_date+'T00:00:00').getDate()]=parseFloat(r.hours||0);});
+  return{days,workerMap};
+},[calMonth,history,holidays,settings]);
+
+// ── Parse client timesheet upload ─────────────────────────────────────────
+// Handles: Excel (.xlsx) and PDF/image via AI scan
+const parseClientExcel=async file=>{
+  const XLSX=window.XLSX;if(!XLSX)throw new Error('SheetJS not loaded — refresh page');
+  const ab=await file.arrayBuffer();
+  const wb=XLSX.read(ab,{type:'array'});
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  const aoa=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+  // Find header row: look for row containing SL/EMP/NAME
+  let headerRow=-1;let empCol=-1,nameCol=-1,craftCol=-1,firstDayCol=-1,totalCol=-1;
+  for(let r=0;r<Math.min(10,aoa.length);r++){
+    const row=aoa[r].map(c=>String(c).toUpperCase().trim());
+    if(row.some(c=>c.includes('EMP'))){
+      headerRow=r;
+      row.forEach((c,i)=>{
+        if(c.includes('EMP')&&empCol===-1)empCol=i;
+        if((c.includes('NAME'))&&nameCol===-1)nameCol=i;
+        if(c.includes('CRAFT')||c.includes('DESIGNATION'))craftCol=i;
+        if(c==='1'&&firstDayCol===-1)firstDayCol=i;
+        if(c.includes('TOTAL'))totalCol=i;
+      });
+      break;
+    }
+  }
+  if(headerRow===-1)throw new Error('Could not find header row — make sure the file has EMP No column');
+  // Day number row (may be same or next row)
+  // Find actual day columns: look for cells containing 1..31
+  const dayRow=aoa[headerRow];const dayMap={};// col → day number
+  if(firstDayCol>0){
+    for(let c=firstDayCol;c<dayRow.length;c++){
+      const v=parseInt(String(dayRow[c]).trim());
+      if(!isNaN(v)&&v>=1&&v<=31)dayMap[c]=v;
+      if(String(dayRow[c]).toUpperCase().includes('TOTAL'))break;
+    }
+  }
+  // Parse data rows
+  const parsed=[];
+  for(let r=headerRow+1;r<aoa.length;r++){
+    const row=aoa[r];
+    const empNo=String(row[empCol]||'').trim();
+    const name=String(nameCol>=0?row[nameCol]||'':'').trim();
+    const craft=craftCol>=0?String(row[craftCol]||'').trim():'';
+    if(!empNo&&!name)continue;
+    if(String(empNo).toLowerCase().includes('total')||String(name).toLowerCase().includes('total')||String(name).toLowerCase().includes('prepared'))continue;
+    const days={};
+    Object.entries(dayMap).forEach(([col,day])=>{
+      const v=parseFloat(row[col])||0;
+      if(v>0)days[day]=v;
+    });
+    parsed.push({empNo,name,craft,days,totalHours:Object.values(days).reduce((s,h)=>s+h,0)});
+  }
+  return parsed;
+};
+
+const parseClientPdfAi=async file=>{
+  // Rasterize PDF or compress image, then send to Claude for extraction
+  const{b64,mimeType}=await prepareFileForAI(file);
+  const prompt=`You are reading a monthly timesheet document. Extract ALL employee rows with their daily hours.
+Return ONLY valid JSON array with no explanation:
+[{"empNo":"employee number or ID","name":"employee full name","craft":"designation or trade","days":{"1":8,"2":8,"3":0,...},"totalHours":160}]
+- Include ALL employees shown
+- days object: key = day number (1-31 as string), value = hours worked (number). Only include days with hours > 0
+- If a day column is blank or dash, skip it (don't include 0s)
+- Return empty array [] if no timesheet data found`;
+  const res=await fetch(CLAUDE_PROXY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2000,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:mimeType,data:b64}},{type:'text',text:prompt}]}]})});
+  if(!res.ok)throw new Error('AI API error '+res.status);
+  const data=await res.json();
+  const text=(data.content||[]).map(c=>c.text||'').join('').trim();
+  const match=text.match(/\[[\s\S]*\]/);
+  if(!match)throw new Error('AI did not return JSON array');
+  return JSON.parse(match[0]);
+};
+
+const handleImportUpload=async e=>{
+  const file=e.target.files?.[0];if(!file)return;
+  e.target.value='';
+  setImportLoading(true);setImportMsg('');setImportRows(null);setOurRows(null);setMergeDecisions({});
+  try{
+    let parsed;
+    const ext=file.name.split('.').pop().toLowerCase();
+    if(ext==='xlsx'||ext==='xls'){
+      setImportMsg('📊 Reading Excel file…');
+      parsed=await parseClientExcel(file);
+    } else {
+      setImportMsg('🤖 Sending to AI to read timesheet… (may take 10–20 seconds)');
+      parsed=await parseClientPdfAi(file);
+    }
+    if(!parsed.length)throw new Error('No employee rows found in the file');
+    // Auto-detect month from calMonth
+    setImportRows(parsed);
+    setImportMonth(calMonth);
+    // Load our DB data for comparison
+    setImportMsg('Loading your recorded hours for comparison…');
+    await loadHistoryForMonth(calMonth);
+    setImportMsg(`✅ Found ${parsed.length} employee rows from client timesheet. Review differences below.`);
+  }catch(ex){setImportMsg('❌ '+ex.message);}
+  setImportLoading(false);
+};
+
+// Build comparison: match client rows to our workers by emp no or name
+const buildComparison=React.useCallback(()=>{
+  if(!importRows||!importMonth)return[];
+  const[calY,calM]=importMonth.split('-').map(Number);
+  const daysInMonth=new Date(calY,calM,0).getDate();
+  // Build our hours pivot from history
+  const ourPivot={};// mob_register_id → {dayHours:{d:h}, empNo, name}
+  history.forEach(r=>{
+    const key=r.mob_register_id;
+    if(!ourPivot[key])ourPivot[key]={mobId:key,empNo:r.supplier_emp_no||'',name:r.full_name||'',designation:r.designation||'',supplierName:r.supplier_name||'',dayHours:{}};
+    ourPivot[key].dayHours[new Date(r.work_date+'T00:00:00').getDate()]=parseFloat(r.hours||0);
+  });
+  // Match client rows to our workers
+  return importRows.map(cr=>{
+    // Match by emp no first, then by name similarity
+    let matched=workers.find(w=>(w.supplier_emp_no||'').toLowerCase()===cr.empNo.toLowerCase());
+    if(!matched&&cr.empNo)matched=workers.find(w=>(w.supplier_emp_no||'').replace(/[^0-9]/g,'').endsWith(cr.empNo.replace(/[^0-9]/g,'')));
+    if(!matched&&cr.name)matched=workers.find(w=>{const wn=(w.full_name||'').toLowerCase();const cn=cr.name.toLowerCase();return wn.includes(cn.split(' ')[0])||cn.includes(wn.split(' ')[0]);});
+    const our=matched?ourPivot[matched.id]||{dayHours:{}}:{dayHours:{}};
+    // Find diffs
+    const diffs=[];
+    for(let d=1;d<=daysInMonth;d++){
+      const clientH=cr.days[d]||0;
+      const ourH=our.dayHours[d]||0;
+      if(Math.abs(clientH-ourH)>0.01)diffs.push({d,clientH,ourH});
+    }
+    return{clientRow:cr,worker:matched||null,ourData:our,diffs,hasDiff:diffs.length>0,totalOurs:Object.values(our.dayHours).reduce((s,h)=>s+h,0),totalClient:Object.values(cr.days).reduce((s,h)=>s+h,0)};
+  });
+},[importRows,importMonth,history,workers]);
+
+// Apply merge decisions and save to DB
+const applyMerge=async()=>{
+  setApplyingMerge(true);
+  const comp=buildComparison();
+  const[calY,calM]=importMonth.split('-').map(Number);
+  const daysInMonth=new Date(calY,calM,0).getDate();
+  let saved2=0,skipped=0;
+  for(const row of comp){
+    if(!row.worker)continue;
+    const decision=mergeDecisions[row.worker.id]||'ours';
+    if(decision==='ours'){skipped++;continue;}
+    // Build day-by-day hours from chosen source
+    const dayHours={};
+    for(let d=1;d<=daysInMonth;d++){
+      const h=decision==='client'?row.clientRow.days[d]||0:parseFloat(decision)||0;
+      dayHours[d]=h;
+    }
+    // Upsert each day that has hours or differs
+    const allDays=[...new Set([...Object.keys(row.ourData.dayHours).map(Number),...Object.keys(row.clientRow.days).map(Number)])];
+    for(const d of allDays){
+      const dateStr=`${calY}-${String(calM).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const hrs=dayHours[d]||0;
+      const isHol=isHolidayDate(dateStr);
+      const{error}=await db.from('mob_timesheets').upsert({work_date:dateStr,mob_register_id:row.worker.id,full_name:row.worker.full_name||'',designation:row.worker.designation||'',supplier_name:row.worker.supplier_name||'',supplier_emp_no:row.worker.supplier_emp_no||'',customer_name:selCustomer,location:selLocation,hours:hrs,is_holiday:isHol,holiday_name:isHol?holidays[dateStr]||'':null,notes:'[Client timesheet import]',updated_at:new Date().toISOString()},{onConflict:'work_date,mob_register_id'});
+      if(!error)saved2++;
+    }
+  }
+  await loadHistoryForMonth(calMonth);
+  setImportMsg(`✅ Done — ${saved2} day-records updated from client timesheet. ${skipped} rows kept as-is.`);
+  setApplyingMerge(false);
+};
+
+// ── Excel exports ─────────────────────────────────────────────────────────
+const exportCustomerExcel=()=>{
+  const XLSX=window.XLSX;if(!XLSX)return alert('SheetJS not loaded');
+  if(!history.length)return alert('No data for this month');
+  const{days,workerMap}=buildMonthPivot();
+  const[calY,calM]=calMonth.split('-').map(Number);
+  const monthName=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'}).toUpperCase();
+  const workerIds=[...new Set(history.map(r=>r.mob_register_id))];
+  const workers2=workerIds.map(id=>history.find(h=>h.mob_register_id===id)).filter(Boolean);
+  workers2.sort((a,b)=>{const na=parseInt((a.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');const nb=parseInt((b.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');return na-nb;});
+  const aoa=[];
+  aoa.push(['','','','','Client','',settings.clientName,'','','','','','Month: '+monthName,'','','','','','','','','','','','','','','','',settings.project.split(',')[0]||'','','','','','']);
+  aoa.push(['SL NO','EMP No.','NAME','CRAFT',...days.map(d=>String(d.d)),'TOTAL HRS']);
+  aoa.push(['','','','',...days.map(d=>d.label),'']);
+  let sl=1;
+  workers2.forEach(w=>{
+    const wm=workerMap[w.mob_register_id]||{dayHours:{}};
+    const dayVals=days.map(d=>wm.dayHours[d.d]||'');
+    const total=days.reduce((s,d)=>s+(wm.dayHours[d.d]||0),0);
+    const shortName=(w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' ');
+    aoa.push([sl++,w.supplier_emp_no||'',shortName,w.designation||'',...dayVals,total]);
+  });
+  aoa.push([]);
+  const craftMap={};workers2.forEach(w=>{const c=w.designation||'Other';if(!craftMap[c])craftMap[c]=0;const wm=workerMap[w.mob_register_id]||{dayHours:{}};craftMap[c]+=Object.values(wm.dayHours).reduce((s,h)=>s+h,0);});
+  const emptyRow=Array(36+days.length).fill('');emptyRow[27]='Sl No.';emptyRow[28]='Craft';emptyRow[32]='Hours';aoa.push(emptyRow);
+  let csl=1;Object.entries(craftMap).forEach(([c,h])=>{const r=Array(36+days.length).fill('');r[27]=csl++;r[28]=c;r[32]=h;aoa.push(r);});
+  const totR=Array(36+days.length).fill('');totR[27]='Total';totR[32]=Object.values(craftMap).reduce((s,h)=>s+h,0);aoa.push(totR);
+  aoa.push([]);aoa.push([]);
+  const sigR=Array(36+days.length).fill('');sigR[1]='PREPARED BY';sigR[7]='CHECKED BY';sigR[20]='APPROVED BY';aoa.push(sigR);
+  const prepR=Array(36+days.length).fill('');prepR[1]='SATCO ARABIA GENERAL CONTRACTING LLC SPC';prepR[7]=settings.checkedBy||'';prepR[20]=settings.approvedBy||'';aoa.push(prepR);
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols']=[{wch:6},{wch:14},{wch:22},{wch:16},...days.map(()=>({wch:4})),{wch:10}];
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Timesheet');
+  XLSX.writeFile(wb,`SATCO_CustomerTS_${(selCustomer||'').split(' ')[0]}_${calMonth}.xlsx`);
+};
+
+const exportSupplierExcel=(suppName)=>{
+  const XLSX=window.XLSX;if(!XLSX)return alert('SheetJS not loaded');
+  if(!history.length)return alert('No data for this month');
+  const{days,workerMap}=buildMonthPivot();
+  const[calY,calM]=calMonth.split('-').map(Number);
+  const monthName=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'}).toUpperCase();
+  const VAT=parseFloat(settings.vat||'5')/100;
+  const filtH=suppName?history.filter(r=>r.supplier_name===suppName):history;
+  const workerIds=[...new Set(filtH.map(r=>r.mob_register_id))];
+  const workers2=workerIds.map(id=>history.find(h=>h.mob_register_id===id)).filter(Boolean);
+  workers2.sort((a,b)=>{const na=parseInt((a.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');const nb=parseInt((b.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');return na-nb;});
+  const wb=XLSX.utils.book_new();
+  const buildSheet=(workers3,sheetSupp)=>{
+    const aoa2=[];
+    aoa2.push(['','','','',`TIMESHEET FOR THE MONTH OF ${monthName}`]);
+    aoa2.push([]);
+    aoa2.push(['','','','','','','','','','','','','','','','','','','','','','','','','','Sub-Contractor- '+(sheetSupp||settings.subcontractor)]);
+    aoa2.push(['SL No','EMP No','NAME','CRAFT','Subcontractor',...days.map(d=>String(d.d)),'Total Hour','Rate','Deduction','Gross Amount','Vat Value','Amount']);
+    aoa2.push(['','','','','',...days.map(d=>d.label),'','','Deduction','','','']);
+    aoa2.push(['SL No','EMP No','NAME','CRAFT','Subcontractor',...days.map(d=>String(d.d)),'Total Hour','Rate','Deduction','Gross Amount','Vat Value','Amount']);
+    let sl=1,gHrs=0,gGross=0,gVat=0,gAmt=0;
+    workers3.forEach(w=>{
+      const wm=workerMap[w.mob_register_id]||{dayHours:{}};
+      const dayVals=days.map(d=>wm.dayHours[d.d]||0);
+      const totalHrs=dayVals.reduce((s,h)=>s+h,0);
+      const craft=w.designation||'Other';
+      const rate=parseFloat((rates[craft]||{}).supplierRate||settings.defaultSupplierRate||20);
+      const gross=totalHrs*rate;const vat=gross*VAT;const amt=gross+vat;
+      gHrs+=totalHrs;gGross+=gross;gVat+=vat;gAmt+=amt;
+      const sn=(w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' ');
+      aoa2.push([sl++,w.supplier_emp_no||'',sn,craft,w.supplier_name||sheetSupp||'',...dayVals,totalHrs,rate,0,Math.round(gross*100)/100,Math.round(vat*100)/100,Math.round(amt*100)/100]);
+    });
+    aoa2.push(['','Total','','','',...Array(days.length).fill(''),Math.round(gHrs*100)/100,'',0,Math.round(gGross*100)/100,Math.round(gVat*100)/100,Math.round(gAmt*100)/100]);
+    aoa2.push([]);
+    const craftMap2={};workers3.forEach(w=>{const c=w.designation||'Other';if(!craftMap2[c]){craftMap2[c]={hrs:0,gross:0,vat:0,amt:0};}const wm=workerMap[w.mob_register_id]||{dayHours:{}};const hrs=Object.values(wm.dayHours).reduce((s,h)=>s+h,0);const rate=parseFloat((rates[c]||{}).supplierRate||settings.defaultSupplierRate||20);const gross=hrs*rate;const vat=gross*VAT;craftMap2[c].hrs+=hrs;craftMap2[c].gross+=gross;craftMap2[c].vat+=vat;craftMap2[c].amt+=gross+vat;});
+    aoa2.push(['','CRAFTS','TOTAL HOURS','GROSS AMOUNT','DEDUCT.','VAT','TOTAL AMOUNT']);
+    Object.entries(craftMap2).forEach(([c,d])=>aoa2.push(['',c,Math.round(d.hrs*100)/100,Math.round(d.gross*100)/100,0,Math.round(d.vat*100)/100,Math.round(d.amt*100)/100]));
+    aoa2.push(['','Grand Total',Math.round(gHrs*100)/100,Math.round(gGross*100)/100,0,Math.round(gVat*100)/100,Math.round(gAmt*100)/100]);
+    aoa2.push([]);
+    const sigR=['','','','','','','','PREPARED BY','','','','','','','','','','','','','','CHECKED BY','','','','','','','','','','','','','','APPROVED BY'];aoa2.push(sigR);
+    const ws=XLSX.utils.aoa_to_sheet(aoa2);
+    ws['!cols']=[{wch:6},{wch:14},{wch:22},{wch:16},{wch:28},...days.map(()=>({wch:4})),{wch:10},{wch:8},{wch:10},{wch:14},{wch:10},{wch:14}];
+    return ws;
+  };
+  const allSheet=buildSheet(workers2,'ALL SUPPLIERS');XLSX.utils.book_append_sheet(wb,allSheet,'All Suppliers');
+  if(!suppName){const suppNames=[...new Set(history.map(r=>r.supplier_name).filter(Boolean))].sort();suppNames.forEach(sn=>{const sw=workers2.filter(w=>w.supplier_name===sn);if(!sw.length)return;const ws2=buildSheet(sw,sn);XLSX.utils.book_append_sheet(wb,ws2,sn.replace(/[^a-zA-Z0-9 ]/g,'').substring(0,28)||'Supplier');});}
+  XLSX.writeFile(wb,suppName?`SATCO_Supplier_${suppName.replace(/\s+/g,'_').substring(0,30)}_${calMonth}.xlsx`:`SATCO_AllSuppliers_${calMonth}.xlsx`);
+};
+
+const monthSuppliers=React.useMemo(()=>[...new Set(history.map(r=>r.supplier_name).filter(Boolean))].sort(),[history]);
+const calDayMap=React.useMemo(()=>{const m={};history.forEach(r=>{const d=r.work_date;if(!m[d])m[d]={total:0,count:0};m[d].total+=parseFloat(r.hours||0);m[d].count+=1;});return m;},[history]);
+const prevMonth=()=>{const[y,mo]=calMonth.split('-').map(Number);const d=new Date(y,mo-2,1);setCalMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);};
+const nextMonth=()=>{const[y,mo]=calMonth.split('-').map(Number);const d=new Date(y,mo,1);setCalMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);};
+const uniqueDesigs=React.useMemo(()=>[...new Set(mobList.map(r=>r.designation).filter(Boolean))].sort(),[mobList]);
+
+// ── Selector card ─────────────────────────────────────────────────────────
+const SelectorCard=()=>React.createElement('div',{style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'12px 16px',marginBottom:'12px',display:'flex',gap:'12px',flexWrap:'wrap',alignItems:'flex-end'}},
+  React.createElement('div',null,React.createElement('div',{style:{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}},'Customer'),
+    React.createElement('select',{value:selCustomer,onChange:e=>{setSelCustomer(e.target.value);setSelLocation('');},style:{padding:'6px 10px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:'13px',fontWeight:600,minWidth:'200px'}},
+      React.createElement('option',{value:''},'— Select Customer —'),customers.map(c=>React.createElement('option',{key:c,value:c},c)))),
+  selCustomer&&React.createElement('div',null,React.createElement('div',{style:{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}},'Location'),
+    React.createElement('select',{value:selLocation,onChange:e=>setSelLocation(e.target.value),style:{padding:'6px 10px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:'13px',fontWeight:600,minWidth:'200px'}},
+      React.createElement('option',{value:''},'— Select Location —'),locations.map(l=>React.createElement('option',{key:l,value:l},l)))),
+  subTab==='entry'&&selCustomer&&selLocation&&React.createElement('div',null,React.createElement('div',{style:{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}},'Date'),
+    React.createElement('input',{type:'date',value:selDate,onChange:e=>setSelDate(e.target.value),style:{padding:'6px 10px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:'13px',fontWeight:600}})),
+  (subTab==='customer'||subTab==='supplier'||subTab==='import')&&selCustomer&&selLocation&&React.createElement('div',{style:{display:'flex',gap:'6px',alignItems:'flex-end'}},
+    React.createElement('button',{onClick:prevMonth,style:{padding:'6px 12px',border:'1px solid #e2e8f0',borderRadius:6,background:'#fff',cursor:'pointer',fontSize:'16px'}},'‹'),
+    React.createElement('div',{style:{padding:'6px 14px',background:'#0f172a',color:'#fff',borderRadius:6,fontWeight:700,fontSize:'13px',minWidth:'120px',textAlign:'center'}},new Date(calMonth+'-01').toLocaleDateString('en-GB',{month:'long',year:'numeric'})),
+    React.createElement('button',{onClick:nextMonth,style:{padding:'6px 12px',border:'1px solid #e2e8f0',borderRadius:6,background:'#fff',cursor:'pointer',fontSize:'16px'}},'›'))
+);
+
+// ── Entry sub-tab ─────────────────────────────────────────────────────────
+const EntryPanel=()=>{
+  if(!selCustomer||!selLocation)return React.createElement('div',{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},React.createElement('div',{style:{fontSize:'32px',marginBottom:'8px'}},'🏗️'),React.createElement('div',{style:{fontWeight:700}},'Select customer and site above'));
+  const isHolDay=isHolidayDate(selDate),isWknd=isWeekend(selDate),isOff=isHolDay||isWknd;
+  return React.createElement('div',{style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',overflow:'hidden'}},
+    React.createElement('div',{style:{background:isHolDay?'#92400e':isWknd?'#1e3a5f':'#0f172a',padding:'10px 16px',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}},
+      React.createElement('div',{style:{fontWeight:800,fontSize:'14px',color:'#f8fafc'}},dayLabel(selDate),' ',fmtDate(selDate)),
+      isHolDay&&React.createElement('span',{style:{background:'#fde68a',color:'#92400e',fontSize:'11px',fontWeight:700,padding:'2px 8px',borderRadius:10}},'🌙 HOLIDAY — ',holidays[selDate]),
+      isWknd&&!isHolDay&&React.createElement('span',{style:{background:'#334155',color:'#94a3b8',fontSize:'11px',fontWeight:700,padding:'2px 8px',borderRadius:10}},'📅 WEEKEND'),
+      React.createElement('span',{style:{marginLeft:'auto',fontSize:'11px',color:'#94a3b8'}},selCustomer,' · ',selLocation)
+    ),
+    loading?React.createElement('div',{style:{padding:'32px',textAlign:'center',color:'#94a3b8'}},'Loading…'):
+    workers.length===0?React.createElement('div',{style:{padding:'32px',textAlign:'center',color:'#94a3b8'}},'No mobilised employees for this site.'):
+    React.createElement(React.Fragment,null,
+      React.createElement('table',{style:{width:'100%',borderCollapse:'collapse'}},
+        React.createElement('thead',null,React.createElement('tr',{style:{background:'#f8fafc',borderBottom:'2px solid #e2e8f0'}},
+          React.createElement('th',{style:{...S.th,width:'40px',textAlign:'center'}},'#'),
+          React.createElement('th',{style:{...S.th,width:'120px'}},'Emp No'),
+          React.createElement('th',{style:S.th},'Name'),
+          React.createElement('th',{style:{...S.th,width:'140px'}},'Designation'),
+          React.createElement('th',{style:{...S.th,width:'90px',textAlign:'center'}},'Hours'),
+          React.createElement('th',{style:{...S.th,width:'32px',textAlign:'center'}},'✓'),
+          React.createElement('th',{style:S.th},'Notes')
+        )),
+        React.createElement('tbody',null,workers.map((w,i)=>{
+          const hrs=entries[w.id]?.hours??'';const isSaved=!!saved[w.id];
+          const rowBg=isOff?i%2===0?'#fffbeb':'#fef9e7':i%2===0?'#fff':'#fafafa';
+          return React.createElement('tr',{key:w.id,style:{background:rowBg,borderBottom:'1px solid #f1f5f9'}},
+            React.createElement('td',{style:{...S.td,textAlign:'center',color:'#94a3b8'}},(i+1)),
+            React.createElement('td',{style:{...S.td,fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:'#0369a1'}},w.supplier_emp_no||'—'),
+            React.createElement('td',{style:{...S.td,fontWeight:700}},
+              (w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' '),
+              React.createElement('span',{style:{display:'block',fontSize:'10px',color:'#94a3b8',fontWeight:400}},w.full_name)
+            ),
+            React.createElement('td',{style:{...S.td,fontSize:'12px',color:'#475569'}},w.designation||'—'),
+            React.createElement('td',{style:{...S.td,textAlign:'center',padding:'4px 6px'}},
+              React.createElement('input',{type:'number',min:'0',max:'24',step:'0.5',value:hrs,onChange:e=>setHours(w.id,e.target.value),placeholder:'0',style:{width:'64px',padding:'5px 8px',border:`2px solid ${isOff?'#f59e0b':'#cbd5e1'}`,borderRadius:6,fontSize:'14px',fontWeight:700,textAlign:'center',background:isOff?'#fffbeb':'#fff'}})
+            ),
+            React.createElement('td',{style:{...S.td,textAlign:'center'}},isSaved&&parseFloat(saved[w.id]?.hours)===parseFloat(hrs||0)?React.createElement('span',{style:{color:'#16a34a',fontSize:'16px'}},'✓'):React.createElement('span',{style:{color:'#e2e8f0'}},'○')),
+            React.createElement('td',{style:{...S.td,padding:'4px 8px'}},React.createElement('input',{value:entries[w.id]?.notes||'',onChange:e=>setNotes(w.id,e.target.value),placeholder:'optional',style:{width:'100%',padding:'4px 8px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:'11px'}}))
+          );
+        })),
+        React.createElement('tfoot',null,React.createElement('tr',{style:{background:'#f0f9ff',borderTop:'2px solid #bae6fd'}},
+          React.createElement('td',{colSpan:4,style:{...S.td,fontWeight:800,color:'#0369a1',textAlign:'right',paddingRight:'12px'}},'Total Hours'),
+          React.createElement('td',{style:{...S.td,textAlign:'center',fontWeight:800,fontSize:'16px',color:isOff?'#b45309':'#0369a1'}},totalHours.toFixed(1)),
+          React.createElement('td',{colSpan:2,style:S.td},isOff&&React.createElement('span',{style:{fontSize:'11px',color:'#b45309',fontWeight:700}},'× 1.5 rate may apply'))
+        ))
+      ),
+      React.createElement('div',{style:{padding:'12px 16px',background:'#f8fafc',borderTop:'1px solid #e2e8f0',display:'flex',alignItems:'center',gap:'12px'}},
+        React.createElement('button',{onClick:handleSave,disabled:saving,style:{padding:'8px 24px',background:'#166534',color:'#fff',border:'none',borderRadius:7,fontWeight:800,fontSize:'13px',cursor:'pointer'}},saving?'Saving…':'💾 Save Timesheet'),
+        saveMsg&&React.createElement('span',{style:{fontWeight:700,color:saveMsg.startsWith('✅')?'#16a34a':'#dc2626'}},saveMsg),
+        React.createElement('span',{style:{marginLeft:'auto',fontSize:'11px',color:'#94a3b8'}},Object.keys(saved).length>0?Object.keys(saved).length+' saved for this date':'Not yet saved')
+      )
+    )
+  );
+};
+
+// ── Monthly pivot table (shared by Customer + Supplier tabs) ──────────────
+const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
+  if(!selCustomer||!selLocation)return React.createElement('div',{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},'Select customer and site above.');
+  if(histLoading)return React.createElement('div',{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},'Loading…');
+  if(!history.length)return React.createElement('div',{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},'No timesheet data for this month. Enter daily hours in the Entry tab first.');
+  const filtH=supplierFilter?history.filter(r=>r.supplier_name===supplierFilter):history;
+  const{days,workerMap}=buildMonthPivot(filtH);
+  const workerIds=[...new Set(filtH.map(r=>r.mob_register_id))];
+  const workers2=workerIds.map(id=>history.find(h=>h.mob_register_id===id)).filter(Boolean);
+  workers2.sort((a,b)=>{const na=parseInt((a.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');const nb=parseInt((b.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');return na-nb;});
+  const VAT=parseFloat(settings.vat||'5')/100;
+  const hdrBg=showFinancials?'#166534':'#1e3a5f';
+  return React.createElement('div',{style:{overflowX:'auto'}},
+    React.createElement('table',{style:{borderCollapse:'collapse',width:'max-content',minWidth:'100%',fontSize:'11px'}},
+      React.createElement('thead',null,React.createElement('tr',{style:{background:hdrBg}},
+        React.createElement('th',{style:{...S.th,color:'#fff',background:hdrBg,width:'36px',textAlign:'center',position:'sticky',left:0,zIndex:12}},'#'),
+        React.createElement('th',{style:{...S.th,color:'#fff',background:hdrBg,width:'100px',position:'sticky',left:'36px',zIndex:12}},'Emp No'),
+        React.createElement('th',{style:{...S.th,color:'#fff',background:hdrBg,width:'150px',position:'sticky',left:'136px',zIndex:12}},'Name'),
+        React.createElement('th',{style:{...S.th,color:'#fff',background:hdrBg,width:'110px'}},'Craft'),
+        showFinancials&&React.createElement('th',{style:{...S.th,color:'#fff',background:hdrBg,width:'120px'}},'Supplier'),
+        ...days.map(day=>React.createElement('th',{key:day.d,style:{...S.th,color:day.isHol?'#fde68a':day.isOff?'#94a3b8':'#fff',background:day.isOff?'#1e293b':hdrBg,width:'30px',textAlign:'center',padding:'4px 2px',fontSize:'9px',borderRight:'1px solid rgba(255,255,255,0.1)'}},
+          React.createElement('div',null,String(day.d)),React.createElement('div',null,day.label)
+        )),
+        React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'50px',textAlign:'center'}},'HRS'),
+        showFinancials&&React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'50px',textAlign:'center'}},'RATE'),
+        showFinancials&&React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'80px',textAlign:'right'}},'GROSS'),
+        showFinancials&&React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'65px',textAlign:'right'}},'VAT'),
+        showFinancials&&React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'80px',textAlign:'right'}},'TOTAL')
+      )),
+      React.createElement('tbody',null,workers2.map((w,i)=>{
+        const wm=workerMap[w.mob_register_id]||{dayHours:{}};
+        const totalHrs=days.reduce((s,d)=>s+(wm.dayHours[d.d]||0),0);
+        const craft=w.designation||'Other';
+        const rate=parseFloat((rates[craft]||{}).supplierRate||settings.defaultSupplierRate||20);
+        const gross=totalHrs*rate;const vat=gross*VAT;const amt=gross+vat;
+        const rowBg=i%2===0?'#fff':'#f8fafc';
+        const sn=(w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' ');
+        return React.createElement('tr',{key:w.mob_register_id,className:'hr-row',style:{background:rowBg}},
+          React.createElement('td',{style:{...S.td,textAlign:'center',color:'#94a3b8',position:'sticky',left:0,background:rowBg,zIndex:10}},(i+1)),
+          React.createElement('td',{style:{...S.td,fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:'#0369a1',position:'sticky',left:'36px',background:rowBg,zIndex:10}},w.supplier_emp_no||'—'),
+          React.createElement('td',{style:{...S.td,fontWeight:700,position:'sticky',left:'136px',background:rowBg,zIndex:10}},sn),
+          React.createElement('td',{style:{...S.td,fontSize:'11px',color:'#475569'}},craft),
+          showFinancials&&React.createElement('td',{style:{...S.td,fontSize:'10px',color:'#64748b'}},w.supplier_name||'—'),
+          ...days.map(day=>{const h=wm.dayHours[day.d]||0;return React.createElement('td',{key:day.d,style:{...S.td,textAlign:'center',padding:'3px 1px',fontSize:'11px',fontWeight:h>0?700:400,color:h>0?'#0f172a':'#e2e8f0',background:day.isOff?'#f1f5f9':rowBg}},h>0?h:'');}),
+          React.createElement('td',{style:{...S.td,textAlign:'center',fontWeight:800,color:showFinancials?'#166534':'#0369a1',background:showFinancials?'#f0fdf4':'#f0f9ff'}},totalHrs||'—'),
+          showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'center',fontSize:'11px',color:'#0369a1'}},rate),
+          showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'right',fontWeight:700,fontSize:'11px'}},gross>0?gross.toLocaleString('en',{maximumFractionDigits:2}):'—'),
+          showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'right',fontSize:'11px',color:'#64748b'}},vat>0?vat.toFixed(2):'—'),
+          showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'right',fontWeight:800,fontSize:'11px',color:'#166534',background:'#f0fdf4'}},amt>0?amt.toLocaleString('en',{maximumFractionDigits:2}):'—')
+        );
+      })),
+      React.createElement('tfoot',null,React.createElement('tr',{style:{background:hdrBg}},
+        React.createElement('td',{colSpan:showFinancials?5:4,style:{...S.td,fontWeight:800,color:'#fff',textAlign:'right',background:hdrBg,fontSize:'11px'}},'TOTAL'),
+        ...days.map(day=>{const dt=filtH.filter(r=>new Date(r.work_date+'T00:00:00').getDate()===day.d).reduce((s,r)=>s+(parseFloat(r.hours)||0),0);return React.createElement('td',{key:day.d,style:{...S.td,textAlign:'center',fontWeight:800,color:'#fde68a',background:day.isOff?'#1e293b':hdrBg,fontSize:'10px',padding:'4px 2px'}},dt||'');}),
+        ...React.Children.toArray((()=>{
+          const gHrs=filtH.reduce((s,r)=>s+(parseFloat(r.hours)||0),0);
+          const gGross=showFinancials?workers2.reduce((s,w)=>{const wm=workerMap[w.mob_register_id]||{dayHours:{}};const hrs=Object.values(wm.dayHours).reduce((s2,h2)=>s2+h2,0);const rate=parseFloat((rates[w.designation||'Other']||{}).supplierRate||settings.defaultSupplierRate||20);return s+hrs*rate;},0):0;
+          const gVat=gGross*parseFloat(settings.vat||'5')/100;const gAmt=gGross+gVat;
+          const cells=[React.createElement('td',{key:'h',style:{...S.td,textAlign:'center',fontWeight:800,color:'#fde68a',background:hdrBg}},gHrs.toFixed(1))];
+          if(showFinancials){cells.push(React.createElement('td',{key:'r',style:{...S.td,background:hdrBg}},''));cells.push(React.createElement('td',{key:'g',style:{...S.td,textAlign:'right',fontWeight:800,color:'#fde68a',background:hdrBg,fontSize:'11px'}},gGross.toLocaleString('en',{maximumFractionDigits:2})));cells.push(React.createElement('td',{key:'v',style:{...S.td,textAlign:'right',color:'#fde68a',background:hdrBg,fontSize:'11px'}},gVat.toFixed(2)));cells.push(React.createElement('td',{key:'a',style:{...S.td,textAlign:'right',fontWeight:800,color:'#fde68a',background:hdrBg,fontSize:'11px'}},gAmt.toLocaleString('en',{maximumFractionDigits:2})));}
+          return cells;
+        })())
+      ))
+    )
+  );
+};
+
+// ── Import sub-tab ────────────────────────────────────────────────────────
+const ImportPanel=()=>{
+  const comp=importRows?buildComparison():[];
+  const diffCount=comp.filter(r=>r.hasDiff).length;
+  const unmatchedCount=comp.filter(r=>!r.worker).length;
+  return React.createElement('div',null,
+    // Upload card
+    React.createElement('div',{style:{...S.card,padding:'20px',marginBottom:'14px',background:'#f0f9ff',border:'1px solid #bae6fd'}},
+      React.createElement('div',{style:{fontWeight:800,fontSize:'15px',color:'#0369a1',marginBottom:'6px'}},'📥 Import Client Signed Timesheet'),
+      React.createElement('div',{style:{fontSize:'12px',color:'#0369a1',marginBottom:'14px'}},
+        'Upload the timesheet received from the client (Excel or scanned PDF). AI will read it, compare with your recorded hours, and let you decide which to keep.'
+      ),
+      React.createElement('div',{style:{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}},
+        React.createElement('input',{ref:importFileRef,type:'file',accept:'.xlsx,.xls,.pdf,image/*',style:{display:'none'},onChange:handleImportUpload}),
+        React.createElement('button',{onClick:()=>importFileRef.current?.click(),disabled:importLoading,style:{...S.btnGold,padding:'10px 20px',fontSize:'13px',display:'flex',alignItems:'center',gap:'8px'}},
+          importLoading?'⏳ Reading…':'📂 Upload Client Timesheet (Excel or PDF/Scan)'
+        ),
+        React.createElement('div',{style:{fontSize:'11px',color:'#64748b'}},
+          React.createElement('div',null,'✓ Excel (.xlsx) — reads hours directly from cells'),
+          React.createElement('div',null,'✓ PDF or image — AI extracts hours automatically')
+        )
+      ),
+      importMsg&&React.createElement('div',{style:{marginTop:'12px',padding:'10px 14px',borderRadius:7,background:importMsg.startsWith('✅')?'#f0fdf4':importMsg.startsWith('❌')?'#fef2f2':'#fffbeb',color:importMsg.startsWith('✅')?'#166534':importMsg.startsWith('❌')?'#dc2626':'#92400e',fontWeight:600,fontSize:'13px'}},importMsg)
+    ),
+    // Comparison table
+    importRows&&comp.length>0&&React.createElement('div',null,
+      // Summary bar
+      React.createElement('div',{style:{display:'flex',gap:'12px',marginBottom:'12px',flexWrap:'wrap',alignItems:'center'}},
+        React.createElement('div',{style:{background:'#fee2e2',color:'#991b1b',fontWeight:800,fontSize:'13px',padding:'8px 16px',borderRadius:8}},diffCount,' rows differ'),
+        React.createElement('div',{style:{background:'#f0fdf4',color:'#166534',fontWeight:700,fontSize:'13px',padding:'8px 16px',borderRadius:8}},comp.length-diffCount,' rows match'),
+        unmatchedCount>0&&React.createElement('div',{style:{background:'#fef3c7',color:'#92400e',fontWeight:700,fontSize:'13px',padding:'8px 16px',borderRadius:8}},unmatchedCount,' not matched'),
+        React.createElement('div',{style:{flex:1}}),
+        // Bulk actions
+        diffCount>0&&React.createElement('button',{onClick:()=>{const d={};comp.filter(r=>r.worker&&r.hasDiff).forEach(r=>d[r.worker.id]='client');setMergeDecisions(prev=>({...prev,...d}));},style:{...S.btnSm,background:'#0369a1',color:'#fff',border:'none',padding:'6px 12px',fontSize:'12px'}},'Accept All Client Hrs'),
+        diffCount>0&&React.createElement('button',{onClick:()=>{const d={};comp.filter(r=>r.worker&&r.hasDiff).forEach(r=>d[r.worker.id]='ours');setMergeDecisions(prev=>({...prev,...d}));},style:{...S.btnSm,padding:'6px 12px',fontSize:'12px'}},'Keep All Our Hrs'),
+        React.createElement('button',{onClick:applyMerge,disabled:applyingMerge||Object.keys(mergeDecisions).length===0,style:{...S.btnGrn,padding:'8px 18px',fontSize:'13px',opacity:Object.keys(mergeDecisions).length===0?0.5:1}},applyingMerge?'⏳ Saving…':'✅ Apply Decisions & Save')
+      ),
+      // Row-by-row comparison
+      React.createElement('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}},
+        comp.map((row,i)=>{
+          const{clientRow,worker,ourData,diffs,hasDiff,totalOurs,totalClient}=row;
+          const decision=worker?mergeDecisions[worker.id]:null;
+          const bg=!worker?'#fff7f0':hasDiff?'#fef2f2':'#f0fdf4';
+          const border=!worker?'#fed7aa':hasDiff?'#fecaca':'#bbf7d0';
+          return React.createElement('div',{key:i,style:{background:bg,border:`1.5px solid ${border}`,borderRadius:10,padding:'12px 16px'}},
+            // Header row
+            React.createElement('div',{style:{display:'flex',alignItems:'center',gap:'12px',marginBottom:hasDiff?'10px':'0',flexWrap:'wrap'}},
+              React.createElement('span',{style:{fontFamily:'monospace',fontSize:'12px',fontWeight:800,color:'#0369a1'}},clientRow.empNo||'—'),
+              React.createElement('span',{style:{fontWeight:700,fontSize:'13px',color:'#0f172a'}},clientRow.name),
+              React.createElement('span',{style:{fontSize:'11px',color:'#64748b'}},clientRow.craft),
+              worker&&React.createElement('span',{style:{fontSize:'10px',background:'#dbeafe',color:'#1e40af',padding:'1px 7px',borderRadius:8,fontWeight:700}},'✓ Matched: ',worker.full_name),
+              !worker&&React.createElement('span',{style:{fontSize:'10px',background:'#fef3c7',color:'#92400e',padding:'1px 7px',borderRadius:8,fontWeight:700}},'⚠ No match in mobilised list'),
+              React.createElement('div',{style:{marginLeft:'auto',display:'flex',gap:'10px',alignItems:'center'}},
+                React.createElement('span',{style:{fontSize:'12px',color:'#64748b'}},'Our total: ',React.createElement('strong',{style:{color:'#0369a1'}},totalOurs,'h')),
+                React.createElement('span',{style:{fontSize:'12px',color:'#64748b'}},'Client total: ',React.createElement('strong',{style:{color:totalClient!==totalOurs?'#dc2626':'#166534'}},totalClient,'h')),
+                !hasDiff&&React.createElement('span',{style:{background:'#dcfce7',color:'#166534',fontWeight:700,fontSize:'11px',padding:'2px 10px',borderRadius:8}},'✅ Match')
+              )
+            ),
+            // Diff details + decision buttons
+            hasDiff&&worker&&React.createElement('div',null,
+              React.createElement('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'8px'}},
+                diffs.map(d=>React.createElement('span',{key:d.d,style:{background:'#fff',border:'1px solid #fca5a5',borderRadius:6,padding:'3px 8px',fontSize:'11px'}},
+                  React.createElement('span',{style:{fontWeight:700,color:'#374151'}},'Day ',d.d,': '),
+                  React.createElement('span',{style:{color:'#0369a1'}},'Ours: ',d.ourH,'h'),
+                  React.createElement('span',{style:{color:'#94a3b8'}},' vs '),
+                  React.createElement('span',{style:{color:'#dc2626'}},'Client: ',d.clientH,'h')
+                ))
+              ),
+              // Decision row
+              React.createElement('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'8px 12px',background:'rgba(255,255,255,0.7)',borderRadius:7,flexWrap:'wrap'}},
+                React.createElement('span',{style:{fontSize:'11px',fontWeight:700,color:'#374151'}},'Use for this month:'),
+                React.createElement('button',{onClick:()=>setMergeDecisions(prev=>({...prev,[worker.id]:'ours'})),style:{...S.btnSm,padding:'5px 12px',fontSize:'11px',background:decision==='ours'?'#0369a1':'#fff',color:decision==='ours'?'#fff':'#0369a1',border:'1.5px solid #0369a1',fontWeight:700}},'Our Hours ('+totalOurs+'h)'),
+                React.createElement('button',{onClick:()=>setMergeDecisions(prev=>({...prev,[worker.id]:'client'})),style:{...S.btnSm,padding:'5px 12px',fontSize:'11px',background:decision==='client'?'#dc2626':'#fff',color:decision==='client'?'#fff':'#dc2626',border:'1.5px solid #fca5a5',fontWeight:700}},'Client Hours ('+totalClient+'h)'),
+                decision&&React.createElement('span',{style:{fontSize:'11px',color:decision==='client'?'#dc2626':'#0369a1',fontWeight:700}},decision==='client'?'→ Will use client hours':'→ Will keep our hours')
+              )
+            )
+          );
+        })
+      )
+    )
+  );
+};
+
+// ── Rates & Settings panel ────────────────────────────────────────────────
+const RatesPanel=()=>{
+  const draft=ratesDraft||rates;
+  const sett=settingsDraft||settings;
+  const setS=(k,v)=>setSettingsDraft(d=>({...(d||settings),[k]:v}));
+  const setR=(desig,field,val)=>setRatesDraft(d=>({...(d||rates),[desig]:{...((d||rates)[desig]||{}),[field]:val}}));
+  return React.createElement('div',null,
+    React.createElement('div',{style:{...S.card,padding:'16px',marginBottom:'12px',background:'#fffbeb',border:'1px solid #fde68a'}},
+      React.createElement('div',{style:{fontWeight:800,fontSize:'14px',color:'#92400e',marginBottom:'14px'}},'💰 Rates & Project Settings',selCustomer&&selLocation?React.createElement('span',{style:{fontSize:'11px',fontWeight:400,marginLeft:'12px',color:'#b45309'}},'for: ',selCustomer,' · ',selLocation):''),
+      React.createElement('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'14px'}},
+        React.createElement(Field,{label:'Client / Customer Name'},React.createElement('input',{value:sett.clientName,onChange:e=>setS('clientName',e.target.value),style:S.input})),
+        React.createElement(Field,{label:'Project / Site'},React.createElement('input',{value:sett.project,onChange:e=>setS('project',e.target.value),style:S.input})),
+        React.createElement(Field,{label:'PO Number'},React.createElement('input',{value:sett.poNo,onChange:e=>setS('poNo',e.target.value),style:S.input})),
+        React.createElement(Field,{label:'Cost Code'},React.createElement('input',{value:sett.costCode,onChange:e=>setS('costCode',e.target.value),style:S.input})),
+        React.createElement(Field,{label:'VAT %'},React.createElement('input',{type:'number',value:sett.vat,onChange:e=>setS('vat',e.target.value),style:S.input})),
+        React.createElement(Field,{label:'Currency'},React.createElement('input',{value:sett.currency,onChange:e=>setS('currency',e.target.value),style:S.input})),
+        React.createElement(Field,{label:'Default Customer Rate/hr ('+sett.currency+')'},React.createElement('input',{type:'number',value:sett.defaultCustomerRate,onChange:e=>setS('defaultCustomerRate',e.target.value),style:S.input})),
+        React.createElement(Field,{label:'Default Supplier Rate/hr ('+sett.currency+')'},React.createElement('input',{type:'number',value:sett.defaultSupplierRate,onChange:e=>setS('defaultSupplierRate',e.target.value),style:S.input})),
+        React.createElement(Field,{label:'Weekend / Off Days'},React.createElement('select',{value:sett.weekendDay,onChange:e=>setS('weekendDay',e.target.value),style:S.input},
+          React.createElement('option',{value:'fri'},'Friday + Saturday (most UAE sites)'),
+          React.createElement('option',{value:'sun'},'Saturday + Sunday'),
+          React.createElement('option',{value:'both'},'Fri + Sat + Sun')
+        )),
+        React.createElement(Field,{label:'Checked By'},React.createElement('input',{value:sett.checkedBy,onChange:e=>setS('checkedBy',e.target.value),style:S.input})),
+        React.createElement(Field,{label:'Approved By'},React.createElement('input',{value:sett.approvedBy,onChange:e=>setS('approvedBy',e.target.value),style:S.input})),
+        React.createElement(Field,{label:'Subcontractor Name (on supplier sheet)'},React.createElement('input',{value:sett.subcontractor,onChange:e=>setS('subcontractor',e.target.value),style:S.input}))
+      ),
+      React.createElement('button',{onClick:()=>{saveSettings(settingsDraft||settings);setSettingsDraft(null);},style:{...S.btnGold,marginBottom:'20px'}},'💾 Save Settings'),
+      React.createElement('div',{style:{borderTop:'1px solid #fde68a',paddingTop:'14px'}},
+        React.createElement('div',{style:{fontWeight:700,fontSize:'13px',color:'#92400e',marginBottom:'10px'}},'Per-Designation Rate Overrides'),
+        React.createElement('div',{style:{display:'grid',gridTemplateColumns:'2fr 1fr 1fr',gap:'8px',marginBottom:'6px',padding:'0 4px'}},
+          React.createElement('div',{style:{...S.label}},'Designation'),React.createElement('div',{style:{...S.label}},'Customer Rate/hr'),React.createElement('div',{style:{...S.label}},'Supplier Rate/hr')),
+        uniqueDesigs.map(d=>React.createElement('div',{key:d,style:{display:'grid',gridTemplateColumns:'2fr 1fr 1fr',gap:'8px',marginBottom:'6px',alignItems:'center'}},
+          React.createElement('div',{style:{fontSize:'12px',fontWeight:600,color:'#374151'}},d),
+          React.createElement('input',{type:'number',value:draft[d]?.customerRate||'',onChange:e=>setR(d,'customerRate',e.target.value),placeholder:sett.defaultCustomerRate||'24',style:{...S.input,padding:'5px 8px',fontSize:'12px'}}),
+          React.createElement('input',{type:'number',value:draft[d]?.supplierRate||'',onChange:e=>setR(d,'supplierRate',e.target.value),placeholder:sett.defaultSupplierRate||'20',style:{...S.input,padding:'5px 8px',fontSize:'12px'}})
+        )),
+        React.createElement('button',{onClick:()=>{saveRates(ratesDraft||rates);setRatesDraft(null);},style:S.btnPri},'💾 Save Rates')
+      )
+    )
+  );
+};
+
+// ── Holidays panel ────────────────────────────────────────────────────────
+const HolidaysPanel=()=>{
+  const[calY,calM]=calMonth.split('-').map(Number);
+  const daysInMonth=new Date(calY,calM,0).getDate();
+  const firstDow=new Date(calY,calM-1,1).getDay();
+  return React.createElement('div',{style:{...S.card,padding:'16px',background:'#fffbeb',border:'1px solid #fde68a'}},
+    React.createElement('div',{style:{fontWeight:800,fontSize:'14px',color:'#92400e',marginBottom:'4px'}},'🗓 Holidays — ',new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'})),
+    React.createElement('div',{style:{fontSize:'11px',color:'#b45309',marginBottom:'12px'}},'Click any day to mark/unmark as holiday. Weekends (',settings.weekendDay==='fri'?'Fri+Sat':settings.weekendDay==='sun'?'Sat+Sun':'Fri+Sat+Sun',') are auto-highlighted.'),
+    React.createElement('div',{style:{display:'flex',gap:'10px',marginBottom:'14px',flexWrap:'wrap',alignItems:'center'}},
+      React.createElement('input',{type:'date',value:newHolDate,onChange:e=>setNewHolDate(e.target.value),style:{...S.input,width:'160px'}}),
+      React.createElement('input',{value:newHolName,onChange:e=>setNewHolName(e.target.value),placeholder:'Holiday name e.g. Prophet Birthday',style:{...S.input,width:'260px'}}),
+      React.createElement('button',{onClick:()=>{if(!newHolDate)return;setHolidays({...holidays,[newHolDate]:newHolName||'Public Holiday'});setNewHolDate('');setNewHolName('');},style:{...S.btnGold,padding:'7px 16px',fontSize:'12px'}},'+ Mark Holiday')
+    ),
+    React.createElement('div',{style:{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'6px',marginBottom:'14px'}},
+      ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>React.createElement('div',{key:d,style:{textAlign:'center',fontSize:'10px',fontWeight:700,color:'#94a3b8',padding:'4px 0'}},d)),
+      Array.from({length:firstDow}).map((_,i)=>React.createElement('div',{key:'e'+i})),
+      Array.from({length:daysInMonth},(_,i)=>{
+        const d=i+1;const dateStr=`${calY}-${String(calM).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        const isHol=!!holidays[dateStr];const isWknd=isWeekend(dateStr);
+        return React.createElement('div',{key:d,style:{background:isHol?'#fef3c7':isWknd?'#f1f5f9':'#fff',border:`2px solid ${isHol?'#f59e0b':isWknd?'#e2e8f0':'#e2e8f0'}`,borderRadius:8,padding:'6px 4px',textAlign:'center',cursor:'pointer',minHeight:'52px'},
+          onClick:()=>{if(isHol){const h={...holidays};delete h[dateStr];setHolidays(h);}else{const name=prompt('Holiday name for '+fmtDate(dateStr)+'?','Public Holiday');if(name!==null&&name.trim())setHolidays({...holidays,[dateStr]:name.trim()||'Public Holiday'});}}},
+          React.createElement('div',{style:{fontWeight:700,fontSize:'13px',color:isHol?'#92400e':isWknd?'#94a3b8':'#374151'}},d),
+          isHol&&React.createElement('div',{style:{fontSize:'8px',color:'#b45309',lineHeight:1.3,marginTop:'2px'}},'🌙 ',holidays[dateStr]?.substring(0,12)),
+          isWknd&&!isHol&&React.createElement('div',{style:{fontSize:'8px',color:'#94a3b8',marginTop:'2px'}},'off')
+        );
+      })
+    ),
+    Object.keys(holidays).length>0&&React.createElement('div',null,
+      React.createElement('div',{style:{fontWeight:700,fontSize:'12px',color:'#92400e',marginBottom:'6px'}},'Public Holidays this month:'),
+      Object.entries(holidays).sort().map(([date,name])=>React.createElement('div',{key:date,style:{display:'flex',alignItems:'center',gap:'10px',padding:'5px 10px',background:'#fef3c7',borderRadius:6,marginBottom:'4px'}},
+        React.createElement('span',{style:{fontWeight:700,fontSize:'12px',color:'#92400e'}},fmtDate(date)),
+        React.createElement('span',{style:{fontSize:'12px',color:'#78350f',flex:1}},name),
+        React.createElement('button',{onClick:()=>{const h={...holidays};delete h[date];setHolidays(h);},style:{background:'none',border:'none',cursor:'pointer',color:'#dc2626',fontSize:'14px'}},'×')
+      ))
+    )
+  );
+};
+
+// ── Main render ───────────────────────────────────────────────────────────
+const TABS=[{k:'entry',l:'📝 Daily Entry'},{k:'customer',l:'📋 Customer Timesheet'},{k:'supplier',l:'🏭 Supplier Timesheet'},{k:'import',l:'📥 Import Client TS'},{k:'rates',l:'💰 Rates & Settings'},{k:'holidays',l:'🗓 Holidays'}];
+const[selSupp,setSelSupp]=React.useState('');
+return React.createElement('div',{style:{maxWidth:'1600px',margin:'0 auto',padding:'16px 8px'}},
+  React.createElement('div',{style:{display:'flex',gap:'3px',marginBottom:'14px',borderBottom:'2px solid #e2e8f0',flexWrap:'wrap'}},
+    TABS.map(t=>React.createElement('button',{key:t.k,onClick:()=>setSubTab(t.k),style:{padding:'8px 13px',fontSize:'12px',fontWeight:700,border:'none',borderRadius:'6px 6px 0 0',cursor:'pointer',background:subTab===t.k?'#0f172a':t.k==='import'?'#eff6ff':'transparent',color:subTab===t.k?'#fff':t.k==='import'?'#1d4ed8':'#64748b',borderBottom:subTab===t.k?'2px solid #0f172a':'none',marginBottom:subTab===t.k?'-2px':'0'}},t.l))
+  ),
+  React.createElement(SelectorCard,null),
+  subTab==='entry'&&React.createElement(EntryPanel,null),
+  subTab==='customer'&&React.createElement('div',null,
+    React.createElement('div',{style:{...S.card,padding:'12px 16px',marginBottom:'10px',display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap',background:'#eff6ff',border:'1px solid #bfdbfe'}},
+      React.createElement('div',{style:{fontWeight:700,fontSize:'13px',color:'#1e40af'}},'📋 ',settings.clientName),
+      React.createElement('div',{style:{fontSize:'11px',color:'#3b82f6',flex:1}},settings.project),
+      React.createElement('button',{onClick:exportCustomerExcel,disabled:!history.length||histLoading,style:{...S.btnGold,padding:'6px 16px',fontSize:'12px'}},'⬇ Export Customer Excel')
+    ),
+    React.createElement(MonthPivotTable,{showFinancials:false})
+  ),
+  subTab==='supplier'&&React.createElement('div',null,
+    React.createElement('div',{style:{...S.card,padding:'12px 16px',marginBottom:'10px',display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap',background:'#f0fdf4',border:'1px solid #bbf7d0'}},
+      React.createElement('div',{style:{fontWeight:700,fontSize:'13px',color:'#166534'}},'🏭 Supplier Timesheets'),
+      React.createElement('select',{value:selSupp,onChange:e=>setSelSupp(e.target.value),style:{...S.input,width:'230px',fontSize:'12px',padding:'5px 8px'}},
+        React.createElement('option',{value:''},'All Suppliers'),
+        monthSuppliers.map(s=>React.createElement('option',{key:s,value:s},s))
+      ),
+      React.createElement('div',{style:{flex:1}}),
+      React.createElement('button',{onClick:()=>exportSupplierExcel(selSupp||null),disabled:!history.length||histLoading,style:{...S.btnPri,padding:'6px 16px',fontSize:'12px'}},selSupp?'⬇ Export '+selSupp.split(' ')[0]+' Excel':'⬇ Export All (multi-sheet)')
+    ),
+    React.createElement(MonthPivotTable,{showFinancials:true,supplierFilter:selSupp})
+  ),
+  subTab==='import'&&React.createElement(ImportPanel,null),
+  subTab==='rates'&&React.createElement(RatesPanel,null),
+  subTab==='holidays'&&React.createElement(HolidaysPanel,null)
+);}
+
+
+function LettersTab({mobList,candidates=[]}){const[letterType,setLetterType]=useState('client');const[fCust,setFCust]=useState(new Set());const[fLoc,setFLoc]=useState(new Set());const[search,setSearch]=useState('');const[selected,setSelected]=useState(new Set());const[subject,setSubject]=useState('');const[arrival,setArrival]=useState('');const[date,setDate]=useState(todayStr());const customers=[...new Set(mobList.map(m=>m.customer_name).filter(Boolean))].sort();const locations=[...new Set(mobList.map(m=>m.location).filter(Boolean))].sort();const customerOptsL=useMemo(()=>customers.map(c=>({value:c,label:c})),[customers]);const locationOptsL=useMemo(()=>locations.map(l=>({value:l,label:l})),[locations]);// Build candidate lookup + merge helper for letters tab
 const candByIdL=useMemo(()=>{const m={};candidates.forEach(c=>{if(c.id)m[c.id]=c;});return m;},[candidates]);const candMergeL=r=>{const c=r.candidate_id?candByIdL[r.candidate_id]||{}:candidates.find(x=>(x.full_name||'').toLowerCase().trim()===(r.full_name||'').toLowerCase().trim())||{};return{...r,_cand:c,supplier_emp_no:r.supplier_emp_no||c.supplier_emp_no||'',supplier_name:r.supplier_name||(c.source==='satco_own'?'SATCO Arabia':c.supplier_name)||'',nationality:r.nationality||c.nationality||'',date_of_birth:r.date_of_birth||c.date_of_birth||'',passport_no:r.passport_no||c.passport_no||'',passport_expiry:r.passport_expiry||c.passport_expiry||'',emirates_id:r.emirates_id||c.emirates_id||'',eid_expiry:r.eid_expiry||c.eid_expiry||'',visa_no:r.visa_no||c.visa_no||'',visa_location:r.visa_location||c.visa_location||'',visa_expiry:r.visa_expiry||c.visa_expiry||'',phone:r.phone||c.phone||'',wp_no:r.wp_no||c.wp_no||'',wp_employer:r.wp_employer||c.wp_employer||'',wp_expiry:r.wp_expiry||c.wp_expiry||'',wp_issue_date:r.wp_issue_date||c.wp_issue_date||'',cicpa_pass_no:r.cicpa_pass_no||c.security_pass_no||'',cicpa_expiry_date:r.cicpa_expiry_date||c.security_pass_expiry||'',adnoc_medical_status:r.adnoc_medical_status||c.adnoc_medical_status||'',adnoc_medical_date:r.adnoc_medical_date||c.adnoc_medical_date||'',medical_expiry:r.medical_expiry||c.medical_expiry||'',medical_record_no:r.medical_record_no||c.medical_record_no||''};};const pool=useMemo(()=>{const base=letterType==='client'?mobList.filter(m=>m.wp_approved_date&&m.status!=='rejected'&&m.status!=='demobilised'):mobList.filter(m=>['mobilised','pending'].includes(m.status));return base.filter(m=>{if(fCust.size&&!fCust.has(m.customer_name||''))return false;if(fLoc.size&&!fLoc.has(m.location||''))return false;return matchSearch(m,search);}).map(candMergeL);},[mobList,candidates,candByIdL,letterType,fCust,fLoc,search]);const toggle=id=>{const s=new Set(selected);s.has(id)?s.delete(id):s.add(id);setSelected(s);};const toggleAll=()=>selected.size===pool.length?setSelected(new Set()):setSelected(new Set(pool.map(r=>r.id)));const selRows=pool.filter(r=>selected.has(r.id));const generateClientExcel=()=>{if(!selRows.length)return alert('Select at least one person');const XLSX=window.XLSX;if(!XLSX)return alert('SheetJS not loaded — check internet connection and refresh.');const wb=XLSX.utils.book_new();// ── Sheet 1: Candidate Submission List (PSN format) ──────────────────────
 const hdrs=['SI No','Company Name','Employee Number','Employee Name','Designation','DOB','Nationality','Emirates ID Number','Emirates ID Validity Date','Visa State','Passport Number','Email ID','Phone Number','Security Pass Expiry','Security Pass No','Adnoc Medical Status'];const rows=selRows.map((r,i)=>({'SI No':i+1,'Company Name':COMPANY_SHORT,'Employee Number':r.supplier_emp_no||'','Employee Name':r.full_name||'','Designation':r.designation||'','DOB':r.date_of_birth?new Date(r.date_of_birth).toLocaleDateString('en-GB'):'','Nationality':r.nationality||'','Emirates ID Number':r.emirates_id||'','Emirates ID Validity Date':r.eid_expiry?new Date(r.eid_expiry).toLocaleDateString('en-GB'):'','Visa State':r.visa_location||'','Passport Number':r.passport_no||'','Email ID':'admin@satcoarabiaengg.com','Phone Number':'+971565032032','Security Pass Expiry':r.cicpa_expiry_date?new Date(r.cicpa_expiry_date).toLocaleDateString('en-GB'):'','Security Pass No':r.cicpa_pass_no||'','Adnoc Medical Status':r.adnoc_medical_status||'','Medical Cert Expiry':r.medical_expiry?new Date(r.medical_expiry).toLocaleDateString('en-GB'):'','Med Report No':r.medical_record_no||''}));const ws=XLSX.utils.json_to_sheet(rows,{header:hdrs});// Column widths (characters)
 ws['!cols']=[{wch:6},{wch:22},{wch:14},{wch:26},{wch:16},{wch:12},{wch:14},{wch:22},{wch:18},{wch:14},{wch:14},{wch:28},{wch:16},{wch:16},{wch:16},{wch:18}];XLSX.utils.book_append_sheet(wb,ws,'Mob Submission List');// ── Sheet 2: Pending Actions ──────────────────────────────────────────────
@@ -899,14 +1532,17 @@ const filtered=React.useMemo(()=>{
     return true;
   }).sort((a,b)=>{
     const ca=a.cand||{},cb=b.cand||{};
-    // Sort by supplier name first (SATCO Arabia first), then emp no numerically
-    const sa=ca.source==='satco_own'?'AAAA':ca.supplier_name||'zzzz';
-    const sb=cb.source==='satco_own'?'AAAA':cb.supplier_name||'zzzz';
-    if(sa!==sb)return sa.localeCompare(sb);
-    // Within same supplier: sort by trailing number in emp no
-    const na=parseInt((ca.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');
-    const nb=parseInt((cb.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');
-    return na-nb;
+    const aSatco=ca.source==='satco_own',bSatco=cb.source==='satco_own';
+    if(aSatco&&!bSatco)return -1;if(!aSatco&&bSatco)return 1;
+    if(aSatco&&bSatco){const nA=parseInt((ca.supplier_emp_no||'').replace(/[^0-9]/g,'')||'0');const nB=parseInt((cb.supplier_emp_no||'').replace(/[^0-9]/g,'')||'0');return nA-nB;}
+    const prefA=(ca.supplier_emp_no||'').match(/^(SUB-\d+)/i)?.[1]||ca.supplier_emp_no||'';
+    const prefB=(cb.supplier_emp_no||'').match(/^(SUB-\d+)/i)?.[1]||cb.supplier_emp_no||'';
+    const numA=parseInt((prefA.match(/\d+/)||['9999'])[0]);
+    const numB=parseInt((prefB.match(/\d+/)||['9999'])[0]);
+    if(numA!==numB)return numA-numB;
+    const seqA=parseInt((ca.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');
+    const seqB=parseInt((cb.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');
+    return seqA-seqB;
   });
 },[allRows,search,sourceF,suppF]);
 
@@ -1059,7 +1695,7 @@ const UploadCell=({candId,candName,empNo,isSatco})=>{
         background:'#0f172a',color:'#fff',fontSize:'9px',fontWeight:700,
         padding:'2px 6px',borderRadius:3,whiteSpace:'nowrap',flexShrink:0,
         maxWidth:'110px',overflow:'hidden',textOverflow:'ellipsis'
-      },title:empNo+' · '+candName},empNo?empNo+' · '+(candName||'').split(' ')[0]:(candName||'').split(' ')[0]),
+      },title:candName},empNo||'—'),
       // Doc type badge (live colour)
       React.createElement('span',{style:{background:col.c,color:'#fff',fontSize:'9px',fontWeight:800,padding:'2px 6px',borderRadius:3,whiteSpace:'nowrap',flexShrink:0}},col.l),
       // Dropdown
@@ -1221,7 +1857,7 @@ sessionStorage.setItem('satco_mob_edit',existing.id);setTab('mobilisation');setT
 wp_no:candidate.wp_no||'',wp_employer:candidate.wp_employer||'',wp_expiry:candidate.wp_expiry||'',wp_issue_date:candidate.wp_issue_date||'',// CICPA — copy from candidate card
 cicpa_pass_no:candidate.security_pass_no||'',cicpa_expiry_date:candidate.security_pass_expiry||'',// ADNOC Medical — copy from candidate card
 adnoc_medical_status:candidate.adnoc_medical_status||'',adnoc_medical_date:candidate.adnoc_medical_date||'',medical_expiry:candidate.medical_expiry||'',medical_record_no:candidate.medical_record_no||'',// Pre-fill from plan
-customer_name:planContext.customer_name||'',location:planContext.location||'',loa_id:planContext.loa_id||'',medical_done:false,hse_passport_done:false,h2s_done:false,extra_trainings:[],status:'pending',notes:''}));setTab('mobilisation');setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),150);};if(!authReady)return/*#__PURE__*/React.createElement("div",{style:{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',color:'#64748b'}},"Loading…");if(!session)return/*#__PURE__*/React.createElement(LoginScreen,{onLogin:()=>db.auth.getSession().then(({data})=>setSession(data.session))});if(tableReady===false)return/*#__PURE__*/React.createElement(React.Fragment,null,/*#__PURE__*/React.createElement(TopNav,{tab:tab,setTab:setTab,onSignOut:()=>db.auth.signOut(),globalSearch:globalSearch,setGlobalSearch:setGlobalSearch,searchResults:[],onSearchSelect:()=>{}}),/*#__PURE__*/React.createElement(SetupScreen,{onRetry:loadAll}));return/*#__PURE__*/React.createElement("div",{style:S.page},/*#__PURE__*/React.createElement(TopNav,{tab:tab,setTab:t=>{setTab(t);setTabSearch('');},onSignOut:()=>db.auth.signOut(),globalSearch:globalSearch,setGlobalSearch:setGlobalSearch,searchResults:searchResults,onSearchSelect:onSearchSelect}),/*#__PURE__*/React.createElement("div",{style:S.wrap},/*#__PURE__*/React.createElement("div",{style:{paddingTop:'20px'}},/*#__PURE__*/React.createElement(LoaBanner,{loaList:data.loaList,usedMap:loaUsed,onManage:()=>setTab('loa')}),loading&&tableReady===null&&/*#__PURE__*/React.createElement("div",{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},"Loading…"),!loading&&tableReady&&/*#__PURE__*/React.createElement(React.Fragment,null,tab==='dashboard'&&/*#__PURE__*/React.createElement(Dashboard,{data:data,loaUsed:loaUsed,setTab:t=>{setTab(t);},setFilterStatus:setFilterStatus,hrMobActive:hrMobActive}),tab==='planning'&&/*#__PURE__*/React.createElement(PlanningTab,{candidates:data.candidates,mobList:data.mobList,requirements:data.requirements,loaList:data.loaList,onMobilise:(c,ctx)=>{handleMobilise(c,ctx||{});},setTab:t=>{setTab(t);},onRefreshAndFilter:async(cust,loc)=>{await loadAll();setBulkMobFilter({customer:cust,location:loc});setTab('mobilisation');setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),300);},onBulkMobFilter:(cust,loc)=>{setBulkMobFilter({customer:cust,location:loc});setTab('mobilisation');}}),tab==='candidates'&&/*#__PURE__*/React.createElement(CandidatesTab,{candidates:data.candidates,mobList:data.mobList,suppliers:data.suppliers,locConfigs:data.locConfigs,onSave:onSave,onDelete:onDelete,onMobilise:handleMobilise,onRefresh:loadAll,tabSearch:tabSearch,hrMobActive:hrMobActive,hrMobLocs:hrMobLocs,thresholds:data.thresholds}),tab==='requirements'&&/*#__PURE__*/React.createElement(RequirementsTab,{requirements:data.requirements,onSave:onSave}),tab==='loa'&&/*#__PURE__*/React.createElement(LoaTab,{loaList:data.loaList,usedMap:loaUsed,onSave:onSave}),tab==='mobilisation'&&/*#__PURE__*/React.createElement(MobilisationTab,{mobList:data.mobList,candidates:data.candidates,loaList:data.loaList,requirements:data.requirements,usedMap:loaUsed,locConfigs:data.locConfigs,onSave:onSave,onDemob:onDemob,onRefresh:loadAll,initialStatus:filterStatus,tabSearch:tabSearch,bulkMobFilter:bulkMobFilter,onClearBulkFilter:()=>setBulkMobFilter(null)}),tab==='timesheet'&&/*#__PURE__*/React.createElement(TimesheetTab,{mobList:data.mobList,onRefresh:loadAll}),tab==='suppliers'&&/*#__PURE__*/React.createElement(SuppliersTab,{suppliers:data.suppliers,onRefresh:loadAll}),tab==='documents'&&/*#__PURE__*/React.createElement(DocumentsTab,{candidates:data.candidates,suppliers:data.suppliers,mobList:data.mobList}),tab==='letters'&&/*#__PURE__*/React.createElement(LettersTab,{mobList:data.mobList,candidates:data.candidates}),tab==='config'&&/*#__PURE__*/React.createElement(ConfigTab,{locConfigs:data.locConfigs,suppliers:data.suppliers,onSave:onSave})))));}ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(App,null));
+customer_name:planContext.customer_name||'',location:planContext.location||'',loa_id:planContext.loa_id||'',medical_done:false,hse_passport_done:false,h2s_done:false,extra_trainings:[],status:'pending',notes:''}));setTab('mobilisation');setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),150);};if(!authReady)return/*#__PURE__*/React.createElement("div",{style:{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',color:'#64748b'}},"Loading…");if(!session)return/*#__PURE__*/React.createElement(LoginScreen,{onLogin:()=>db.auth.getSession().then(({data})=>setSession(data.session))});if(tableReady===false)return/*#__PURE__*/React.createElement(React.Fragment,null,/*#__PURE__*/React.createElement(TopNav,{tab:tab,setTab:setTab,onSignOut:()=>db.auth.signOut(),globalSearch:globalSearch,setGlobalSearch:setGlobalSearch,searchResults:[],onSearchSelect:()=>{}}),/*#__PURE__*/React.createElement(SetupScreen,{onRetry:loadAll}));return/*#__PURE__*/React.createElement("div",{style:S.page},/*#__PURE__*/React.createElement(TopNav,{tab:tab,setTab:t=>{setTab(t);setTabSearch('');},onSignOut:()=>db.auth.signOut(),globalSearch:globalSearch,setGlobalSearch:setGlobalSearch,searchResults:searchResults,onSearchSelect:onSearchSelect}),/*#__PURE__*/React.createElement("div",{style:S.wrap},/*#__PURE__*/React.createElement("div",{style:{paddingTop:'20px'}},/*#__PURE__*/React.createElement(LoaBanner,{loaList:data.loaList,usedMap:loaUsed,onManage:()=>setTab('loa')}),loading&&tableReady===null&&/*#__PURE__*/React.createElement("div",{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},"Loading…"),!loading&&tableReady&&/*#__PURE__*/React.createElement(React.Fragment,null,tab==='dashboard'&&/*#__PURE__*/React.createElement(Dashboard,{data:data,loaUsed:loaUsed,setTab:t=>{setTab(t);},setFilterStatus:setFilterStatus,hrMobActive:hrMobActive}),tab==='planning'&&/*#__PURE__*/React.createElement(PlanningTab,{candidates:data.candidates,mobList:data.mobList,requirements:data.requirements,loaList:data.loaList,onMobilise:(c,ctx)=>{handleMobilise(c,ctx||{});},setTab:t=>{setTab(t);},onRefreshAndFilter:async(cust,loc)=>{await loadAll();setBulkMobFilter({customer:cust,location:loc});setTab('mobilisation');setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),300);},onBulkMobFilter:(cust,loc)=>{setBulkMobFilter({customer:cust,location:loc});setTab('mobilisation');}}),tab==='candidates'&&/*#__PURE__*/React.createElement(CandidatesTab,{candidates:data.candidates,mobList:data.mobList,suppliers:data.suppliers,locConfigs:data.locConfigs,onSave:onSave,onDelete:onDelete,onMobilise:handleMobilise,onRefresh:loadAll,tabSearch:tabSearch,hrMobActive:hrMobActive,hrMobLocs:hrMobLocs,thresholds:data.thresholds}),tab==='requirements'&&/*#__PURE__*/React.createElement(RequirementsTab,{requirements:data.requirements,onSave:onSave}),tab==='loa'&&/*#__PURE__*/React.createElement(LoaTab,{loaList:data.loaList,usedMap:loaUsed,onSave:onSave}),tab==='mobilisation'&&/*#__PURE__*/React.createElement(MobilisationTab,{mobList:data.mobList,candidates:data.candidates,loaList:data.loaList,requirements:data.requirements,usedMap:loaUsed,locConfigs:data.locConfigs,onSave:onSave,onDemob:onDemob,onRefresh:loadAll,initialStatus:filterStatus,tabSearch:tabSearch,bulkMobFilter:bulkMobFilter,onClearBulkFilter:()=>setBulkMobFilter(null)}),tab==='timesheet'&&/*#__PURE__*/React.createElement(TimesheetTab,{mobList:data.mobList,onRefresh:loadAll,candidates:data.candidates,suppliers:data.suppliers}),tab==='suppliers'&&/*#__PURE__*/React.createElement(SuppliersTab,{suppliers:data.suppliers,onRefresh:loadAll}),tab==='documents'&&/*#__PURE__*/React.createElement(DocumentsTab,{candidates:data.candidates,suppliers:data.suppliers,mobList:data.mobList}),tab==='letters'&&/*#__PURE__*/React.createElement(LettersTab,{mobList:data.mobList,candidates:data.candidates}),tab==='config'&&/*#__PURE__*/React.createElement(ConfigTab,{locConfigs:data.locConfigs,suppliers:data.suppliers,onSave:onSave})))));}ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(App,null));
 
 </script>
 </body>
