@@ -749,7 +749,7 @@ const[calMonth,setCalMonth]=React.useState(()=>{const d=new Date();return`${d.ge
 
 // ── Settings (per project, localStorage) ─────────────────────────────────
 const settingsKey=`satco_ts_cfg_${selCustomer}__${selLocation}`;
-const DEF={clientName:'ALGHANIM INTERNATIONAL GENERAL TRADING & CONTRACTING CO., ABU DHABI',project:'VOLTA Project - TAZIZ Derivatives Park (TDP), RUWAIS, Abu Dhabi, UAE',poNo:'072-46',costCode:'509062',subcontractor:'SATCO ARABIA GENERAL CONTRACTING LLC SPC',checkedBy:'Quality International',approvedBy:'Alghanim International',vat:'5',currency:'AED',weekendDay:'sun',otPolicy:'flat',otWeekendMultiplier:'1.5',otDailyMultiplier:'1.25',otDailyThreshold:'10',workingHrsPerDay:'10',workingDaysPerMonth:'26',defaultCustomerRate:'24',defaultSupplierRate:'20'};
+const DEF={clientName:'ALGHANIM INTERNATIONAL GENERAL TRADING & CONTRACTING CO., ABU DHABI',project:'VOLTA Project - TAZIZ Derivatives Park (TDP), RUWAIS, Abu Dhabi, UAE',poNo:'072-46',costCode:'509062',subcontractor:'SATCO ARABIA GENERAL CONTRACTING LLC SPC',checkedBy:'Quality International',approvedBy:'Alghanim International',vat:'5',currency:'AED',weekendDay:'sun',otPolicy:'flat',otWeekendMultiplier:'1.5',otDailyMultiplier:'1.25',otDailyThreshold:'10',workingHrsPerDay:'10',workingDaysPerMonth:'26',defaultCustomerRate:'24',defaultSupplierRate:'16'};
 const[settings,setSettingsRaw]=React.useState(DEF);
 const[settingsDraft,setSettingsDraft]=React.useState(null);
 React.useEffect(()=>{try{const v=localStorage.getItem(settingsKey);if(v)setSettingsRaw({...DEF,...JSON.parse(v)});}catch{}},[settingsKey]);
@@ -1068,7 +1068,7 @@ const exportSupplierExcel=(suppName)=>{
       const dayVals=days.map(d=>wm.dayHours[d.d]||0);
       const totalHrs=dayVals.reduce((s,h)=>s+h,0);
       const craft=w.designation||'Other';
-      const rate=parseFloat((rates[craft]||{}).supplierRate||settings.defaultSupplierRate||20);
+      const rate=parseFloat((rates[craft]||{}).supplierRate||settings.defaultSupplierRate||16);
       const otPol2=settings.otPolicy||'flat';const otThr2=parseFloat(settings.otDailyThreshold||10);const otDM2=parseFloat(settings.otDailyMultiplier||1.25);const otWM2=parseFloat(settings.otWeekendMultiplier||1.5);
       let gross=0;if(otPol2==='flat'){gross=totalHrs*rate;}else{days.forEach(day=>{const h=wm.dayHours[day.d]||0;if(h<=0)return;if(day.isOff){gross+=h*rate*otWM2;}else if(h>otThr2){gross+=otThr2*rate+(h-otThr2)*rate*otDM2;}else{gross+=h*rate;}});}
       const vat=gross*VAT;const amt=gross+vat;
@@ -1078,7 +1078,7 @@ const exportSupplierExcel=(suppName)=>{
     });
     aoa2.push(['','Total','','','',...Array(days.length).fill(''),Math.round(gHrs*100)/100,'',0,Math.round(gGross*100)/100,Math.round(gVat*100)/100,Math.round(gAmt*100)/100]);
     aoa2.push([]);
-    const craftMap2={};workers3.forEach(w=>{const c=w.designation||'Other';if(!craftMap2[c]){craftMap2[c]={hrs:0,gross:0,vat:0,amt:0};}const wm=workerMap[w.mob_register_id]||{dayHours:{}};const hrs=Object.values(wm.dayHours).reduce((s,h)=>s+h,0);const rate=parseFloat((rates[c]||{}).supplierRate||settings.defaultSupplierRate||20);const gross=hrs*rate;const vat=gross*VAT;craftMap2[c].hrs+=hrs;craftMap2[c].gross+=gross;craftMap2[c].vat+=vat;craftMap2[c].amt+=gross+vat;});
+    const craftMap2={};workers3.forEach(w=>{const c=w.designation||'Other';if(!craftMap2[c]){craftMap2[c]={hrs:0,gross:0,vat:0,amt:0};}const wm=workerMap[w.mob_register_id]||{dayHours:{}};const hrs=Object.values(wm.dayHours).reduce((s,h)=>s+h,0);const rate=parseFloat((rates[c]||{}).supplierRate||settings.defaultSupplierRate||16);const gross=hrs*rate;const vat=gross*VAT;craftMap2[c].hrs+=hrs;craftMap2[c].gross+=gross;craftMap2[c].vat+=vat;craftMap2[c].amt+=gross+vat;});
     aoa2.push(['','CRAFTS','TOTAL HOURS','GROSS AMOUNT','DEDUCT.','VAT','TOTAL AMOUNT']);
     Object.entries(craftMap2).forEach(([c,d])=>aoa2.push(['',c,Math.round(d.hrs*100)/100,Math.round(d.gross*100)/100,0,Math.round(d.vat*100)/100,Math.round(d.amt*100)/100]));
     aoa2.push(['','Grand Total',Math.round(gHrs*100)/100,Math.round(gGross*100)/100,0,Math.round(gVat*100)/100,Math.round(gAmt*100)/100]);
@@ -1116,7 +1116,7 @@ const SelectorCard=()=>React.createElement('div',{style:{background:'#fff',borde
 );
 
 // ── Entry sub-tab ─────────────────────────────────────────────────────────
-const EntryPanel=()=>{
+const EntryPanel=({selCustomer,selLocation,selDate,workers,entries,saved,loading,saving,saveMsg,holidays,settings,totalHours,isWeekend,isHolidayDate,setHours,setNotes,handleSave})=>{
   if(!selCustomer||!selLocation)return React.createElement('div',{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},React.createElement('div',{style:{fontSize:'32px',marginBottom:'8px'}},'🏗️'),React.createElement('div',{style:{fontWeight:700}},'Select customer and site above'));
   const isHolDay=isHolidayDate(selDate),isWknd=isWeekend(selDate),isOff=isHolDay||isWknd;
   return React.createElement('div',{style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',overflow:'hidden'}},
@@ -1205,7 +1205,7 @@ const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
         const wm=workerMap[w.mob_register_id]||{dayHours:{}};
         const totalHrs=days.reduce((s,d)=>s+(wm.dayHours[d.d]||0),0);
         const craft=w.designation||'Other';
-        const rate=parseFloat((rates[craft]||{}).supplierRate||settings.defaultSupplierRate||20);
+        const rate=parseFloat((rates[craft]||{}).supplierRate||settings.defaultSupplierRate||16);
         const otPol=settings.otPolicy||'flat';const otThr=parseFloat(settings.otDailyThreshold||10);const otDM=parseFloat(settings.otDailyMultiplier||1.25);const otWM=parseFloat(settings.otWeekendMultiplier||1.5);
         let gross=0;if(otPol==='flat'){gross=totalHrs*rate;}else{days.forEach(day=>{const h=wm.dayHours[day.d]||0;if(h<=0)return;if(day.isOff){gross+=h*rate*otWM;}else if(h>otThr){gross+=otThr*rate+(h-otThr)*rate*otDM;}else{gross+=h*rate;}});}
         const vat=gross*VAT;const amt=gross+vat;
@@ -1230,7 +1230,7 @@ const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
         ...days.map(day=>{const dt=filtH.filter(r=>new Date(r.work_date+'T00:00:00').getDate()===day.d).reduce((s,r)=>s+(parseFloat(r.hours)||0),0);return React.createElement('td',{key:day.d,style:{...S.td,textAlign:'center',fontWeight:800,color:'#fde68a',background:day.isOff?'#1e293b':hdrBg,fontSize:'10px',padding:'4px 2px'}},dt||'');}),
         ...React.Children.toArray((()=>{
           const gHrs=filtH.reduce((s,r)=>s+(parseFloat(r.hours)||0),0);
-          const gGross=showFinancials?workers2.reduce((s,w)=>{const wm=workerMap[w.mob_register_id]||{dayHours:{}};const hrs=Object.values(wm.dayHours).reduce((s2,h2)=>s2+h2,0);const rate=parseFloat((rates[w.designation||'Other']||{}).supplierRate||settings.defaultSupplierRate||20);return s+hrs*rate;},0):0;
+          const gGross=showFinancials?workers2.reduce((s,w)=>{const wm=workerMap[w.mob_register_id]||{dayHours:{}};const hrs=Object.values(wm.dayHours).reduce((s2,h2)=>s2+h2,0);const rate=parseFloat((rates[w.designation||'Other']||{}).supplierRate||settings.defaultSupplierRate||16);return s+hrs*rate;},0):0;
           const gVat=gGross*parseFloat(settings.vat||'5')/100;const gAmt=gGross+gVat;
           const cells=[React.createElement('td',{key:'h',style:{...S.td,textAlign:'center',fontWeight:800,color:'#fde68a',background:hdrBg}},gHrs.toFixed(1))];
           if(showFinancials){cells.push(React.createElement('td',{key:'r',style:{...S.td,background:hdrBg}},''));cells.push(React.createElement('td',{key:'g',style:{...S.td,textAlign:'right',fontWeight:800,color:'#fde68a',background:hdrBg,fontSize:'11px'}},gGross.toLocaleString('en',{maximumFractionDigits:2})));cells.push(React.createElement('td',{key:'v',style:{...S.td,textAlign:'right',color:'#fde68a',background:hdrBg,fontSize:'11px'}},gVat.toFixed(2)));cells.push(React.createElement('td',{key:'a',style:{...S.td,textAlign:'right',fontWeight:800,color:'#fde68a',background:hdrBg,fontSize:'11px'}},gAmt.toLocaleString('en',{maximumFractionDigits:2})));}
@@ -1325,7 +1325,7 @@ const ImportPanel=()=>{
 };
 
 // ── Rates & Settings panel ────────────────────────────────────────────────
-const RatesPanel=()=>{
+const RatesPanel=({rates,ratesDraft,setRatesDraft,settings,settingsDraft,setSettingsDraft,saveRates,saveSettings,uniqueDesigs})=>{
   const draft=ratesDraft||rates;
   const sett=settingsDraft||settings;
   const setS=(k,v)=>setSettingsDraft(d=>({...(d||settings),[k]:v}));
@@ -1376,7 +1376,7 @@ const RatesPanel=()=>{
 };
 
 // ── Holidays panel ────────────────────────────────────────────────────────
-const HolidaysPanel=()=>{
+const HolidaysPanel=({holidays,setHolidays,newHolDate,setNewHolDate,newHolName,setNewHolName,calMonth,settings})=>{
   const[calY,calM]=calMonth.split('-').map(Number);
   const daysInMonth=new Date(calY,calM,0).getDate();
   const firstDow=new Date(calY,calM-1,1).getDay();
@@ -1421,7 +1421,7 @@ return React.createElement('div',{style:{maxWidth:'1600px',margin:'0 auto',paddi
     TABS.map(t=>React.createElement('button',{key:t.k,onClick:()=>setSubTab(t.k),style:{padding:'8px 13px',fontSize:'12px',fontWeight:700,border:'none',borderRadius:'6px 6px 0 0',cursor:'pointer',background:subTab===t.k?'#0f172a':t.k==='import'?'#eff6ff':'transparent',color:subTab===t.k?'#fff':t.k==='import'?'#1d4ed8':'#64748b',borderBottom:subTab===t.k?'2px solid #0f172a':'none',marginBottom:subTab===t.k?'-2px':'0'}},t.l))
   ),
   React.createElement(SelectorCard,null),
-  subTab==='entry'&&React.createElement(EntryPanel,null),
+  subTab==='entry'&&React.createElement(EntryPanel,{selCustomer,selLocation,selDate,workers,entries,saved,loading,saving,saveMsg,holidays,settings,totalHours,isWeekend,isHolidayDate,setHours,setNotes,handleSave}),
   subTab==='customer'&&React.createElement('div',null,
     React.createElement('div',{style:{...S.card,padding:'12px 16px',marginBottom:'10px',display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap',background:'#eff6ff',border:'1px solid #bfdbfe'}},
       React.createElement('div',{style:{fontWeight:700,fontSize:'13px',color:'#1e40af'}},'📋 ',settings.clientName),
@@ -1443,8 +1443,8 @@ return React.createElement('div',{style:{maxWidth:'1600px',margin:'0 auto',paddi
     React.createElement(MonthPivotTable,{showFinancials:true,supplierFilter:selSupp})
   ),
   subTab==='import'&&React.createElement(ImportPanel,null),
-  subTab==='rates'&&React.createElement(RatesPanel,null),
-  subTab==='holidays'&&React.createElement(HolidaysPanel,null)
+  subTab==='rates'&&React.createElement(RatesPanel,{rates,ratesDraft,setRatesDraft,settings,settingsDraft,setSettingsDraft,saveRates,saveSettings,uniqueDesigs}),
+  subTab==='holidays'&&React.createElement(HolidaysPanel,{holidays,setHolidays,newHolDate,setNewHolDate,newHolName,setNewHolName,calMonth,settings})
 );}
 
 
