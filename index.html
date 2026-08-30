@@ -808,21 +808,21 @@ function ConfigTab({locConfigs,suppliers,onSave}){const[locDraft,setLocDraft]=us
 // Central document vault — all mob_documents rows for candidates + suppliers
 function DocumentsTab({candidates=[],suppliers=[],mobList=[]}){
 const DOC_COLS=[
-  {v:'passport',         l:'Passport',           c:'#2563eb', bg:'#eff6ff'},
-  {v:'eid',              l:'Emirates ID',         c:'#7c3aed', bg:'#f5f3ff'},
-  {v:'evisa',            l:'E-Visa',              c:'#0284c7', bg:'#e0f2fe'},
-  {v:'visa',             l:'Residence Visa',      c:'#0369a1', bg:'#e0f2fe'},
-  {v:'uae_contract',     l:'UAE Contract',        c:'#d97706', bg:'#fffbeb', satcoOnly:true},
-  {v:'iloe',             l:'ILOE',                c:'#4f46e5', bg:'#eef2ff'},
-  {v:'medical_insurance',l:'Med Insurance',       c:'#0891b2', bg:'#ecfeff'},
-  {v:'medical',          l:'Medical Cert',        c:'#166534', bg:'#f0fdf4'},
-  {v:'work_permit',      l:'Work Permit',         c:'#b45309', bg:'#fffbeb'},
-  {v:'cicpa',            l:'CICPA',               c:'#991b1b', bg:'#fff1f2'},
-  {v:'driving_license',  l:'Driving Licence',     c:'#16a34a', bg:'#f0fdf4'},
-  {v:'hse_passport',     l:'HSE Passport',        c:'#065f46', bg:'#f0fdf4'},
-  {v:'h2s_cert',         l:'H2S Cert',            c:'#9f1239', bg:'#fff1f2'},
-  {v:'certificate',      l:'Certificate',         c:'#6d28d9', bg:'#faf5ff'},
-  {v:'other',            l:'Other',               c:'#475569', bg:'#f8fafc'},
+  {v:'passport',         l:'Passport',          c:'#2563eb', bg:'#eff6ff'},
+  {v:'eid',              l:'Emirates ID',        c:'#7c3aed', bg:'#f5f3ff'},
+  {v:'evisa',            l:'E-Visa',             c:'#0284c7', bg:'#e0f2fe'},
+  {v:'visa',             l:'Residence Visa',     c:'#0369a1', bg:'#e0f2fe'},
+  {v:'uae_contract',     l:'UAE Contract',       c:'#d97706', bg:'#fffbeb', satcoOnly:true},
+  {v:'iloe',             l:'ILOE',               c:'#4f46e5', bg:'#eef2ff'},
+  {v:'medical_insurance',l:'Med Insurance',      c:'#0891b2', bg:'#ecfeff'},
+  {v:'medical',          l:'Medical Cert',       c:'#166534', bg:'#f0fdf4'},
+  {v:'work_permit',      l:'Work Permit',        c:'#b45309', bg:'#fffbeb'},
+  {v:'cicpa',            l:'CICPA',              c:'#991b1b', bg:'#fff1f2'},
+  {v:'driving_license',  l:'Driving Licence',    c:'#16a34a', bg:'#f0fdf4'},
+  {v:'hse_passport',     l:'HSE Passport',       c:'#065f46', bg:'#f0fdf4'},
+  {v:'h2s_cert',         l:'H2S Cert',           c:'#9f1239', bg:'#fff1f2'},
+  {v:'certificate',      l:'Certificate',        c:'#6d28d9', bg:'#faf5ff'},
+  {v:'other',            l:'Other',              c:'#475569', bg:'#f8fafc'},
 ];
 const getCol=v=>DOC_COLS.find(d=>d.v===v)||DOC_COLS[DOC_COLS.length-1];
 
@@ -842,23 +842,26 @@ const supplierNames=React.useMemo(()=>[...new Set(candidates.filter(c=>c.supplie
 
 const load=React.useCallback(async()=>{
   setLoading(true);setErr('');
+  // Load ALL docs — no entity_type filter so nothing is missed
   const{data:rows,error}=await db.from('mob_documents').select('*')
-    .in('entity_type',['candidate','mobilisation'])
     .order('uploaded_at',{ascending:false});
   if(error){setErr(error.message);setLoading(false);return;}
+  // Build mob_register id → candidate_id map
   const mobToCand={};mobList.forEach(r=>{if(r.id&&r.candidate_id)mobToCand[r.id]=r.candidate_id;});
   const enriched=(rows||[]).map(d=>{
     let cid=d.entity_id;
     if(d.entity_type==='mobilisation')cid=mobToCand[d.entity_id]||d.entity_id;
-    return{...d,_cand_id:cid,_cand:candMap[cid]||null};
+    // supplier docs: keep entity_id as-is, mark as supplier
+    return{...d,_cand_id:(d.entity_type==='supplier'?null:cid),_cand:candMap[cid]||null};
   });
   setDocs(enriched);setLoading(false);
 },[candMap,mobList]);
 React.useEffect(()=>{load();},[load]);
 
+// Group by candidate — latest doc per type wins
 const byCandidate=React.useMemo(()=>{
   const m={};
-  docs.forEach(d=>{
+  docs.filter(d=>d.entity_type!=='supplier').forEach(d=>{
     const key=d._cand_id||d.entity_id||'?';
     if(!m[key]){m[key]={candId:key,cand:d._cand,docMap:{},allDocs:[]};}
     m[key].allDocs.push(d);
@@ -868,6 +871,7 @@ const byCandidate=React.useMemo(()=>{
   return m;
 },[docs]);
 
+// One row per candidate — ALL candidates shown even with 0 docs
 const allRows=React.useMemo(()=>{
   const result=[];const seen=new Set();
   candidates.forEach(c=>{
@@ -875,12 +879,14 @@ const allRows=React.useMemo(()=>{
     const g=byCandidate[c.id]||{candId:c.id,cand:c,docMap:{},allDocs:[]};
     result.push({...g,cand:c});
   });
+  // orphan docs not matched to a candidate
   Object.entries(byCandidate).forEach(([key,g])=>{
     if(!seen.has(key)){seen.add(key);result.push(g);}
   });
   return result;
 },[candidates,byCandidate]);
 
+// Filter + sort by emp no numerically so same supplier is grouped together
 const filtered=React.useMemo(()=>{
   const q=search.trim().toLowerCase();
   return allRows.filter(row=>{
@@ -891,7 +897,17 @@ const filtered=React.useMemo(()=>{
     if(sourceF&&c.source!==sourceF)return false;
     if(suppF&&c.supplier_name!==suppF)return false;
     return true;
-  }).sort((a,b)=>(a.cand?.full_name||'').localeCompare(b.cand?.full_name||''));
+  }).sort((a,b)=>{
+    const ca=a.cand||{},cb=b.cand||{};
+    // Sort by supplier name first (SATCO Arabia first), then emp no numerically
+    const sa=ca.source==='satco_own'?'AAAA':ca.supplier_name||'zzzz';
+    const sb=cb.source==='satco_own'?'AAAA':cb.supplier_name||'zzzz';
+    if(sa!==sb)return sa.localeCompare(sb);
+    // Within same supplier: sort by trailing number in emp no
+    const na=parseInt((ca.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');
+    const nb=parseInt((cb.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');
+    return na-nb;
+  });
 },[allRows,search,sourceF,suppF]);
 
 const totalDocs=filtered.reduce((s,r)=>s+(r.allDocs||[]).length,0);
@@ -1003,105 +1019,74 @@ const Lightbox=()=>{
   );
 };
 
-// ── Doc cell ──────────────────────────────────────────────────────────────
+// ── Doc cell — compact single-line ────────────────────────────────────────
 const DocCell=({col,doc,isSatco})=>{
   const na=col.satcoOnly&&!isSatco;
-  const base={padding:'6px 4px',textAlign:'center',verticalAlign:'top',borderBottom:'1px solid #f1f5f9',borderRight:'1px solid #f1f5f9',minWidth:'110px',width:'110px'};
-  if(na)return React.createElement('td',{style:{...base,background:'#f8fafc'}},
-    React.createElement('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:'3px'}},
-      React.createElement('div',{style:{fontSize:'9px',fontWeight:700,color:'#cbd5e1',padding:'3px 8px',borderRadius:4,background:'#f1f5f9',border:'1px solid #e2e8f0',whiteSpace:'nowrap'}},col.l),
-      React.createElement('div',{style:{fontSize:'9px',color:'#cbd5e1',fontStyle:'italic'}},'N/A')
-    )
+  const tdStyle={padding:'0 3px',textAlign:'center',verticalAlign:'middle',borderBottom:'1px solid #f1f5f9',borderRight:'1px solid #f1f5f9',minWidth:'90px',width:'90px',height:'36px'};
+  if(na)return React.createElement('td',{style:{...tdStyle,background:'#f8fafc'}},
+    React.createElement('span',{style:{fontSize:'9px',color:'#cbd5e1',fontStyle:'italic'}},'N/A')
   );
-  if(!doc)return React.createElement('td',{style:{...base}},
-    React.createElement('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:'3px'}},
-      React.createElement('div',{style:{fontSize:'9px',fontWeight:700,color:'#94a3b8',padding:'3px 8px',borderRadius:4,background:'#f1f5f9',border:'1px dashed #cbd5e1',whiteSpace:'nowrap'}},col.l),
-      React.createElement('div',{style:{fontSize:'9px',color:'#cbd5e1'}},'Not uploaded')
-    )
+  if(!doc)return React.createElement('td',{style:tdStyle},
+    React.createElement('span',{style:{fontSize:'9px',color:'#cbd5e1',padding:'2px 6px',borderRadius:3,border:'1px dashed #e2e8f0',whiteSpace:'nowrap'}},col.l)
   );
-  return React.createElement('td',{style:{...base,background:col.bg}},
-    React.createElement('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:'3px'}},
-      React.createElement('div',{style:{fontSize:'9px',fontWeight:800,color:'#fff',background:col.c,padding:'3px 8px',borderRadius:4,whiteSpace:'nowrap',width:'100%',textAlign:'center',boxSizing:'border-box'}},col.l),
-      React.createElement('div',{style:{fontSize:'9px',color:'#374151',fontWeight:600,maxWidth:'100px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},title:doc.file_name||doc.doc_label||''},doc.file_name||doc.doc_label||'—'),
-      React.createElement('div',{style:{display:'flex',gap:'3px',justifyContent:'center'}},
-        React.createElement('button',{onClick:()=>viewDoc(doc),style:{padding:'2px 7px',fontSize:'9px',fontWeight:700,border:'none',borderRadius:3,cursor:'pointer',background:col.c,color:'#fff'}},'👁 View'),
-        React.createElement('button',{onClick:()=>dlDoc(doc),style:{padding:'2px 6px',fontSize:'9px',fontWeight:700,border:'1px solid '+col.c,borderRadius:3,cursor:'pointer',background:'#fff',color:col.c}},'⬇')
-      ),
-      React.createElement('div',{style:{fontSize:'8px',color:'#94a3b8'}},fmtDate(doc.uploaded_at))
+  return React.createElement('td',{style:{...tdStyle,background:col.bg}},
+    React.createElement('div',{style:{display:'flex',gap:'2px',justifyContent:'center',alignItems:'center'}},
+      React.createElement('button',{
+        onClick:()=>viewDoc(doc),
+        style:{padding:'2px 6px',fontSize:'9px',fontWeight:700,border:'none',borderRadius:3,cursor:'pointer',background:col.c,color:'#fff',whiteSpace:'nowrap'},
+        title:(doc.file_name||doc.doc_label||'')+' · '+fmtDate(doc.uploaded_at)
+      },'👁'),
+      React.createElement('button',{
+        onClick:()=>dlDoc(doc),
+        style:{padding:'2px 5px',fontSize:'9px',fontWeight:700,border:'1px solid '+col.c,borderRadius:3,cursor:'pointer',background:'#fff',color:col.c},
+        title:'Download'
+      },'⬇')
     )
   );
 };
 
-// ── Upload cell ────────────────────────────────────────────────────────────
-// Shows candidate name + emp no at top so you always know whose row you're on
+// ── Upload cell — compact single line ─────────────────────────────────────
 const UploadCell=({candId,candName,empNo,isSatco})=>{
   const us=uploadState[candId]||{};
   const docType=us.docType||'passport';
   const uploading=!!us.uploading;
   const col=getCol(docType);
   if(!fileRefs.current[candId])fileRefs.current[candId]=React.createRef();
-  return React.createElement('td',{style:{padding:'6px 8px',verticalAlign:'middle',borderBottom:'1px solid #f1f5f9',borderRight:'2px solid #e2e8f0',minWidth:'240px',width:'240px',background:uploading?'#f0fdf4':'#fffbeb'}},
-    React.createElement('div',{style:{display:'flex',flexDirection:'column',gap:'5px'}},
-
-      // ── Candidate identity banner ──────────────────────────────────────
-      React.createElement('div',{style:{background:'#0f172a',borderRadius:5,padding:'4px 8px',display:'flex',alignItems:'center',gap:'6px'}},
-        React.createElement('span',{style:{fontSize:'9px',fontWeight:800,color:'#b8972a',flexShrink:0}},empNo||'—'),
-        React.createElement('span',{style:{fontSize:'10px',fontWeight:700,color:'#fff',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1},title:candName},candName||'Unknown'),
-        uploading&&React.createElement('span',{style:{fontSize:'8px',color:'#4ade80',fontWeight:700,flexShrink:0,animation:'pulse 1s infinite'}},'●')
-      ),
-
-      // ── Doc type: badge + dropdown ────────────────────────────────────
-      React.createElement('div',{style:{display:'flex',gap:'5px',alignItems:'center'}},
-        React.createElement('span',{style:{
-          background:col.c,color:'#fff',fontSize:'9px',fontWeight:800,
-          padding:'3px 8px',borderRadius:4,whiteSpace:'nowrap',flexShrink:0,
-          minWidth:'65px',textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,0.15)'
-        }},col.l),
-        React.createElement('select',{
-          value:docType,
-          onChange:e=>setDocType(candId,e.target.value),
-          disabled:uploading,
-          style:{fontSize:'11px',padding:'3px 5px',border:'1px solid #cbd5e1',borderRadius:5,background:'#fff',flex:1,cursor:'pointer'}
-        },
-          DOC_COLS.filter(d=>isSatco||!d.satcoOnly).map(d=>React.createElement('option',{key:d.v,value:d.v},d.l))
-        )
-      ),
-
-      // ── Upload button — colour + label match selection ─────────────────
-      React.createElement('div',null,
-        React.createElement('input',{
-          ref:fileRefs.current[candId],
-          type:'file',accept:'image/*,application/pdf',multiple:true,
-          style:{display:'none'},
-          onChange:e=>handleUpload(e,candId,docType)
-        }),
-        React.createElement('button',{
-          onClick:()=>fileRefs.current[candId]?.current?.click(),
-          disabled:uploading||!candId,
-          style:{
-            width:'100%',padding:'5px 8px',fontSize:'11px',fontWeight:700,
-            background:uploading?'#64748b':col.c,
-            color:'#fff',border:'none',borderRadius:5,
-            cursor:uploading?'not-allowed':'pointer',
-            display:'flex',alignItems:'center',justifyContent:'center',gap:'4px',
-            transition:'background 0.15s'
-          }
-        },
-          uploading
-            ?[React.createElement('span',{key:'i'},'⏳'),React.createElement('span',{key:'t'},'Uploading '),React.createElement('strong',{key:'l'},col.l),'…']
-            :['⬆ Upload ',React.createElement('strong',{key:'l'},col.l)]
-        )
-      ),
-
-      us.err&&React.createElement('div',{style:{fontSize:'10px',color:'#dc2626',padding:'2px 0',lineHeight:1.3}},us.err)
+  return React.createElement('td',{style:{padding:'0 6px',verticalAlign:'middle',borderBottom:'1px solid #f1f5f9',borderRight:'2px solid #e2e8f0',minWidth:'280px',width:'280px',height:'36px',background:uploading?'#f0fdf4':'#fff'}},
+    React.createElement('div',{style:{display:'flex',gap:'5px',alignItems:'center'}},
+      // Who: name badge
+      React.createElement('span',{style:{
+        background:'#0f172a',color:'#fff',fontSize:'9px',fontWeight:700,
+        padding:'2px 6px',borderRadius:3,whiteSpace:'nowrap',flexShrink:0,
+        maxWidth:'110px',overflow:'hidden',textOverflow:'ellipsis'
+      },title:empNo+' · '+candName},empNo?empNo+' · '+(candName||'').split(' ')[0]:(candName||'').split(' ')[0]),
+      // Doc type badge (live colour)
+      React.createElement('span',{style:{background:col.c,color:'#fff',fontSize:'9px',fontWeight:800,padding:'2px 6px',borderRadius:3,whiteSpace:'nowrap',flexShrink:0}},col.l),
+      // Dropdown
+      React.createElement('select',{
+        value:docType,onChange:e=>setDocType(candId,e.target.value),disabled:uploading,
+        style:{fontSize:'10px',padding:'2px 4px',border:'1px solid #cbd5e1',borderRadius:4,background:'#fff',flex:1,minWidth:'70px',cursor:'pointer'}
+      },DOC_COLS.filter(d=>isSatco||!d.satcoOnly).map(d=>React.createElement('option',{key:d.v,value:d.v},d.l))),
+      // Hidden input
+      React.createElement('input',{ref:fileRefs.current[candId],type:'file',accept:'image/*,application/pdf',multiple:true,style:{display:'none'},onChange:e=>handleUpload(e,candId,docType)}),
+      // Upload button
+      React.createElement('button',{
+        onClick:()=>fileRefs.current[candId]?.current?.click(),
+        disabled:uploading||!candId,
+        style:{padding:'3px 8px',fontSize:'10px',fontWeight:700,background:uploading?'#94a3b8':col.c,color:'#fff',border:'none',borderRadius:4,cursor:uploading?'not-allowed':'pointer',whiteSpace:'nowrap',flexShrink:0}
+      },uploading?'⏳…':'⬆ Upload'),
+      us.err&&React.createElement('span',{style:{fontSize:'9px',color:'#dc2626',flexShrink:0}},'⚠')
     )
   );
 };
 
+// Track previous supplier name to draw group separator
+let lastSupplier='__NONE__';
+
 return React.createElement(React.Fragment,null,
   React.createElement(Lightbox,null),
 
-  // ── Toolbar ──────────────────────────────────────────────────────────────
+  // ── Toolbar ───────────────────────────────────────────────────────────
   React.createElement('div',{ref:measureToStk2,className:'sticky-toolbar',style:{padding:'8px 14px',display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center',justifyContent:'space-between'}},
     React.createElement('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}},
       React.createElement('input',{value:search,onChange:e=>setSearch(e.target.value),placeholder:'Search name, emp no, supplier…',style:{...S.input,width:'220px'}}),
@@ -1119,26 +1104,26 @@ return React.createElement(React.Fragment,null,
       )
     ),
     React.createElement('div',{style:{display:'flex',gap:'8px',alignItems:'center'}},
-      err&&React.createElement('span',{style:{fontSize:'11px',color:'#dc2626',fontWeight:700,maxWidth:'240px'}},err),
+      err&&React.createElement('span',{style:{fontSize:'11px',color:'#dc2626',fontWeight:700,maxWidth:'240px',overflow:'hidden',textOverflow:'ellipsis'}},err),
       React.createElement('button',{onClick:load,style:{...S.btnSm,padding:'5px 12px',fontSize:'12px'}},'↻ Refresh'),
       React.createElement('button',{onClick:dlAllDocs,disabled:dlAll||!totalDocs,style:{...S.btnPri,padding:'6px 16px',fontSize:'12px',opacity:(!totalDocs||dlAll)?0.5:1}},
         dlAll?'⏳ Zipping…':`⬇ Download All (${totalDocs}) as ZIP`)
     )
   ),
 
-  // ── Table ─────────────────────────────────────────────────────────────────
+  // ── Table ─────────────────────────────────────────────────────────────
   loading&&React.createElement('div',{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},'Loading documents…'),
   !loading&&React.createElement('div',{className:'tbl-box',style:{overflowX:'auto',overflowY:'auto',maxHeight:'calc(100vh - var(--stk-2) - 20px)'}},
     React.createElement('table',{style:{borderCollapse:'collapse',tableLayout:'fixed',width:'max-content',minWidth:'100%'}},
       React.createElement('thead',null,
         React.createElement('tr',null,
-          React.createElement('th',{style:{...S.th,position:'sticky',top:0,left:0,zIndex:15,background:'#f8fafc',width:'40px',minWidth:'40px',borderRight:'1px solid #e2e8f0',textAlign:'center'}},'#'),
+          React.createElement('th',{style:{...S.th,position:'sticky',top:0,left:0,zIndex:15,background:'#f8fafc',width:'40px',minWidth:'40px',textAlign:'center',borderRight:'1px solid #e2e8f0'}},'#'),
           React.createElement('th',{style:{...S.th,position:'sticky',top:0,left:'40px',zIndex:15,background:'#f8fafc',width:'110px',minWidth:'110px',borderRight:'1px solid #e2e8f0'}},'Emp No'),
           React.createElement('th',{style:{...S.th,position:'sticky',top:0,left:'150px',zIndex:15,background:'#f8fafc',width:'200px',minWidth:'200px',borderRight:'2px solid #e2e8f0'}},'Name'),
-          React.createElement('th',{style:{...S.th,position:'sticky',top:0,zIndex:13,background:'#f8fafc',width:'140px',minWidth:'140px',borderRight:'2px solid #e2e8f0'}},'Supplier'),
-          React.createElement('th',{style:{...S.th,position:'sticky',top:0,zIndex:13,background:'#b8972a',color:'#fff',width:'240px',minWidth:'240px',borderRight:'2px solid #e2e8f0',textAlign:'center'}},'⬆ Upload Document'),
-          React.createElement('th',{style:{...S.th,position:'sticky',top:0,zIndex:13,background:'#f8fafc',width:'90px',minWidth:'90px',borderRight:'2px solid #e2e8f0',textAlign:'center'}},'Download'),
-          ...DOC_COLS.map(col=>React.createElement('th',{key:col.v,style:{...S.th,position:'sticky',top:0,zIndex:12,background:col.c,color:'#fff',width:'110px',minWidth:'110px',textAlign:'center',padding:'6px 4px',whiteSpace:'nowrap',fontSize:'10px',borderRight:'1px solid rgba(255,255,255,0.2)'}},col.l))
+          React.createElement('th',{style:{...S.th,position:'sticky',top:0,zIndex:13,background:'#f8fafc',width:'160px',minWidth:'160px',borderRight:'2px solid #e2e8f0'}},'Supplier'),
+          React.createElement('th',{style:{...S.th,position:'sticky',top:0,zIndex:13,background:'#b8972a',color:'#fff',width:'280px',minWidth:'280px',borderRight:'2px solid #e2e8f0',textAlign:'center'}},'⬆ Upload Document'),
+          React.createElement('th',{style:{...S.th,position:'sticky',top:0,zIndex:13,background:'#f8fafc',width:'80px',minWidth:'80px',borderRight:'2px solid #e2e8f0',textAlign:'center'}},'All Docs'),
+          ...DOC_COLS.map(col=>React.createElement('th',{key:col.v,style:{...S.th,position:'sticky',top:0,zIndex:12,background:col.c,color:'#fff',width:'90px',minWidth:'90px',textAlign:'center',padding:'5px 3px',whiteSpace:'nowrap',fontSize:'9px',fontWeight:800,borderRight:'1px solid rgba(255,255,255,0.25)'}},col.l))
         )
       ),
       React.createElement('tbody',null,
@@ -1151,46 +1136,53 @@ return React.createElement(React.Fragment,null,
           const isSatco=c.source==='satco_own';
           const docCount=(row.allDocs||[]).length;
           const rowBg=idx%2===0?'#fff':'#fafafa';
-          return React.createElement('tr',{key:candId||idx,className:'hr-row',style:{background:rowBg}},
-            React.createElement('td',{style:{...S.td,position:'sticky',left:0,zIndex:11,background:rowBg,width:'40px',minWidth:'40px',borderRight:'1px solid #e2e8f0',textAlign:'center',fontWeight:700,color:'#94a3b8',fontSize:'11px',verticalAlign:'middle'}},idx+1),
-            React.createElement('td',{style:{...S.td,position:'sticky',left:'40px',zIndex:11,background:rowBg,width:'110px',minWidth:'110px',borderRight:'1px solid #e2e8f0',fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:'#0369a1',whiteSpace:'nowrap',verticalAlign:'middle'}},c.supplier_emp_no||'—'),
-            React.createElement('td',{style:{...S.td,position:'sticky',left:'150px',zIndex:11,background:rowBg,width:'200px',minWidth:'200px',borderRight:'2px solid #e2e8f0',fontWeight:700,whiteSpace:'nowrap',verticalAlign:'middle'}},
-              React.createElement('div',{style:{display:'flex',flexDirection:'column',gap:'2px'}},
-                React.createElement('div',{style:{display:'flex',alignItems:'center',gap:'5px'}},
-                  isSatco&&React.createElement('span',{style:{background:'#2563eb',color:'#fff',fontSize:'8px',fontWeight:800,padding:'1px 5px',borderRadius:3,flexShrink:0}},'SATCO'),
-                  React.createElement('span',{style:{color:'#2563eb',fontSize:'12px'}},c.full_name||'Unknown')
-                ),
-                c.designation&&React.createElement('span',{style:{fontSize:'10px',color:'#94a3b8',fontWeight:400}},c.designation)
+          // Group separator when supplier changes
+          const supplierKey=isSatco?'SATCO Arabia':(c.supplier_name||'—');
+          const showSeparator=supplierKey!==lastSupplier;
+          lastSupplier=supplierKey;
+          const sepRow=showSeparator&&idx>0?React.createElement('tr',{key:'sep-'+idx},
+            React.createElement('td',{colSpan:6+DOC_COLS.length,style:{padding:'0',background:'#e2e8f0',height:'3px'}})
+          ):null;
+          const dataRow=React.createElement('tr',{key:candId||idx,className:'hr-row',style:{background:rowBg,height:'36px'}},
+            // #
+            React.createElement('td',{style:{...S.td,position:'sticky',left:0,zIndex:11,background:rowBg,width:'40px',minWidth:'40px',textAlign:'center',fontWeight:700,color:'#94a3b8',fontSize:'11px',padding:'0 4px',borderRight:'1px solid #e2e8f0',height:'36px'}}),
+            // Emp No
+            React.createElement('td',{style:{...S.td,position:'sticky',left:'40px',zIndex:11,background:rowBg,width:'110px',minWidth:'110px',borderRight:'1px solid #e2e8f0',fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:'#0369a1',whiteSpace:'nowrap',padding:'0 8px',height:'36px'}},c.supplier_emp_no||'—'),
+            // Name
+            React.createElement('td',{style:{...S.td,position:'sticky',left:'150px',zIndex:11,background:rowBg,width:'200px',minWidth:'200px',borderRight:'2px solid #e2e8f0',fontWeight:700,whiteSpace:'nowrap',padding:'0 8px',height:'36px'}},
+              React.createElement('div',{style:{display:'flex',alignItems:'center',gap:'5px'}},
+                isSatco&&React.createElement('span',{style:{background:'#2563eb',color:'#fff',fontSize:'8px',fontWeight:800,padding:'1px 4px',borderRadius:3,flexShrink:0}},'SATCO'),
+                React.createElement('div',{style:{display:'flex',flexDirection:'column',minWidth:0}},
+                  React.createElement('span',{style:{color:'#2563eb',fontSize:'12px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},c.full_name||'Unknown'),
+                  c.designation&&React.createElement('span',{style:{fontSize:'9px',color:'#94a3b8',fontWeight:400,lineHeight:1}},c.designation)
+                )
               )
             ),
-            React.createElement('td',{style:{...S.td,width:'140px',minWidth:'140px',borderRight:'2px solid #e2e8f0',fontSize:'11px',color:'#64748b',verticalAlign:'middle'}},
+            // Supplier
+            React.createElement('td',{style:{...S.td,width:'160px',minWidth:'160px',borderRight:'2px solid #e2e8f0',fontSize:'11px',padding:'0 8px',height:'36px'}},
               isSatco
-                ?React.createElement('span',{style:{color:'#2563eb',fontWeight:700}},'SATCO Arabia')
+                ?React.createElement('span',{style:{color:'#2563eb',fontWeight:700,fontSize:'11px'}},'SATCO Arabia')
                 :React.createElement('div',null,
-                    React.createElement('div',{style:{fontWeight:600,color:'#374151'}},c.supplier_name||'—'),
-                    React.createElement('div',{style:{fontSize:'10px',color:'#94a3b8'}},c.nationality||'')
+                    React.createElement('div',{style:{fontWeight:600,color:'#374151',fontSize:'11px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},c.supplier_name||'—'),
+                    React.createElement('div',{style:{fontSize:'9px',color:'#94a3b8'}},c.nationality||'')
                   )
             ),
-            // Upload cell — always shows who this is for
-            React.createElement(UploadCell,{
-              key:'up-'+candId,
-              candId,
-              candName:c.full_name||'Unknown',
-              empNo:c.supplier_emp_no||'',
-              isSatco
-            }),
-            // Download
-            React.createElement('td',{style:{...S.td,width:'90px',minWidth:'90px',borderRight:'2px solid #e2e8f0',textAlign:'center',verticalAlign:'middle'}},
+            // Upload — compact single line with identity
+            React.createElement(UploadCell,{key:'up-'+candId,candId,candName:c.full_name||'',empNo:c.supplier_emp_no||'',isSatco}),
+            // Doc count + ZIP
+            React.createElement('td',{style:{...S.td,width:'80px',minWidth:'80px',borderRight:'2px solid #e2e8f0',textAlign:'center',padding:'0 4px',height:'36px'}},
               docCount>0
-                ?React.createElement('div',{style:{display:'flex',flexDirection:'column',gap:'3px',alignItems:'center'}},
-                    React.createElement('span',{style:{background:'#0f172a',color:'#fff',fontSize:'10px',fontWeight:800,padding:'2px 8px',borderRadius:10}},docCount,' doc'+(docCount!==1?'s':'')),
-                    React.createElement('button',{onClick:()=>dlPerson(row),style:{...S.btnSm,padding:'3px 8px',fontSize:'10px',background:'#0f172a',color:'#fff',border:'none'}},'⬇ All ZIP')
+                ?React.createElement('div',{style:{display:'flex',flexDirection:'column',gap:'2px',alignItems:'center'}},
+                    React.createElement('span',{style:{background:'#0f172a',color:'#fff',fontSize:'9px',fontWeight:800,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}},docCount,' doc'+(docCount!==1?'s':'')),
+                    React.createElement('button',{onClick:()=>dlPerson(row),style:{...S.btnSm,padding:'1px 6px',fontSize:'9px',background:'#0f172a',color:'#fff',border:'none'}},'⬇ ZIP')
                   )
-                :React.createElement('span',{style:{color:'#cbd5e1',fontSize:'10px'}},'0 docs')
+                :React.createElement('span',{style:{color:'#cbd5e1',fontSize:'9px'}},'—')
             ),
+            // Doc cells
             ...DOC_COLS.map(col=>React.createElement(DocCell,{key:col.v,col,doc:row.docMap?.[col.v]||null,isSatco}))
           );
-        })
+          return sepRow?[sepRow,dataRow]:dataRow;
+        }).flat()
       )
     )
   )
