@@ -806,119 +806,396 @@ return/*#__PURE__*/React.createElement("div",null,showBanner&&draft&&/*#__PURE__
 if(!r.supplier_emp_no&&cand.supplier_emp_no)u.supplier_emp_no=cand.supplier_emp_no;if(!r.supplier_name&&cand.supplier_name)u.supplier_name=cand.supplier_name;if(!r.nationality&&cand.nationality)u.nationality=cand.nationality;if(!r.date_of_birth&&cand.date_of_birth)u.date_of_birth=cand.date_of_birth;if(!r.passport_no&&cand.passport_no)u.passport_no=cand.passport_no;if(!r.passport_expiry&&cand.passport_expiry)u.passport_expiry=cand.passport_expiry;if(!r.emirates_id&&cand.emirates_id)u.emirates_id=cand.emirates_id;if(!r.eid_expiry&&cand.eid_expiry)u.eid_expiry=cand.eid_expiry;if(!r.visa_no&&cand.visa_no)u.visa_no=cand.visa_no;if(!r.visa_location&&cand.visa_location)u.visa_location=cand.visa_location;if(!r.visa_expiry&&cand.visa_expiry)u.visa_expiry=cand.visa_expiry;if(!r.wp_no&&cand.wp_no)u.wp_no=cand.wp_no;if(!r.wp_employer&&cand.wp_employer)u.wp_employer=cand.wp_employer;if(!r.wp_expiry&&cand.wp_expiry)u.wp_expiry=cand.wp_expiry;if(!r.wp_issue_date&&cand.wp_issue_date)u.wp_issue_date=cand.wp_issue_date;if(!r.medical_expiry&&cand.medical_expiry)u.medical_expiry=cand.medical_expiry;if(!r.medical_record_no&&cand.medical_record_no)u.medical_record_no=cand.medical_record_no;if(!Object.keys(u).length)continue;const{error}=await db.from('mob_register').update({...u,updated_at:new Date().toISOString()}).eq('id',r.id);if(error){append('FAILED '+r.full_name+': '+error.message);}else{updated++;append('OK '+r.full_name+': '+Object.keys(u).join(', '));}}append('\nDone: '+updated+' updated, '+skipped+' no candidate match.');}catch(err){append('ERROR: '+(err.message||JSON.stringify(err)));}}},"Run Backfill Now"),/*#__PURE__*/React.createElement("span",{style:{fontSize:'11px',color:'#166534'}},"Safe to run multiple times")),/*#__PURE__*/React.createElement("pre",{id:"backfill-log",style:{display:'none',marginTop:'10px',background:'#0f172a',color:'#e2e8f0',borderRadius:'6px',padding:'10px 12px',fontSize:'11px',fontFamily:'monospace',maxHeight:'220px',overflowY:'auto',whiteSpace:'pre-wrap'}})))),deleteId&&/*#__PURE__*/React.createElement("div",{style:{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'},onClick:()=>setDeleteId(null)},/*#__PURE__*/React.createElement("div",{style:{background:'#fff',borderRadius:'12px',width:'100%',maxWidth:'380px',padding:'24px'},onClick:e=>e.stopPropagation()},/*#__PURE__*/React.createElement("div",{style:{fontWeight:800,fontSize:'16px',color:'#991b1b',marginBottom:'6px'}},"Delete Supplier?"),/*#__PURE__*/React.createElement("div",{style:{fontSize:'13px',color:'#64748b',marginBottom:'18px'}},/*#__PURE__*/React.createElement("strong",null,suppliers.find(s=>s.id===deleteId)?.name)," will be permanently removed."),/*#__PURE__*/React.createElement("div",{style:{display:'flex',gap:'8px'}},/*#__PURE__*/React.createElement("button",{style:S.btnRed,onClick:()=>doDelete(deleteId)},"Delete"),/*#__PURE__*/React.createElement("button",{style:S.btnSec,onClick:()=>setDeleteId(null)},"Cancel")))));}// ── Config Tab ────────────────────────────────────────────────────────────────
 function ConfigTab({locConfigs,suppliers,onSave}){const[locDraft,setLocDraft]=useState(null);const[thresholds,setThresholds]=useState([]);const[thDraft,setThDraft]=useState(null);useEffect(()=>{db.from('mob_alert_thresholds').select('*').order('label').then(({data})=>setThresholds(data||[]));},[]);const saveThreshold=async row=>{const{error}=row.id?await db.from('mob_alert_thresholds').update({label:row.label,warn_days:row.warn_days,alert_days:row.alert_days,active:row.active,updated_at:new Date().toISOString()}).eq('id',row.id):await db.from('mob_alert_thresholds').insert({doc_type:row.doc_type,label:row.label,warn_days:row.warn_days,alert_days:row.alert_days});if(error){alert(error.message);return;}const{data}=await db.from('mob_alert_thresholds').select('*').order('label');setThresholds(data||[]);setThDraft(null);};return/*#__PURE__*/React.createElement("div",null,/*#__PURE__*/React.createElement("div",{style:{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'12px 16px',marginBottom:'16px',display:'flex',gap:'12px',alignItems:'flex-start'}},/*#__PURE__*/React.createElement("span",{style:{fontSize:'20px',flexShrink:0}},"📋"),/*#__PURE__*/React.createElement("div",null,/*#__PURE__*/React.createElement("div",{style:{fontWeight:800,fontSize:'13px',color:'#1e40af',marginBottom:'4px'}},"Start here — recommended setup sequence"),/*#__PURE__*/React.createElement("div",{style:{fontSize:'12.5px',color:'#1e40af'}},/*#__PURE__*/React.createElement("strong",null,"1.")," Add your ",/*#__PURE__*/React.createElement("strong",null,"Labour Suppliers")," below \xA0→\xA0",/*#__PURE__*/React.createElement("strong",null,"2.")," Go to ",/*#__PURE__*/React.createElement("strong",null,"Requirements")," tab — enter customer PO headcount \xA0→\xA0",/*#__PURE__*/React.createElement("strong",null,"3.")," Go to ",/*#__PURE__*/React.createElement("strong",null,"LOA")," tab — register LOA from customer \xA0→\xA0",/*#__PURE__*/React.createElement("strong",null,"4.")," Go to ",/*#__PURE__*/React.createElement("strong",null,"Candidates")," — add personnel \xA0→\xA0",/*#__PURE__*/React.createElement("strong",null,"5.")," Go to ",/*#__PURE__*/React.createElement("strong",null,"Mobilisation")," — deploy them"))),/*#__PURE__*/React.createElement("div",{style:S.card},/*#__PURE__*/React.createElement("div",{style:{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#f8fafc'}},/*#__PURE__*/React.createElement("div",null,/*#__PURE__*/React.createElement("div",{style:{fontWeight:800,fontSize:'13px'}},"🏭 Labour Suppliers / Subcontractors"),/*#__PURE__*/React.createElement("div",{style:{fontSize:'11px',color:'#64748b',marginTop:'2px'}},"Manage full supplier registry (with AI document extraction) in the ",/*#__PURE__*/React.createElement("strong",null,"🏭 Suppliers")," tab above."))),/*#__PURE__*/React.createElement("table",{style:{width:'100%',borderCollapse:'collapse'}},/*#__PURE__*/React.createElement("thead",null,/*#__PURE__*/React.createElement("tr",null,['Code','Name','Services','License #','Expiry','Contact','Phone',''].map(h=>/*#__PURE__*/React.createElement("th",{key:h,style:S.th},h)))),/*#__PURE__*/React.createElement("tbody",null,suppliers.length===0&&/*#__PURE__*/React.createElement("tr",null,/*#__PURE__*/React.createElement("td",{colSpan:8,style:{padding:'16px',textAlign:'center',color:'#94a3b8'}},"No suppliers yet — use the 🏭 Suppliers tab to add them.")),suppliers.map(s=>{const es=s.license_expiry&&(new Date(s.license_expiry)-new Date())/86400000<0?{color:'#dc2626',fontWeight:700}:s.license_expiry&&(new Date(s.license_expiry)-new Date())/86400000<90?{color:'#b45309',fontWeight:700}:{};return/*#__PURE__*/React.createElement("tr",{key:s.id,className:"hr-row",style:{cursor:'pointer'},onDoubleClick:e=>{if(e.target.closest('button'))return;setThDraft({...s});},title:"Double-click to edit"},/*#__PURE__*/React.createElement("td",{style:{...S.td,fontFamily:'monospace',fontSize:'11px'}},s.supplier_code||'—'),/*#__PURE__*/React.createElement("td",{style:{...S.td,fontWeight:700}},s.name),/*#__PURE__*/React.createElement("td",{style:{...S.td,fontSize:'11px'}},s.supplier_services||'—'),/*#__PURE__*/React.createElement("td",{style:{...S.td,fontFamily:'monospace',fontSize:'11px'}},s.license_number||'—'),/*#__PURE__*/React.createElement("td",{style:{...S.td,...es,fontSize:'11px'}},s.license_expiry?fmtDate(s.license_expiry):'—'),/*#__PURE__*/React.createElement("td",{style:S.td},s.contact_name||'—'),/*#__PURE__*/React.createElement("td",{style:S.td},s.contact_phone||'—'),/*#__PURE__*/React.createElement("td",{style:S.td},/*#__PURE__*/React.createElement("span",{style:{fontSize:'11px',color:'#64748b'}},"→ Suppliers tab to edit")));})))),/*#__PURE__*/React.createElement("div",{style:S.card},/*#__PURE__*/React.createElement("div",{style:{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#f8fafc'}},/*#__PURE__*/React.createElement("div",null,/*#__PURE__*/React.createElement("div",{style:{fontWeight:800,fontSize:'13px'}},"📍 Location Training Requirements"),/*#__PURE__*/React.createElement("div",{style:{fontSize:'12px',color:'#64748b',marginTop:'2px'}},"Required certs per deployment site — auto-populates when adding a mobilisation record for that location")),/*#__PURE__*/React.createElement("button",{style:S.btnPri,onClick:()=>setLocDraft({location:'',_lines:''})},"+ Add Location")),locDraft&&/*#__PURE__*/React.createElement("div",{style:{padding:'14px',background:'#eff6ff',borderBottom:'1px solid #e2e8f0'}},/*#__PURE__*/React.createElement(Grid,{cols:2},/*#__PURE__*/React.createElement(Field,{label:"Location Name *"},/*#__PURE__*/React.createElement("input",{value:locDraft.location||'',onChange:e=>setLocDraft(d=>({...d,location:e.target.value})),placeholder:"Ruwais / Das Island / KEZAD…",style:S.input}))),/*#__PURE__*/React.createElement("div",{style:{marginBottom:'10px'}},/*#__PURE__*/React.createElement("div",{style:{fontSize:'11px',fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'6px'}},"Required Documents for This Site"),/*#__PURE__*/React.createElement("div",{style:{display:'flex',gap:'10px',flexWrap:'wrap'}},[['req_passport','Passport'],['req_eid','Emirates ID'],['req_visa','UAE Visa'],['req_wp','Work Permit'],['req_medical','Medical'],['req_cicpa','CICPA Gate Pass'],['req_hse','HSE Passport'],['req_h2s','H2S Training']].map(([key,label])=>/*#__PURE__*/React.createElement("label",{key:key,style:{display:'flex',alignItems:'center',gap:'5px',fontSize:'12px',fontWeight:600,cursor:'pointer',background:'#fff',border:'1px solid #e2e8f0',borderRadius:'6px',padding:'5px 10px'}},/*#__PURE__*/React.createElement("input",{type:"checkbox",checked:locDraft[key]!==false,onChange:e=>setLocDraft(d=>({...d,[key]:e.target.checked}))}),label)))),/*#__PURE__*/React.createElement(Field,{label:"Required Trainings — one per line"},/*#__PURE__*/React.createElement("textarea",{value:locDraft._lines||'',onChange:e=>setLocDraft(d=>({...d,_lines:e.target.value})),placeholder:"BOSIET\nCHUSET\nH2S Awareness\nFire Warden\nBasic First Aid",style:{...S.input,height:'90px',resize:'vertical',fontFamily:'monospace',marginTop:'2px'}})),/*#__PURE__*/React.createElement("div",{style:{display:'flex',gap:'8px',marginTop:'10px'}},/*#__PURE__*/React.createElement("button",{style:S.btnPri,onClick:()=>{if(!locDraft.location)return alert('Location required');const trainings=(locDraft._lines||'').split('\n').map(l=>l.trim()).filter(Boolean).map(name=>({name,mandatory:true}));const payload={...locDraft,trainings,req_passport:locDraft.req_passport!==false,req_eid:locDraft.req_eid!==false,req_visa:locDraft.req_visa!==false,req_wp:locDraft.req_wp!==false,req_medical:locDraft.req_medical!==false,req_cicpa:locDraft.req_cicpa||false,req_hse:locDraft.req_hse||false,req_h2s:locDraft.req_h2s||false};onSave('locconfig',payload,()=>setLocDraft(null));}},"Save"),/*#__PURE__*/React.createElement("button",{style:S.btnSec,onClick:()=>setLocDraft(null)},"Cancel"))),/*#__PURE__*/React.createElement("table",{style:{width:'100%',borderCollapse:'collapse'}},/*#__PURE__*/React.createElement("thead",null,/*#__PURE__*/React.createElement("tr",null,['Location','Required Trainings','Updated',''].map(h=>/*#__PURE__*/React.createElement("th",{key:h,style:S.th},h)))),/*#__PURE__*/React.createElement("tbody",null,locConfigs.length===0&&/*#__PURE__*/React.createElement("tr",null,/*#__PURE__*/React.createElement("td",{colSpan:4,style:{padding:'16px',textAlign:'center',color:'#94a3b8'}},"No location configs yet.")),locConfigs.map(l=>/*#__PURE__*/React.createElement("tr",{key:l.id,className:"hr-row",style:{cursor:'pointer'},onDoubleClick:e=>{if(e.target.closest('button'))return;setLocDraft({...l,_lines:(l.trainings||[]).map(t=>t.name).join('\n')});},title:"Double-click to edit"},/*#__PURE__*/React.createElement("td",{style:{...S.td,fontWeight:700}},l.location),/*#__PURE__*/React.createElement("td",{style:S.td},(l.trainings||[]).map((t,i)=>/*#__PURE__*/React.createElement("span",{key:i,style:{display:'inline-block',background:'#eff6ff',color:'#1e40af',fontSize:'11px',fontWeight:700,padding:'2px 8px',borderRadius:10,marginRight:'4px',marginBottom:'3px'}},t.name))),/*#__PURE__*/React.createElement("td",{style:{...S.td,fontSize:'11px',color:'#94a3b8'}},fmtDate(l.updated_at)),/*#__PURE__*/React.createElement("td",{style:S.td},/*#__PURE__*/React.createElement("button",{style:S.btnSm,onClick:()=>setLocDraft({...l,_lines:(l.trainings||[]).map(t=>t.name).join('\n')})},"Edit"))))))),/*#__PURE__*/React.createElement("div",{style:{...S.card,marginTop:'16px'}},/*#__PURE__*/React.createElement("div",{style:{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#f8fafc'}},/*#__PURE__*/React.createElement("div",null,/*#__PURE__*/React.createElement("div",{style:{fontWeight:800,fontSize:'13px'}},"🔔 Document Expiry Alert Thresholds"),/*#__PURE__*/React.createElement("div",{style:{fontSize:'11px',color:'#64748b',marginTop:'2px'}},"Controls when cells turn yellow (warning) and red (alert) across Candidates and Mobilisation tabs"))),/*#__PURE__*/React.createElement("table",{style:{width:'100%',borderCollapse:'collapse'}},/*#__PURE__*/React.createElement("thead",null,/*#__PURE__*/React.createElement("tr",null,['Document','Warn (days)','Alert (days)','Active',''].map(h=>/*#__PURE__*/React.createElement("th",{key:h,style:S.th},h)))),/*#__PURE__*/React.createElement("tbody",null,thresholds.map(t=>thDraft?.id===t.id?/*#__PURE__*/React.createElement("tr",{key:t.id,style:{background:'#fffbeb'}},/*#__PURE__*/React.createElement("td",{style:S.td},/*#__PURE__*/React.createElement("strong",null,t.label)),/*#__PURE__*/React.createElement("td",{style:S.td},/*#__PURE__*/React.createElement("input",{type:"number",value:thDraft.warn_days,min:1,max:999,onChange:e=>setThDraft(d=>({...d,warn_days:+e.target.value})),style:{...S.input,width:'80px'}})," ",/*#__PURE__*/React.createElement("span",{style:{fontSize:'11px',color:'#64748b'}},"days before expiry → 🟡")),/*#__PURE__*/React.createElement("td",{style:S.td},/*#__PURE__*/React.createElement("input",{type:"number",value:thDraft.alert_days,min:1,max:999,onChange:e=>setThDraft(d=>({...d,alert_days:+e.target.value})),style:{...S.input,width:'80px'}})," ",/*#__PURE__*/React.createElement("span",{style:{fontSize:'11px',color:'#64748b'}},"days before expiry → 🔴")),/*#__PURE__*/React.createElement("td",{style:S.td},/*#__PURE__*/React.createElement("label",{style:{display:'flex',gap:'6px',alignItems:'center',cursor:'pointer'}},/*#__PURE__*/React.createElement("input",{type:"checkbox",checked:thDraft.active,onChange:e=>setThDraft(d=>({...d,active:e.target.checked}))})," Active")),/*#__PURE__*/React.createElement("td",{style:S.td},/*#__PURE__*/React.createElement("div",{style:{display:'flex',gap:'4px'}},/*#__PURE__*/React.createElement("button",{style:S.btnPri,onClick:()=>saveThreshold(thDraft)},"Save"),/*#__PURE__*/React.createElement("button",{style:S.btnSec,onClick:()=>setThDraft(null)},"Cancel")))):/*#__PURE__*/React.createElement("tr",{key:t.id,className:"hr-row"},/*#__PURE__*/React.createElement("td",{style:{...S.td,fontWeight:600}},t.label),/*#__PURE__*/React.createElement("td",{style:S.td},/*#__PURE__*/React.createElement("span",{style:{background:'#fef3c7',color:'#92400e',fontWeight:700,padding:'2px 10px',borderRadius:6,fontSize:'12px'}},t.warn_days," days")),/*#__PURE__*/React.createElement("td",{style:S.td},/*#__PURE__*/React.createElement("span",{style:{background:'#fee2e2',color:'#991b1b',fontWeight:700,padding:'2px 10px',borderRadius:6,fontSize:'12px'}},t.alert_days," days")),/*#__PURE__*/React.createElement("td",{style:S.td},/*#__PURE__*/React.createElement("span",{style:{color:t.active?'#166534':'#9ca3af',fontWeight:700,fontSize:'12px'}},t.active?'✓ On':'Off')),/*#__PURE__*/React.createElement("td",{style:S.td},/*#__PURE__*/React.createElement("button",{style:S.btnSm,onClick:()=>setThDraft({...t})},"Edit")))))),/*#__PURE__*/React.createElement("div",{style:{padding:'10px 16px',background:'#f8fafc',fontSize:'11px',color:'#64748b',borderTop:'1px solid #e2e8f0'}},"Example: Passport warn=180 means yellow when <180 days left; alert=90 means red when <90 days left. Entering a date within the alert window also shows an alert prompt when saving.")));}// ── Documents Tab ─────────────────────────────────────────────────────────────
 // Central document vault — all mob_documents rows for candidates + suppliers
-function DocumentsTab({candidates=[],suppliers=[]}){
-const ALL_DOC_TYPES=[
-  {v:'passport',l:'Passport',c:'#2563eb'},{v:'eid',l:'Emirates ID',c:'#7c3aed'},
-  {v:'evisa',l:'E-Visa',c:'#0284c7'},{v:'visa',l:'UAE Residence Visa',c:'#0369a1'},
-  {v:'uae_contract',l:'UAE Contract',c:'#d97706'},{v:'iloe',l:'ILOE Insurance',c:'#7c3aed'},
-  {v:'medical_insurance',l:'Medical Insurance',c:'#0891b2'},{v:'medical',l:'Medical Certificate',c:'#166534'},
-  {v:'work_permit',l:'Work Permit',c:'#b45309'},{v:'cicpa',l:'CICPA Gate Pass',c:'#991b1b'},
-  {v:'driving_license',l:'Driving License',c:'#16a34a'},{v:'hse_passport',l:'HSE Passport',c:'#065f46'},
-  {v:'h2s_cert',l:'H2S Certificate',c:'#9f1239'},{v:'certificate',l:'Certificate',c:'#6d28d9'},
-  {v:'trade',l:'Trade License',c:'#b45309'},{v:'commercial',l:'Commercial License',c:'#b45309'},
-  {v:'wci',l:'WCI Insurance',c:'#7c3aed'},{v:'vat',l:'VAT Certificate',c:'#0369a1'},
-  {v:'other',l:'Other',c:'#475569'}
+function DocumentsTab({candidates=[],suppliers=[],mobList=[]}){
+const DOC_COLS=[
+  {v:'passport',         l:'Passport',           c:'#2563eb', bg:'#eff6ff'},
+  {v:'eid',              l:'Emirates ID',         c:'#7c3aed', bg:'#f5f3ff'},
+  {v:'evisa',            l:'E-Visa',              c:'#0284c7', bg:'#e0f2fe'},
+  {v:'visa',             l:'Residence Visa',      c:'#0369a1', bg:'#e0f2fe'},
+  {v:'uae_contract',     l:'UAE Contract',        c:'#d97706', bg:'#fffbeb', satcoOnly:true},
+  {v:'iloe',             l:'ILOE',                c:'#4f46e5', bg:'#eef2ff'},
+  {v:'medical_insurance',l:'Med Insurance',       c:'#0891b2', bg:'#ecfeff'},
+  {v:'medical',          l:'Medical Cert',        c:'#166534', bg:'#f0fdf4'},
+  {v:'work_permit',      l:'Work Permit',         c:'#b45309', bg:'#fffbeb'},
+  {v:'cicpa',            l:'CICPA',               c:'#991b1b', bg:'#fff1f2'},
+  {v:'driving_license',  l:'Driving Licence',     c:'#16a34a', bg:'#f0fdf4'},
+  {v:'hse_passport',     l:'HSE Passport',        c:'#065f46', bg:'#f0fdf4'},
+  {v:'h2s_cert',         l:'H2S Cert',            c:'#9f1239', bg:'#fff1f2'},
+  {v:'certificate',      l:'Certificate',         c:'#6d28d9', bg:'#faf5ff'},
+  {v:'other',            l:'Other',               c:'#475569', bg:'#f8fafc'},
 ];
-const labelFor=v=>ALL_DOC_TYPES.find(d=>d.v===v)?.l||v||'Doc';
-const colorFor=v=>ALL_DOC_TYPES.find(d=>d.v===v)?.c||'#475569';
+const getCol=v=>DOC_COLS.find(d=>d.v===v)||DOC_COLS[DOC_COLS.length-1];
+
 const[docs,setDocs]=React.useState([]);
 const[loading,setLoading]=React.useState(true);
 const[search,setSearch]=React.useState('');
-const[typeF,setTypeF]=React.useState('');
-const[entityF,setEntityF]=React.useState('');// '' | 'candidate' | 'supplier'
-const[dlAll,setDlAll]=React.useState(false);
+const[sourceF,setSourceF]=React.useState('');
+const[suppF,setSuppF]=React.useState('');
 const[err,setErr]=React.useState('');
-// Build lookup maps once
+const[dlAll,setDlAll]=React.useState(false);
+const[lightbox,setLightbox]=React.useState(null);
+const[uploadState,setUploadState]=React.useState({});
+const fileRefs=React.useRef({});
+
 const candMap=React.useMemo(()=>{const m={};candidates.forEach(c=>{if(c.id)m[c.id]=c;});return m;},[candidates]);
-const suppMap=React.useMemo(()=>{const m={};suppliers.forEach(s=>{if(s.id)m[s.id]=s;});return m;},[suppliers]);
+const supplierNames=React.useMemo(()=>[...new Set(candidates.filter(c=>c.supplier_name).map(c=>c.supplier_name))].sort(),[candidates]);
+
 const load=React.useCallback(async()=>{
-  setLoading(true);
-  const{data,error}=await db.from('mob_documents').select('*').order('uploaded_at',{ascending:false});
-  if(!error)setDocs(data||[]);
-  setLoading(false);
-},[]);
+  setLoading(true);setErr('');
+  const{data:rows,error}=await db.from('mob_documents').select('*')
+    .in('entity_type',['candidate','mobilisation'])
+    .order('uploaded_at',{ascending:false});
+  if(error){setErr(error.message);setLoading(false);return;}
+  const mobToCand={};mobList.forEach(r=>{if(r.id&&r.candidate_id)mobToCand[r.id]=r.candidate_id;});
+  const enriched=(rows||[]).map(d=>{
+    let cid=d.entity_id;
+    if(d.entity_type==='mobilisation')cid=mobToCand[d.entity_id]||d.entity_id;
+    return{...d,_cand_id:cid,_cand:candMap[cid]||null};
+  });
+  setDocs(enriched);setLoading(false);
+},[candMap,mobList]);
 React.useEffect(()=>{load();},[load]);
-// Enrich each doc with entity name
-const enriched=React.useMemo(()=>docs.map(d=>{
-  let name='—',role='';
-  if(d.entity_type==='candidate'||d.entity_type==='mobilisation'){
-    const c=candMap[d.entity_id]||{};
-    name=c.full_name||d.entity_id?.slice(0,8)||'—';
-    role=c.designation||'';
-  } else if(d.entity_type==='supplier'){
-    const s=suppMap[d.entity_id]||{};
-    name=s.name||d.entity_id?.slice(0,8)||'—';
-    role=s.supplier_code||'';
+
+const byCandidate=React.useMemo(()=>{
+  const m={};
+  docs.forEach(d=>{
+    const key=d._cand_id||d.entity_id||'?';
+    if(!m[key]){m[key]={candId:key,cand:d._cand,docMap:{},allDocs:[]};}
+    m[key].allDocs.push(d);
+    const ex=m[key].docMap[d.doc_type];
+    if(!ex||new Date(d.uploaded_at)>new Date(ex.uploaded_at))m[key].docMap[d.doc_type]=d;
+  });
+  return m;
+},[docs]);
+
+const allRows=React.useMemo(()=>{
+  const result=[];const seen=new Set();
+  candidates.forEach(c=>{
+    if(seen.has(c.id))return;seen.add(c.id);
+    const g=byCandidate[c.id]||{candId:c.id,cand:c,docMap:{},allDocs:[]};
+    result.push({...g,cand:c});
+  });
+  Object.entries(byCandidate).forEach(([key,g])=>{
+    if(!seen.has(key)){seen.add(key);result.push(g);}
+  });
+  return result;
+},[candidates,byCandidate]);
+
+const filtered=React.useMemo(()=>{
+  const q=search.trim().toLowerCase();
+  return allRows.filter(row=>{
+    const c=row.cand||{};
+    if(q&&!(c.full_name||'').toLowerCase().includes(q)&&
+          !(c.supplier_emp_no||'').toLowerCase().includes(q)&&
+          !(c.supplier_name||'').toLowerCase().includes(q))return false;
+    if(sourceF&&c.source!==sourceF)return false;
+    if(suppF&&c.supplier_name!==suppF)return false;
+    return true;
+  }).sort((a,b)=>(a.cand?.full_name||'').localeCompare(b.cand?.full_name||''));
+},[allRows,search,sourceF,suppF]);
+
+const totalDocs=filtered.reduce((s,r)=>s+(r.allDocs||[]).length,0);
+const withUploads=filtered.filter(r=>(r.allDocs||[]).length>0).length;
+
+const getDocType=candId=>uploadState[candId]?.docType||'passport';
+const setDocType=(candId,v)=>setUploadState(prev=>({...prev,[candId]:{...prev[candId],docType:v}}));
+
+const handleUpload=async(e,candId,docType)=>{
+  const files=Array.from(e.target.files||[]);
+  if(!files.length)return;
+  setUploadState(prev=>({...prev,[candId]:{...prev[candId],uploading:true,err:''}}));
+  try{
+    const typeLabel=getCol(docType).l;
+    for(const file of files){
+      await uploadDocument(file,'candidate',candId,docType,files.length>1?file.name:typeLabel);
+    }
+    await load();
+  }catch(ex){
+    setUploadState(prev=>({...prev,[candId]:{...prev[candId],err:ex.message}}));
   }
-  return{...d,_name:name,_role:role};
-}),[docs,candMap,suppMap]);
-const filtered=React.useMemo(()=>{const q=search.trim().toLowerCase();return enriched.filter(d=>{if(typeF&&d.doc_type!==typeF)return false;if(entityF&&d.entity_type!==entityF&&!(entityF==='candidate'&&d.entity_type==='mobilisation'))return false;if(q&&!d._name.toLowerCase().includes(q)&&!(d.doc_label||'').toLowerCase().includes(q)&&!(d.file_name||'').toLowerCase().includes(q))return false;return true;});},[enriched,search,typeF,entityF]);
-// Unique doc types in the current set
-const docTypeOpts=React.useMemo(()=>[...new Set(docs.map(d=>d.doc_type).filter(Boolean))].sort(),[docs]);
-const downloadDoc=async doc=>{try{const url=await getSignedUrl(doc.file_path);const resp=await fetch(url);if(!resp.ok)throw new Error('Fetch failed');const blob=await resp.blob();const blobUrl=URL.createObjectURL(blob);const a=document.createElement('a');a.href=blobUrl;a.download=doc.file_name||doc.doc_label||'document';document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(blobUrl);}catch(ex){setErr(ex.message);}};
-const viewDoc=async doc=>{try{const url=await getSignedUrl(doc.file_path);const isPdf=(doc.mime_type||doc.file_name||'').toLowerCase().includes('pdf');if(isPdf)window.open(url,'_blank');else window.open(url,'_blank');}catch(ex){setErr(ex.message);}};
-const downloadSelected=async()=>{if(!filtered.length)return;setDlAll(true);setErr('');try{const JSZip=window.JSZip;if(!JSZip){setErr('JSZip not loaded — refresh and try again');setDlAll(false);return;}const zip=new JSZip();let count=0;for(const doc of filtered){try{const{data:blob,error}=await db.storage.from(DOC_BUCKET).download(doc.file_path);if(error||!blob)continue;const ext=(doc.file_name||'file').split('.').pop();const safeLabel=(doc._name||'doc').replace(/[^a-zA-Z0-9_-]/g,'_');const typeLabel=(doc.doc_label||doc.doc_type||'doc').replace(/[^a-zA-Z0-9_-]/g,'_');zip.file(`${safeLabel}/${typeLabel}.${ext}`,blob);count++;}catch(e){}}if(!count){setErr('Could not download any files');setDlAll(false);return;}const blob=await zip.generateAsync({type:'blob'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`SATCO_Documents_${todayStr()}.zip`;document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(a.href);}catch(ex){setErr('Download failed: '+ex.message);}setDlAll(false);};
-// Group by entity name for a clean layout
-const grouped=React.useMemo(()=>{const m={};filtered.forEach(d=>{const key=d._name+'|'+d.entity_type;if(!m[key])m[key]={name:d._name,role:d._role,entityType:d.entity_type,docs:[]};m[key].docs.push(d);});return Object.values(m).sort((a,b)=>a.name.localeCompare(b.name));},[filtered]);
-return React.createElement("div",null,
-  React.createElement("div",{ref:measureToStk2,className:"sticky-toolbar",style:{padding:'10px 14px',display:'flex',gap:'10px',flexWrap:'wrap',alignItems:'center',justifyContent:'space-between'}},
-    React.createElement("div",{style:{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}},
-      React.createElement("input",{value:search,onChange:e=>setSearch(e.target.value),placeholder:"Search by person or supplier name…",style:{...S.input,width:'260px'}}),
-      React.createElement("select",{value:entityF,onChange:e=>setEntityF(e.target.value),style:{...S.input,width:'160px',fontSize:'12px',padding:'6px 8px'}},
-        React.createElement("option",{value:""},"All — Candidates & Suppliers"),
-        React.createElement("option",{value:"candidate"},"Candidates only"),
-        React.createElement("option",{value:"supplier"},"Suppliers only")
+  setUploadState(prev=>({...prev,[candId]:{...prev[candId],uploading:false}}));
+  e.target.value='';
+};
+
+const viewDoc=async doc=>{
+  try{
+    const url=await getSignedUrl(doc.file_path);
+    const isPdf=(doc.mime_type||doc.file_name||'').toLowerCase().includes('pdf');
+    const isImg=/image\/|\.jpe?g$|\.png$|\.webp$/i.test(doc.mime_type||doc.file_name||'');
+    setLightbox({url,name:doc.file_name||doc.doc_label||'document',isPdf,isImg,doc});
+  }catch(ex){setErr(ex.message);}
+};
+const dlDoc=async doc=>{
+  try{
+    const url=await getSignedUrl(doc.file_path);
+    const resp=await fetch(url);const blob=await resp.blob();
+    const blobUrl=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=blobUrl;
+    a.download=doc.file_name||doc.doc_label||'document';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(blobUrl);
+  }catch(ex){setErr(ex.message);}
+};
+const dlPerson=async row=>{
+  const docs2=row.allDocs||[];if(!docs2.length)return;
+  const JSZip=window.JSZip;if(!JSZip){setErr('JSZip not loaded');return;}
+  const zip=new JSZip();
+  for(const doc of docs2){
+    try{
+      const{data:blob,error}=await db.storage.from(DOC_BUCKET).download(doc.file_path);
+      if(error||!blob)continue;
+      const ext=(doc.file_name||'file').split('.').pop();
+      zip.file((doc.doc_label||doc.doc_type||'doc').replace(/[^a-zA-Z0-9_-]/g,'_')+'.'+ext,blob);
+    }catch(e){}
+  }
+  const blob=await zip.generateAsync({type:'blob'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=(row.cand?.full_name||'docs').replace(/\s+/g,'_')+'_docs.zip';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+};
+const dlAllDocs=async()=>{
+  setDlAll(true);setErr('');
+  try{
+    const JSZip=window.JSZip;if(!JSZip){setErr('JSZip not loaded');setDlAll(false);return;}
+    const zip=new JSZip();let count=0;
+    for(const row of filtered){
+      const name=(row.cand?.full_name||'unknown').replace(/[^a-zA-Z0-9_-]/g,'_');
+      for(const doc of (row.allDocs||[])){
+        try{
+          const{data:blob,error}=await db.storage.from(DOC_BUCKET).download(doc.file_path);
+          if(error||!blob)continue;
+          const ext=(doc.file_name||'file').split('.').pop();
+          zip.file(name+'/'+(doc.doc_label||doc.doc_type||'doc').replace(/[^a-zA-Z0-9_-]/g,'_')+'.'+ext,blob);
+          count++;
+        }catch(e){}
+      }
+    }
+    if(!count){setErr('No files found');setDlAll(false);return;}
+    const blob=await zip.generateAsync({type:'blob'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+    a.download='SATCO_All_Documents_'+todayStr()+'.zip';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  }catch(ex){setErr('ZIP failed: '+ex.message);}
+  setDlAll(false);
+};
+
+// ── Lightbox ──────────────────────────────────────────────────────────────
+const Lightbox=()=>{
+  if(!lightbox)return null;
+  return React.createElement('div',{style:{position:'fixed',inset:0,zIndex:9999,background:'rgba(0,0,0,0.88)',display:'flex',alignItems:'center',justifyContent:'center'},onClick:()=>setLightbox(null)},
+    React.createElement('div',{style:{background:'#1a1a2e',borderRadius:10,padding:16,width:'90vw',maxWidth:900,maxHeight:'90vh',display:'flex',flexDirection:'column',boxShadow:'0 24px 64px rgba(0,0,0,.6)'},onClick:e=>e.stopPropagation()},
+      React.createElement('div',{style:{display:'flex',alignItems:'center',gap:10,marginBottom:12}},
+        React.createElement('span',{style:{color:'#b8972a',fontWeight:700,fontSize:13,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},lightbox.name),
+        React.createElement('button',{onClick:()=>dlDoc(lightbox.doc||lightbox),style:{padding:'6px 14px',background:'#b8972a',color:'#000',borderRadius:6,fontWeight:700,fontSize:12,border:'none',cursor:'pointer'}},'⬇ Download'),
+        React.createElement('button',{onClick:()=>setLightbox(null),style:{padding:'6px 12px',background:'#333',color:'#fff',border:'none',borderRadius:6,cursor:'pointer',fontSize:16}},'✕')
       ),
-      React.createElement("select",{value:typeF,onChange:e=>setTypeF(e.target.value),style:{...S.input,width:'180px',fontSize:'12px',padding:'6px 8px'}},
-        React.createElement("option",{value:""},"All document types"),
-        docTypeOpts.map(v=>React.createElement("option",{key:v,value:v},labelFor(v)))
-      ),
-      React.createElement("span",{style:{fontSize:'12px',color:'#64748b'}},loading?'Loading…':`${filtered.length} docs · ${grouped.length} people`)
-    ),
-    React.createElement("div",{style:{display:'flex',gap:'8px',alignItems:'center'}},
-      err&&React.createElement("span",{style:{fontSize:'11px',color:'#dc2626',fontWeight:700}},err),
-      React.createElement("button",{onClick:load,style:{...S.btnSm,padding:'5px 12px',fontSize:'12px'}},"↻ Refresh"),
-      React.createElement("button",{onClick:downloadSelected,disabled:dlAll||!filtered.length,style:{...S.btnPri,padding:'6px 16px',fontSize:'12px',opacity:(!filtered.length||dlAll)?0.5:1}},
-        dlAll?'⏳ Zipping…':`⬇ Download All (${filtered.length}) as ZIP`
+      React.createElement('div',{style:{flex:1,overflow:'hidden',borderRadius:8,background:'#000',minHeight:400,display:'flex',alignItems:'center',justifyContent:'center'}},
+        lightbox.isPdf&&React.createElement('iframe',{src:lightbox.url,style:{width:'100%',height:'70vh',border:'none'},title:lightbox.name}),
+        !lightbox.isPdf&&lightbox.isImg&&React.createElement('img',{src:lightbox.url,alt:lightbox.name,style:{maxWidth:'100%',maxHeight:'70vh',display:'block',margin:'auto'}}),
+        !lightbox.isPdf&&!lightbox.isImg&&React.createElement('div',{style:{textAlign:'center',color:'#aaa',padding:40}},
+          React.createElement('div',{style:{fontSize:48,marginBottom:12}},'📄'),
+          React.createElement('p',null,'Preview not available.'),
+          React.createElement('button',{onClick:()=>dlDoc(lightbox.doc||lightbox),style:{marginTop:12,padding:'10px 24px',background:'#b8972a',color:'#000',borderRadius:8,fontWeight:700,border:'none',cursor:'pointer'}},'⬇ Download File')
+        )
       )
     )
-  ),
-  loading&&React.createElement("div",{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},"Loading documents…"),
-  !loading&&grouped.length===0&&React.createElement("div",{style:{padding:'60px',textAlign:'center',color:'#94a3b8'}},
-    React.createElement("div",{style:{fontSize:'48px',marginBottom:'12px'}},"📂"),
-    React.createElement("div",{style:{fontWeight:700,fontSize:'16px',marginBottom:'6px'}},"No documents found"),
-    React.createElement("div",{style:{fontSize:'13px'}},"Upload documents via the Candidates or Suppliers tabs — they all appear here.")
-  ),
-  !loading&&grouped.length>0&&React.createElement("div",{style:{padding:'16px'}},
-    grouped.map(group=>React.createElement("div",{key:group.name+group.entityType,style:{...S.card,padding:'0',marginBottom:'12px',overflow:'hidden'}},
-      React.createElement("div",{style:{background:'#0f172a',padding:'10px 16px',display:'flex',alignItems:'center',gap:'10px'}},
-        React.createElement("span",{style:{fontSize:'16px'}},group.entityType==='supplier'?'🏭':'👤'),
-        React.createElement("div",{style:{flex:1}},
-          React.createElement("div",{style:{fontWeight:800,fontSize:'13px',color:'#f8fafc'}},group.name),
-          React.createElement("div",{style:{fontSize:'11px',color:'#94a3b8'}},group.entityType==='supplier'?'Supplier':'Candidate',group.role?' · '+group.role:'')
-        ),
-        React.createElement("span",{style:{background:'rgba(255,255,255,0.15)',color:'#fff',fontSize:'11px',fontWeight:700,padding:'2px 10px',borderRadius:12}},group.docs.length,' doc',group.docs.length!==1?'s':'')
+  );
+};
+
+// ── Doc cell ──────────────────────────────────────────────────────────────
+const DocCell=({col,doc,isSatco})=>{
+  const na=col.satcoOnly&&!isSatco;
+  const base={padding:'6px 4px',textAlign:'center',verticalAlign:'top',borderBottom:'1px solid #f1f5f9',borderRight:'1px solid #f1f5f9',minWidth:'110px',width:'110px'};
+  if(na)return React.createElement('td',{style:{...base,background:'#f8fafc'}},
+    React.createElement('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:'3px'}},
+      React.createElement('div',{style:{fontSize:'9px',fontWeight:700,color:'#cbd5e1',padding:'3px 8px',borderRadius:4,background:'#f1f5f9',border:'1px solid #e2e8f0',whiteSpace:'nowrap'}},col.l),
+      React.createElement('div',{style:{fontSize:'9px',color:'#cbd5e1',fontStyle:'italic'}},'N/A')
+    )
+  );
+  if(!doc)return React.createElement('td',{style:{...base}},
+    React.createElement('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:'3px'}},
+      React.createElement('div',{style:{fontSize:'9px',fontWeight:700,color:'#94a3b8',padding:'3px 8px',borderRadius:4,background:'#f1f5f9',border:'1px dashed #cbd5e1',whiteSpace:'nowrap'}},col.l),
+      React.createElement('div',{style:{fontSize:'9px',color:'#cbd5e1'}},'Not uploaded')
+    )
+  );
+  return React.createElement('td',{style:{...base,background:col.bg}},
+    React.createElement('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:'3px'}},
+      React.createElement('div',{style:{fontSize:'9px',fontWeight:800,color:'#fff',background:col.c,padding:'3px 8px',borderRadius:4,whiteSpace:'nowrap',width:'100%',textAlign:'center',boxSizing:'border-box'}},col.l),
+      React.createElement('div',{style:{fontSize:'9px',color:'#374151',fontWeight:600,maxWidth:'100px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},title:doc.file_name||doc.doc_label||''},doc.file_name||doc.doc_label||'—'),
+      React.createElement('div',{style:{display:'flex',gap:'3px',justifyContent:'center'}},
+        React.createElement('button',{onClick:()=>viewDoc(doc),style:{padding:'2px 7px',fontSize:'9px',fontWeight:700,border:'none',borderRadius:3,cursor:'pointer',background:col.c,color:'#fff'}},'👁 View'),
+        React.createElement('button',{onClick:()=>dlDoc(doc),style:{padding:'2px 6px',fontSize:'9px',fontWeight:700,border:'1px solid '+col.c,borderRadius:3,cursor:'pointer',background:'#fff',color:col.c}},'⬇')
       ),
-      React.createElement("div",{style:{padding:'10px 16px',display:'flex',flexDirection:'column',gap:'6px'}},
-        group.docs.map(doc=>React.createElement("div",{key:doc.id,style:{display:'flex',alignItems:'center',gap:'10px',padding:'8px 12px',background:'#f8fafc',borderRadius:'8px',border:'1px solid #e2e8f0'}},
-          React.createElement("span",{style:{background:colorFor(doc.doc_type),color:'#fff',fontSize:'10px',fontWeight:800,padding:'2px 8px',borderRadius:10,whiteSpace:'nowrap',flexShrink:0}},labelFor(doc.doc_type)),
-          React.createElement("div",{style:{flex:1,minWidth:0}},
-            React.createElement("div",{style:{fontSize:'12.5px',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'#0f172a'}},doc.doc_label||doc.file_name||'—'),
-            React.createElement("div",{style:{fontSize:'11px',color:'#94a3b8'}},
-              doc.file_size?Math.round(doc.file_size/1024)+'KB · ':'',
-              fmtDate(doc.uploaded_at),
-              doc.ai_scanned?React.createElement("span",{style:{marginLeft:8,color:'#166534',fontWeight:700}},"✨ AI scanned"):null
-            )
-          ),
-          React.createElement("div",{style:{display:'flex',gap:'4px',flexShrink:0}},
-            React.createElement("button",{style:{...S.btnSm,padding:'4px 10px',fontSize:'11px',background:'#eff6ff',color:'#1d4ed8',border:'1px solid #bfdbfe'},onClick:()=>viewDoc(doc),title:"View"},"👁 View"),
-            React.createElement("button",{style:{...S.btnSm,padding:'4px 10px',fontSize:'11px',background:'#b8972a',color:'#fff',border:'none'},onClick:()=>downloadDoc(doc),title:"Download"},"⬇ Download")
-          )
-        ))
+      React.createElement('div',{style:{fontSize:'8px',color:'#94a3b8'}},fmtDate(doc.uploaded_at))
+    )
+  );
+};
+
+// ── Upload cell ────────────────────────────────────────────────────────────
+// Shows candidate name + emp no at top so you always know whose row you're on
+const UploadCell=({candId,candName,empNo,isSatco})=>{
+  const us=uploadState[candId]||{};
+  const docType=us.docType||'passport';
+  const uploading=!!us.uploading;
+  const col=getCol(docType);
+  if(!fileRefs.current[candId])fileRefs.current[candId]=React.createRef();
+  return React.createElement('td',{style:{padding:'6px 8px',verticalAlign:'middle',borderBottom:'1px solid #f1f5f9',borderRight:'2px solid #e2e8f0',minWidth:'240px',width:'240px',background:uploading?'#f0fdf4':'#fffbeb'}},
+    React.createElement('div',{style:{display:'flex',flexDirection:'column',gap:'5px'}},
+
+      // ── Candidate identity banner ──────────────────────────────────────
+      React.createElement('div',{style:{background:'#0f172a',borderRadius:5,padding:'4px 8px',display:'flex',alignItems:'center',gap:'6px'}},
+        React.createElement('span',{style:{fontSize:'9px',fontWeight:800,color:'#b8972a',flexShrink:0}},empNo||'—'),
+        React.createElement('span',{style:{fontSize:'10px',fontWeight:700,color:'#fff',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1},title:candName},candName||'Unknown'),
+        uploading&&React.createElement('span',{style:{fontSize:'8px',color:'#4ade80',fontWeight:700,flexShrink:0,animation:'pulse 1s infinite'}},'●')
+      ),
+
+      // ── Doc type: badge + dropdown ────────────────────────────────────
+      React.createElement('div',{style:{display:'flex',gap:'5px',alignItems:'center'}},
+        React.createElement('span',{style:{
+          background:col.c,color:'#fff',fontSize:'9px',fontWeight:800,
+          padding:'3px 8px',borderRadius:4,whiteSpace:'nowrap',flexShrink:0,
+          minWidth:'65px',textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,0.15)'
+        }},col.l),
+        React.createElement('select',{
+          value:docType,
+          onChange:e=>setDocType(candId,e.target.value),
+          disabled:uploading,
+          style:{fontSize:'11px',padding:'3px 5px',border:'1px solid #cbd5e1',borderRadius:5,background:'#fff',flex:1,cursor:'pointer'}
+        },
+          DOC_COLS.filter(d=>isSatco||!d.satcoOnly).map(d=>React.createElement('option',{key:d.v,value:d.v},d.l))
+        )
+      ),
+
+      // ── Upload button — colour + label match selection ─────────────────
+      React.createElement('div',null,
+        React.createElement('input',{
+          ref:fileRefs.current[candId],
+          type:'file',accept:'image/*,application/pdf',multiple:true,
+          style:{display:'none'},
+          onChange:e=>handleUpload(e,candId,docType)
+        }),
+        React.createElement('button',{
+          onClick:()=>fileRefs.current[candId]?.current?.click(),
+          disabled:uploading||!candId,
+          style:{
+            width:'100%',padding:'5px 8px',fontSize:'11px',fontWeight:700,
+            background:uploading?'#64748b':col.c,
+            color:'#fff',border:'none',borderRadius:5,
+            cursor:uploading?'not-allowed':'pointer',
+            display:'flex',alignItems:'center',justifyContent:'center',gap:'4px',
+            transition:'background 0.15s'
+          }
+        },
+          uploading
+            ?[React.createElement('span',{key:'i'},'⏳'),React.createElement('span',{key:'t'},'Uploading '),React.createElement('strong',{key:'l'},col.l),'…']
+            :['⬆ Upload ',React.createElement('strong',{key:'l'},col.l)]
+        )
+      ),
+
+      us.err&&React.createElement('div',{style:{fontSize:'10px',color:'#dc2626',padding:'2px 0',lineHeight:1.3}},us.err)
+    )
+  );
+};
+
+return React.createElement(React.Fragment,null,
+  React.createElement(Lightbox,null),
+
+  // ── Toolbar ──────────────────────────────────────────────────────────────
+  React.createElement('div',{ref:measureToStk2,className:'sticky-toolbar',style:{padding:'8px 14px',display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center',justifyContent:'space-between'}},
+    React.createElement('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}},
+      React.createElement('input',{value:search,onChange:e=>setSearch(e.target.value),placeholder:'Search name, emp no, supplier…',style:{...S.input,width:'220px'}}),
+      React.createElement('select',{value:sourceF,onChange:e=>{setSourceF(e.target.value);setSuppF('');},style:{...S.input,width:'160px',fontSize:'12px',padding:'6px 8px'}},
+        React.createElement('option',{value:''},'All — SATCO & Suppliers'),
+        React.createElement('option',{value:'satco_own'},'SATCO Own employees'),
+        React.createElement('option',{value:'supplier'},'Supplier staff')
+      ),
+      sourceF!=='satco_own'&&React.createElement('select',{value:suppF,onChange:e=>setSuppF(e.target.value),style:{...S.input,width:'180px',fontSize:'12px',padding:'6px 8px'}},
+        React.createElement('option',{value:''},'All suppliers'),
+        supplierNames.map(s=>React.createElement('option',{key:s,value:s},s))
+      ),
+      React.createElement('span',{style:{fontSize:'12px',color:'#64748b',whiteSpace:'nowrap'}},
+        loading?'Loading…':`${filtered.length} people · ${totalDocs} docs · ${withUploads} with uploads`
       )
-    ))
+    ),
+    React.createElement('div',{style:{display:'flex',gap:'8px',alignItems:'center'}},
+      err&&React.createElement('span',{style:{fontSize:'11px',color:'#dc2626',fontWeight:700,maxWidth:'240px'}},err),
+      React.createElement('button',{onClick:load,style:{...S.btnSm,padding:'5px 12px',fontSize:'12px'}},'↻ Refresh'),
+      React.createElement('button',{onClick:dlAllDocs,disabled:dlAll||!totalDocs,style:{...S.btnPri,padding:'6px 16px',fontSize:'12px',opacity:(!totalDocs||dlAll)?0.5:1}},
+        dlAll?'⏳ Zipping…':`⬇ Download All (${totalDocs}) as ZIP`)
+    )
+  ),
+
+  // ── Table ─────────────────────────────────────────────────────────────────
+  loading&&React.createElement('div',{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},'Loading documents…'),
+  !loading&&React.createElement('div',{className:'tbl-box',style:{overflowX:'auto',overflowY:'auto',maxHeight:'calc(100vh - var(--stk-2) - 20px)'}},
+    React.createElement('table',{style:{borderCollapse:'collapse',tableLayout:'fixed',width:'max-content',minWidth:'100%'}},
+      React.createElement('thead',null,
+        React.createElement('tr',null,
+          React.createElement('th',{style:{...S.th,position:'sticky',top:0,left:0,zIndex:15,background:'#f8fafc',width:'40px',minWidth:'40px',borderRight:'1px solid #e2e8f0',textAlign:'center'}},'#'),
+          React.createElement('th',{style:{...S.th,position:'sticky',top:0,left:'40px',zIndex:15,background:'#f8fafc',width:'110px',minWidth:'110px',borderRight:'1px solid #e2e8f0'}},'Emp No'),
+          React.createElement('th',{style:{...S.th,position:'sticky',top:0,left:'150px',zIndex:15,background:'#f8fafc',width:'200px',minWidth:'200px',borderRight:'2px solid #e2e8f0'}},'Name'),
+          React.createElement('th',{style:{...S.th,position:'sticky',top:0,zIndex:13,background:'#f8fafc',width:'140px',minWidth:'140px',borderRight:'2px solid #e2e8f0'}},'Supplier'),
+          React.createElement('th',{style:{...S.th,position:'sticky',top:0,zIndex:13,background:'#b8972a',color:'#fff',width:'240px',minWidth:'240px',borderRight:'2px solid #e2e8f0',textAlign:'center'}},'⬆ Upload Document'),
+          React.createElement('th',{style:{...S.th,position:'sticky',top:0,zIndex:13,background:'#f8fafc',width:'90px',minWidth:'90px',borderRight:'2px solid #e2e8f0',textAlign:'center'}},'Download'),
+          ...DOC_COLS.map(col=>React.createElement('th',{key:col.v,style:{...S.th,position:'sticky',top:0,zIndex:12,background:col.c,color:'#fff',width:'110px',minWidth:'110px',textAlign:'center',padding:'6px 4px',whiteSpace:'nowrap',fontSize:'10px',borderRight:'1px solid rgba(255,255,255,0.2)'}},col.l))
+        )
+      ),
+      React.createElement('tbody',null,
+        filtered.length===0&&React.createElement('tr',null,
+          React.createElement('td',{colSpan:6+DOC_COLS.length,style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},'No candidates found.')
+        ),
+        filtered.map((row,idx)=>{
+          const c=row.cand||{};
+          const candId=row.candId;
+          const isSatco=c.source==='satco_own';
+          const docCount=(row.allDocs||[]).length;
+          const rowBg=idx%2===0?'#fff':'#fafafa';
+          return React.createElement('tr',{key:candId||idx,className:'hr-row',style:{background:rowBg}},
+            React.createElement('td',{style:{...S.td,position:'sticky',left:0,zIndex:11,background:rowBg,width:'40px',minWidth:'40px',borderRight:'1px solid #e2e8f0',textAlign:'center',fontWeight:700,color:'#94a3b8',fontSize:'11px',verticalAlign:'middle'}},idx+1),
+            React.createElement('td',{style:{...S.td,position:'sticky',left:'40px',zIndex:11,background:rowBg,width:'110px',minWidth:'110px',borderRight:'1px solid #e2e8f0',fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:'#0369a1',whiteSpace:'nowrap',verticalAlign:'middle'}},c.supplier_emp_no||'—'),
+            React.createElement('td',{style:{...S.td,position:'sticky',left:'150px',zIndex:11,background:rowBg,width:'200px',minWidth:'200px',borderRight:'2px solid #e2e8f0',fontWeight:700,whiteSpace:'nowrap',verticalAlign:'middle'}},
+              React.createElement('div',{style:{display:'flex',flexDirection:'column',gap:'2px'}},
+                React.createElement('div',{style:{display:'flex',alignItems:'center',gap:'5px'}},
+                  isSatco&&React.createElement('span',{style:{background:'#2563eb',color:'#fff',fontSize:'8px',fontWeight:800,padding:'1px 5px',borderRadius:3,flexShrink:0}},'SATCO'),
+                  React.createElement('span',{style:{color:'#2563eb',fontSize:'12px'}},c.full_name||'Unknown')
+                ),
+                c.designation&&React.createElement('span',{style:{fontSize:'10px',color:'#94a3b8',fontWeight:400}},c.designation)
+              )
+            ),
+            React.createElement('td',{style:{...S.td,width:'140px',minWidth:'140px',borderRight:'2px solid #e2e8f0',fontSize:'11px',color:'#64748b',verticalAlign:'middle'}},
+              isSatco
+                ?React.createElement('span',{style:{color:'#2563eb',fontWeight:700}},'SATCO Arabia')
+                :React.createElement('div',null,
+                    React.createElement('div',{style:{fontWeight:600,color:'#374151'}},c.supplier_name||'—'),
+                    React.createElement('div',{style:{fontSize:'10px',color:'#94a3b8'}},c.nationality||'')
+                  )
+            ),
+            // Upload cell — always shows who this is for
+            React.createElement(UploadCell,{
+              key:'up-'+candId,
+              candId,
+              candName:c.full_name||'Unknown',
+              empNo:c.supplier_emp_no||'',
+              isSatco
+            }),
+            // Download
+            React.createElement('td',{style:{...S.td,width:'90px',minWidth:'90px',borderRight:'2px solid #e2e8f0',textAlign:'center',verticalAlign:'middle'}},
+              docCount>0
+                ?React.createElement('div',{style:{display:'flex',flexDirection:'column',gap:'3px',alignItems:'center'}},
+                    React.createElement('span',{style:{background:'#0f172a',color:'#fff',fontSize:'10px',fontWeight:800,padding:'2px 8px',borderRadius:10}},docCount,' doc'+(docCount!==1?'s':'')),
+                    React.createElement('button',{onClick:()=>dlPerson(row),style:{...S.btnSm,padding:'3px 8px',fontSize:'10px',background:'#0f172a',color:'#fff',border:'none'}},'⬇ All ZIP')
+                  )
+                :React.createElement('span',{style:{color:'#cbd5e1',fontSize:'10px'}},'0 docs')
+            ),
+            ...DOC_COLS.map(col=>React.createElement(DocCell,{key:col.v,col,doc:row.docMap?.[col.v]||null,isSatco}))
+          );
+        })
+      )
+    )
   )
 );}
+
 
 // ── Setup SQL Screen ──────────────────────────────────────────────────────────
 function SetupScreen({onRetry}){const[copied,setCopied]=useState(false);return/*#__PURE__*/React.createElement("div",{style:{padding:'32px',maxWidth:'900px',margin:'0 auto'}},/*#__PURE__*/React.createElement("div",{style:{fontWeight:800,fontSize:'18px',color:'#0f172a',marginBottom:'6px'}},"🏗️ One-time Setup Required"),/*#__PURE__*/React.createElement("div",{style:{fontSize:'13px',color:'#64748b',marginBottom:'16px'}},"Run this SQL once in ",/*#__PURE__*/React.createElement("strong",null,"Supabase → SQL Editor")," (project: oaerqjrkdpuhiproppaz), then click Check Again."),/*#__PURE__*/React.createElement("div",{style:{display:'flex',gap:'10px',marginBottom:'12px'}},/*#__PURE__*/React.createElement("button",{onClick:()=>{navigator.clipboard.writeText(ALL_SQL);setCopied(true);setTimeout(()=>setCopied(false),2000);},style:S.btnGold},copied?'✓ Copied!':'Copy SQL'),/*#__PURE__*/React.createElement("button",{onClick:onRetry,style:S.btnPri},"Check Again")),/*#__PURE__*/React.createElement("pre",{style:{background:'#1e293b',color:'#f8fafc',padding:'16px',borderRadius:'8px',fontSize:'11px',overflowX:'auto',whiteSpace:'pre',maxHeight:'500px',overflowY:'auto'}},ALL_SQL));}// ── Login Screen ──────────────────────────────────────────────────────────────
@@ -952,7 +1229,7 @@ sessionStorage.setItem('satco_mob_edit',existing.id);setTab('mobilisation');setT
 wp_no:candidate.wp_no||'',wp_employer:candidate.wp_employer||'',wp_expiry:candidate.wp_expiry||'',wp_issue_date:candidate.wp_issue_date||'',// CICPA — copy from candidate card
 cicpa_pass_no:candidate.security_pass_no||'',cicpa_expiry_date:candidate.security_pass_expiry||'',// ADNOC Medical — copy from candidate card
 adnoc_medical_status:candidate.adnoc_medical_status||'',adnoc_medical_date:candidate.adnoc_medical_date||'',medical_expiry:candidate.medical_expiry||'',medical_record_no:candidate.medical_record_no||'',// Pre-fill from plan
-customer_name:planContext.customer_name||'',location:planContext.location||'',loa_id:planContext.loa_id||'',medical_done:false,hse_passport_done:false,h2s_done:false,extra_trainings:[],status:'pending',notes:''}));setTab('mobilisation');setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),150);};if(!authReady)return/*#__PURE__*/React.createElement("div",{style:{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',color:'#64748b'}},"Loading…");if(!session)return/*#__PURE__*/React.createElement(LoginScreen,{onLogin:()=>db.auth.getSession().then(({data})=>setSession(data.session))});if(tableReady===false)return/*#__PURE__*/React.createElement(React.Fragment,null,/*#__PURE__*/React.createElement(TopNav,{tab:tab,setTab:setTab,onSignOut:()=>db.auth.signOut(),globalSearch:globalSearch,setGlobalSearch:setGlobalSearch,searchResults:[],onSearchSelect:()=>{}}),/*#__PURE__*/React.createElement(SetupScreen,{onRetry:loadAll}));return/*#__PURE__*/React.createElement("div",{style:S.page},/*#__PURE__*/React.createElement(TopNav,{tab:tab,setTab:t=>{setTab(t);setTabSearch('');},onSignOut:()=>db.auth.signOut(),globalSearch:globalSearch,setGlobalSearch:setGlobalSearch,searchResults:searchResults,onSearchSelect:onSearchSelect}),/*#__PURE__*/React.createElement("div",{style:S.wrap},/*#__PURE__*/React.createElement("div",{style:{paddingTop:'20px'}},/*#__PURE__*/React.createElement(LoaBanner,{loaList:data.loaList,usedMap:loaUsed,onManage:()=>setTab('loa')}),loading&&tableReady===null&&/*#__PURE__*/React.createElement("div",{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},"Loading…"),!loading&&tableReady&&/*#__PURE__*/React.createElement(React.Fragment,null,tab==='dashboard'&&/*#__PURE__*/React.createElement(Dashboard,{data:data,loaUsed:loaUsed,setTab:t=>{setTab(t);},setFilterStatus:setFilterStatus,hrMobActive:hrMobActive}),tab==='planning'&&/*#__PURE__*/React.createElement(PlanningTab,{candidates:data.candidates,mobList:data.mobList,requirements:data.requirements,loaList:data.loaList,onMobilise:(c,ctx)=>{handleMobilise(c,ctx||{});},setTab:t=>{setTab(t);},onRefreshAndFilter:async(cust,loc)=>{await loadAll();setBulkMobFilter({customer:cust,location:loc});setTab('mobilisation');setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),300);},onBulkMobFilter:(cust,loc)=>{setBulkMobFilter({customer:cust,location:loc});setTab('mobilisation');}}),tab==='candidates'&&/*#__PURE__*/React.createElement(CandidatesTab,{candidates:data.candidates,mobList:data.mobList,suppliers:data.suppliers,locConfigs:data.locConfigs,onSave:onSave,onDelete:onDelete,onMobilise:handleMobilise,onRefresh:loadAll,tabSearch:tabSearch,hrMobActive:hrMobActive,hrMobLocs:hrMobLocs,thresholds:data.thresholds}),tab==='requirements'&&/*#__PURE__*/React.createElement(RequirementsTab,{requirements:data.requirements,onSave:onSave}),tab==='loa'&&/*#__PURE__*/React.createElement(LoaTab,{loaList:data.loaList,usedMap:loaUsed,onSave:onSave}),tab==='mobilisation'&&/*#__PURE__*/React.createElement(MobilisationTab,{mobList:data.mobList,candidates:data.candidates,loaList:data.loaList,requirements:data.requirements,usedMap:loaUsed,locConfigs:data.locConfigs,onSave:onSave,onDemob:onDemob,onRefresh:loadAll,initialStatus:filterStatus,tabSearch:tabSearch,bulkMobFilter:bulkMobFilter,onClearBulkFilter:()=>setBulkMobFilter(null)}),tab==='timesheet'&&/*#__PURE__*/React.createElement(TimesheetTab,{mobList:data.mobList,onRefresh:loadAll}),tab==='suppliers'&&/*#__PURE__*/React.createElement(SuppliersTab,{suppliers:data.suppliers,onRefresh:loadAll}),tab==='documents'&&/*#__PURE__*/React.createElement(DocumentsTab,{candidates:data.candidates,suppliers:data.suppliers}),tab==='letters'&&/*#__PURE__*/React.createElement(LettersTab,{mobList:data.mobList,candidates:data.candidates}),tab==='config'&&/*#__PURE__*/React.createElement(ConfigTab,{locConfigs:data.locConfigs,suppliers:data.suppliers,onSave:onSave})))));}ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(App,null));
+customer_name:planContext.customer_name||'',location:planContext.location||'',loa_id:planContext.loa_id||'',medical_done:false,hse_passport_done:false,h2s_done:false,extra_trainings:[],status:'pending',notes:''}));setTab('mobilisation');setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),150);};if(!authReady)return/*#__PURE__*/React.createElement("div",{style:{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',color:'#64748b'}},"Loading…");if(!session)return/*#__PURE__*/React.createElement(LoginScreen,{onLogin:()=>db.auth.getSession().then(({data})=>setSession(data.session))});if(tableReady===false)return/*#__PURE__*/React.createElement(React.Fragment,null,/*#__PURE__*/React.createElement(TopNav,{tab:tab,setTab:setTab,onSignOut:()=>db.auth.signOut(),globalSearch:globalSearch,setGlobalSearch:setGlobalSearch,searchResults:[],onSearchSelect:()=>{}}),/*#__PURE__*/React.createElement(SetupScreen,{onRetry:loadAll}));return/*#__PURE__*/React.createElement("div",{style:S.page},/*#__PURE__*/React.createElement(TopNav,{tab:tab,setTab:t=>{setTab(t);setTabSearch('');},onSignOut:()=>db.auth.signOut(),globalSearch:globalSearch,setGlobalSearch:setGlobalSearch,searchResults:searchResults,onSearchSelect:onSearchSelect}),/*#__PURE__*/React.createElement("div",{style:S.wrap},/*#__PURE__*/React.createElement("div",{style:{paddingTop:'20px'}},/*#__PURE__*/React.createElement(LoaBanner,{loaList:data.loaList,usedMap:loaUsed,onManage:()=>setTab('loa')}),loading&&tableReady===null&&/*#__PURE__*/React.createElement("div",{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},"Loading…"),!loading&&tableReady&&/*#__PURE__*/React.createElement(React.Fragment,null,tab==='dashboard'&&/*#__PURE__*/React.createElement(Dashboard,{data:data,loaUsed:loaUsed,setTab:t=>{setTab(t);},setFilterStatus:setFilterStatus,hrMobActive:hrMobActive}),tab==='planning'&&/*#__PURE__*/React.createElement(PlanningTab,{candidates:data.candidates,mobList:data.mobList,requirements:data.requirements,loaList:data.loaList,onMobilise:(c,ctx)=>{handleMobilise(c,ctx||{});},setTab:t=>{setTab(t);},onRefreshAndFilter:async(cust,loc)=>{await loadAll();setBulkMobFilter({customer:cust,location:loc});setTab('mobilisation');setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),300);},onBulkMobFilter:(cust,loc)=>{setBulkMobFilter({customer:cust,location:loc});setTab('mobilisation');}}),tab==='candidates'&&/*#__PURE__*/React.createElement(CandidatesTab,{candidates:data.candidates,mobList:data.mobList,suppliers:data.suppliers,locConfigs:data.locConfigs,onSave:onSave,onDelete:onDelete,onMobilise:handleMobilise,onRefresh:loadAll,tabSearch:tabSearch,hrMobActive:hrMobActive,hrMobLocs:hrMobLocs,thresholds:data.thresholds}),tab==='requirements'&&/*#__PURE__*/React.createElement(RequirementsTab,{requirements:data.requirements,onSave:onSave}),tab==='loa'&&/*#__PURE__*/React.createElement(LoaTab,{loaList:data.loaList,usedMap:loaUsed,onSave:onSave}),tab==='mobilisation'&&/*#__PURE__*/React.createElement(MobilisationTab,{mobList:data.mobList,candidates:data.candidates,loaList:data.loaList,requirements:data.requirements,usedMap:loaUsed,locConfigs:data.locConfigs,onSave:onSave,onDemob:onDemob,onRefresh:loadAll,initialStatus:filterStatus,tabSearch:tabSearch,bulkMobFilter:bulkMobFilter,onClearBulkFilter:()=>setBulkMobFilter(null)}),tab==='timesheet'&&/*#__PURE__*/React.createElement(TimesheetTab,{mobList:data.mobList,onRefresh:loadAll}),tab==='suppliers'&&/*#__PURE__*/React.createElement(SuppliersTab,{suppliers:data.suppliers,onRefresh:loadAll}),tab==='documents'&&/*#__PURE__*/React.createElement(DocumentsTab,{candidates:data.candidates,suppliers:data.suppliers,mobList:data.mobList}),tab==='letters'&&/*#__PURE__*/React.createElement(LettersTab,{mobList:data.mobList,candidates:data.candidates}),tab==='config'&&/*#__PURE__*/React.createElement(ConfigTab,{locConfigs:data.locConfigs,suppliers:data.suppliers,onSave:onSave})))));}ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(App,null));
 
 </script>
 </body>
