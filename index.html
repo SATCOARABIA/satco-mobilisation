@@ -784,14 +784,14 @@ const[saveMsg,setSaveMsg]=React.useState('');
 const[history,setHistory]=React.useState([]);
 const[histLoading,setHistLoading]=React.useState(false);
 // ── Inline edit grid state (customer tab = entry grid) ──────────────────────
-const[gridEdits,setGridEdits]=React.useState({});// {`${mob_id}_${day}`: hrsString}
+const gridEditsRef=React.useRef({});// stores edited values without causing re-renders
 const[gridDirty,setGridDirty]=React.useState(false);
 const[gridSaving,setGridSaving]=React.useState(false);
 const[gridSaveMsg,setGridSaveMsg]=React.useState('');
 const gridRefs=React.useRef({});
-const setGridCell=(wid,d,val)=>{const clean=val.replace(/[^0-9.]/g,'');setGridEdits(g=>({...g,[`${wid}_${d}`]:clean}));setGridDirty(true);setGridSaveMsg('');};
+const setGridCell=(wid,d,val)=>{const clean=val.replace(/[^0-9.]/g,'');gridEditsRef.current[`${wid}_${d}`]=clean;if(!gridDirty)setGridDirty(true);setGridSaveMsg('');};
 const handleGridKeyDown=(e,wid,day,allWorkers,allDays)=>{const wi=allWorkers.findIndex(w=>(w.mob_register_id||w.id)===wid);const di=allDays.findIndex(d=>d.d===day);let nwi=wi,ndi=di;if(e.key==='ArrowRight'||(e.key==='Tab'&&!e.shiftKey)){ndi++;if(ndi>=allDays.length){ndi=0;nwi++;}e.preventDefault();}else if(e.key==='ArrowLeft'||(e.key==='Tab'&&e.shiftKey)){ndi--;if(ndi<0){ndi=allDays.length-1;nwi--;}e.preventDefault();}else if(e.key==='ArrowDown'||e.key==='Enter'){nwi++;e.preventDefault();}else if(e.key==='ArrowUp'){nwi--;e.preventDefault();}else return;if(nwi<0)nwi=0;if(nwi>=allWorkers.length)nwi=allWorkers.length-1;const nw=allWorkers[nwi];const nd=allDays[ndi];if(nw&&nd){const key=`${nw.mob_register_id||nw.id}_${nd.d}`;const ref=gridRefs.current[key];if(ref){ref.focus();ref.select();}}};
-const saveGridMonth=async(allWorkers,allDays)=>{if(!selCustomer||!selLocation)return;setGridSaving(true);setGridSaveMsg('');try{const rows=[];allWorkers.forEach(w=>{const wid=w.mob_register_id||w.id;const srcW=workers.find(x=>x.id===wid)||w;allDays.forEach(({d,ds,isOff,holName})=>{const key=`${wid}_${d}`;const edited=gridEdits[key];const existing=history.find(h=>h.mob_register_id===wid&&new Date(h.work_date+'T00:00:00').getDate()===d);const hrs=edited!==undefined?parseFloat(edited)||0:parseFloat(existing?.hours)||0;const hadData=!!existing;if(hrs>0||hadData){rows.push({work_date:ds,mob_register_id:wid,full_name:srcW.full_name||w.full_name||'',designation:srcW.designation||w.designation||'',supplier_name:srcW.supplier_name||w.supplier_name||'',supplier_emp_no:srcW.supplier_emp_no||w.supplier_emp_no||'',customer_name:selCustomer,location:selLocation,hours:hrs,is_holiday:isOff,holiday_name:isOff?holName||null:null,notes:null,updated_at:new Date().toISOString()});}});});for(let i=0;i<rows.length;i+=100){const{error}=await db.from('mob_timesheets').upsert(rows.slice(i,i+100),{onConflict:'work_date,mob_register_id'});if(error)throw new Error(error.message);}setGridSaveMsg('✅ '+rows.length+' cells saved');setGridDirty(false);setGridEdits({});await loadHistoryForMonth(calMonth);}catch(ex){setGridSaveMsg('❌ '+ex.message);}setGridSaving(false);};
+const saveGridMonth=async(allWorkers,allDays)=>{if(!selCustomer||!selLocation)return;setGridSaving(true);setGridSaveMsg('');try{const rows=[];allWorkers.forEach(w=>{const wid=w.mob_register_id||w.id;const srcW=workers.find(x=>x.id===wid)||w;allDays.forEach(({d,ds,isOff,holName})=>{const key=`${wid}_${d}`;const edited=gridEditsRef.current[key];const existing=history.find(h=>h.mob_register_id===wid&&new Date(h.work_date+'T00:00:00').getDate()===d);const hrs=edited!==undefined?parseFloat(edited)||0:parseFloat(existing?.hours)||0;const hadData=!!existing;if(hrs>0||hadData){rows.push({work_date:ds,mob_register_id:wid,full_name:srcW.full_name||w.full_name||'',designation:srcW.designation||w.designation||'',supplier_name:srcW.supplier_name||w.supplier_name||'',supplier_emp_no:srcW.supplier_emp_no||w.supplier_emp_no||'',customer_name:selCustomer,location:selLocation,hours:hrs,is_holiday:isOff,holiday_name:isOff?holName||null:null,notes:null,updated_at:new Date().toISOString()});}});});for(let i=0;i<rows.length;i+=100){const{error}=await db.from('mob_timesheets').upsert(rows.slice(i,i+100),{onConflict:'work_date,mob_register_id'});if(error)throw new Error(error.message);}setGridSaveMsg('✅ '+rows.length+' cells saved');setGridDirty(false);gridEditsRef.current={};await loadHistoryForMonth(calMonth);}catch(ex){setGridSaveMsg('❌ '+ex.message);}setGridSaving(false);};
 
 // ── Import state ──────────────────────────────────────────────────────────
 const[importRows,setImportRows]=React.useState(null);// parsed client data: [{empNo,name,days:{1:h,2:h,...}}]
@@ -831,19 +831,20 @@ const loadHistoryForMonth=React.useCallback(async ym=>{
   const from=`${y}-${String(m).padStart(2,'0')}-01`;
   const to=`${y}-${String(m).padStart(2,'0')}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`;
   const{data}=await db.from('mob_timesheets').select('*').eq('customer_name',selCustomer).eq('location',selLocation).gte('work_date',from).lte('work_date',to).order('work_date',{ascending:true});
-  setHistory(data||[]);setGridEdits({});setGridDirty(false);setGridSaveMsg('');setHistLoading(false);
+  setHistory(data||[]);gridEditsRef.current={};setGridDirty(false);setGridSaveMsg('');setHistLoading(false);
 },[selCustomer,selLocation]);
 React.useEffect(()=>{if((subTab==='customer'||subTab==='supplier'||subTab==='import'||subTab==='entry')&&selCustomer&&selLocation)loadHistoryForMonth(calMonth);},[subTab,selCustomer,selLocation,calMonth]);
 
-const setHours=(id,val)=>setEntries(e=>({...e,[id]:{...(e[id]||{}),hours:val}}));
-const setNotes=(id,val)=>setEntries(e=>({...e,[id]:{...(e[id]||{}),notes:val}}));
-const totalHours=workers.reduce((s,w)=>s+(parseFloat(entries[w.id]?.hours)||0),0);
+const entryEditsRef=React.useRef({});
+const setHours=(id,val)=>{if(!entryEditsRef.current[id])entryEditsRef.current[id]={};entryEditsRef.current[id].hours=val;};
+const setNotes=(id,val)=>{if(!entryEditsRef.current[id])entryEditsRef.current[id]={};entryEditsRef.current[id].notes=val;};
+const totalHours=workers.reduce((s,w)=>s+(parseFloat((entryEditsRef.current[w.id]||entries[w.id]||{}).hours)||0),0);
 
 const handleSave=async()=>{
   if(!selDate||!selCustomer||!selLocation)return;
   setSaving(true);setSaveMsg('');
   const isHol=isHolidayDate(selDate);
-  const rows=workers.map(w=>({work_date:selDate,mob_register_id:w.id,full_name:w.full_name||'',designation:w.designation||'',supplier_name:w.supplier_name||'',supplier_emp_no:w.supplier_emp_no||'',customer_name:selCustomer,location:selLocation,hours:parseFloat(entries[w.id]?.hours??'0')||0,is_holiday:isHol,holiday_name:isHol?holidays[selDate]||'':null,notes:entries[w.id]?.notes||null,updated_at:new Date().toISOString()}));
+  const rows=workers.map(w=>({work_date:selDate,mob_register_id:w.id,full_name:w.full_name||'',designation:w.designation||'',supplier_name:w.supplier_name||'',supplier_emp_no:w.supplier_emp_no||'',customer_name:selCustomer,location:selLocation,hours:parseFloat((entryEditsRef.current[w.id]||entries[w.id]||{}).hours??'0')||0,is_holiday:isHol,holiday_name:isHol?holidays[selDate]||'':null,notes:(entryEditsRef.current[w.id]||entries[w.id]||{}).notes||null,updated_at:new Date().toISOString()}));
   const{error}=await db.from('mob_timesheets').upsert(rows,{onConflict:'work_date,mob_register_id'});
   if(error){setSaveMsg('❌ '+error.message);}else{setSaveMsg('✅ Saved!');const{data}=await db.from('mob_timesheets').select('*').eq('work_date',selDate).eq('customer_name',selCustomer).eq('location',selLocation);const sv={};(data||[]).forEach(r=>sv[r.mob_register_id]=r);setSaved(sv);}
   setSaving(false);setTimeout(()=>setSaveMsg(''),3000);
@@ -1065,12 +1066,12 @@ const MonthlyGridPanel=({selCustomer,selLocation,calMonth,workers,history,holida
   const daysInMonth=new Date(y,mo,0).getDate();
   const today=new Date().toISOString().slice(0,10);
 
-  // Grid state: {`${workerId}_${day}`: hrsString}
-  const[grid,setGrid]=React.useState({});
+  // Grid edits stored in ref — no re-render on keystroke
+  const gridRef=React.useRef({});
   const[dirty,setDirty]=React.useState(false);
   const[saving,setSaving]=React.useState(false);
   const[saveMsg,setSaveMsg]=React.useState('');
-  const inputRefs=React.useRef({});// key -> <input> el
+  const inputRefs=React.useRef({});
 
   // Days array
   const days=React.useMemo(()=>{
@@ -1093,15 +1094,15 @@ const MonthlyGridPanel=({selCustomer,selLocation,calMonth,workers,history,holida
       const h=parseFloat(r.hours);
       g[key]=h>0?String(h):'';
     });
-    setGrid(g);
+    gridRef.current=g;
     setDirty(false);
     setSaveMsg('');
   },[history]);
 
   const setCell=(wid,d,val)=>{
     const clean=val.replace(/[^0-9.]/g,'');
-    setGrid(g=>({...g,[`${wid}_${d}`]:clean}));
-    setDirty(true);
+    gridRef.current[`${wid}_${d}`]=clean;
+    if(!dirty)setDirty(true);
     setSaveMsg('');
   };
 
@@ -1135,12 +1136,12 @@ const MonthlyGridPanel=({selCustomer,selLocation,calMonth,workers,history,holida
   // Totals
   const workerTotals=React.useMemo(()=>{
     const t={};
-    workers.forEach(w=>{t[w.id]=days.reduce((s,{d})=>s+(parseFloat(grid[`${w.id}_${d}`])||0),0);});
+    workers.forEach(w=>{t[w.id]=days.reduce((s,{d})=>s+(parseFloat(gridRef.current[`${w.id}_${d}`])||0),0);});
     return t;
   },[grid,workers,days]);
   const dayTotals=React.useMemo(()=>{
     const t={};
-    days.forEach(({d})=>{t[d]=workers.reduce((s,w)=>s+(parseFloat(grid[`${w.id}_${d}`])||0),0);});
+    days.forEach(({d})=>{t[d]=workers.reduce((s,w)=>s+(parseFloat(gridRef.current[`${w.id}_${d}`])||0),0);});
     return t;
   },[grid,workers,days]);
   const grandTotal=Object.values(workerTotals).reduce((s,v)=>s+v,0);
@@ -1153,7 +1154,7 @@ const MonthlyGridPanel=({selCustomer,selLocation,calMonth,workers,history,holida
       const rows=[];
       workers.forEach(w=>{
         days.forEach(({d,ds,isOff,holName})=>{
-          const hrs=parseFloat(grid[`${w.id}_${d}`])||0;
+          const hrs=parseFloat(gridRef.current[`${w.id}_${d}`])||0;
           // Only upsert days that have data OR previously had data (to allow zeroing out)
           const hadData=history.some(h=>h.mob_register_id===w.id&&new Date(h.work_date+'T00:00:00').getDate()===d);
           if(hrs>0||hadData){
@@ -1256,7 +1257,7 @@ const MonthlyGridPanel=({selCustomer,selLocation,calMonth,workers,history,holida
             React.createElement('td',{style:{fontSize:'11px',fontWeight:600,padding:'0 6px',borderBottom:'1px solid #f1f5f9',whiteSpace:'nowrap',maxWidth:'140px',overflow:'hidden',textOverflow:'ellipsis',cursor:'pointer',position:'sticky',left:'128px',zIndex:8,background:rowBg},title:'Click to clear row',onClick:()=>{if(window.confirm('Clear all hours for '+shortName+'?'))clearRow(w.id);}},shortName),
             ...days.map(({d,isOff,isWknd,isHol,isToday,ds})=>{
               const key=`${w.id}_${d}`;
-              const val=grid[key]??'';
+              const val=gridRef.current[key]??'';
               const isMobDay=w.mobilisation_date&&ds<w.mobilisation_date;
               // Off days (Sunday/holiday) = medium grey so they stand out as non-standard-rate
               const cellBg=isMobDay?'#f1f5f9':isHol?'#e5e7eb':isWknd?'#f3f4f6':isToday?'#eff6ff':'transparent';
@@ -1267,7 +1268,8 @@ const MonthlyGridPanel=({selCustomer,selLocation,calMonth,workers,history,holida
                   : React.createElement('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:0}},
                       React.createElement('input',{
                         type:'number',min:'0',max:'24',step:'0.5',
-                        value:val,
+                        defaultValue:val,
+                        key:key+'_'+history.length,
                         placeholder:'',
                         ref:el=>{if(el)inputRefs.current[key]=el;else delete inputRefs.current[key];},
                         onChange:e=>setCell(w.id,d,e.target.value),
@@ -1340,10 +1342,10 @@ const EntryPanel=({selCustomer,selLocation,selDate,workers,entries,saved,loading
             ),
             React.createElement('td',{style:{...S.td,fontSize:'12px',color:'#475569'}},w.designation||'—'),
             React.createElement('td',{style:{...S.td,textAlign:'center',padding:'4px 6px'}},
-              React.createElement('input',{type:'number',min:'0',max:'24',step:'0.5',value:hrs,onChange:e=>setHours(w.id,e.target.value),placeholder:'0',style:{width:'64px',padding:'5px 8px',border:`2px solid ${isOff?'#f59e0b':'#cbd5e1'}`,borderRadius:6,fontSize:'14px',fontWeight:700,textAlign:'center',background:isOff?'#fffbeb':'#fff'}})
+              React.createElement('input',{type:'number',min:'0',max:'24',step:'0.5',defaultValue:hrs,key:w.id+'_h_'+selDate,onChange:e=>setHours(w.id,e.target.value),placeholder:'0',style:{width:'64px',padding:'5px 8px',border:`2px solid ${isOff?'#f59e0b':'#cbd5e1'}`,borderRadius:6,fontSize:'14px',fontWeight:700,textAlign:'center',background:isOff?'#fffbeb':'#fff'}})
             ),
             React.createElement('td',{style:{...S.td,textAlign:'center'}},isSaved&&parseFloat(saved[w.id]?.hours)===parseFloat(hrs||0)?React.createElement('span',{style:{color:'#16a34a',fontSize:'16px'}},'✓'):React.createElement('span',{style:{color:'#e2e8f0'}},'○')),
-            React.createElement('td',{style:{...S.td,padding:'4px 8px'}},React.createElement('input',{value:entries[w.id]?.notes||'',onChange:e=>setNotes(w.id,e.target.value),placeholder:'optional',style:{width:'100%',padding:'4px 8px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:'11px'}}))
+            React.createElement('td',{style:{...S.td,padding:'4px 8px'}},React.createElement('input',{defaultValue:entries[w.id]?.notes||'',key:w.id+'_n_'+selDate,onChange:e=>setNotes(w.id,e.target.value),placeholder:'optional',style:{width:'100%',padding:'4px 8px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:'11px'}}))
           );
         })),
         React.createElement('tfoot',null,React.createElement('tr',{style:{background:'#f0f9ff',borderTop:'2px solid #bae6fd'}},
@@ -1386,7 +1388,7 @@ const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
 
   return React.createElement('div',null,
     // ── Save bar (appears when dirty) ──────────────────────────────────────
-    !showFinancials&&React.createElement('div',{style:{display:'flex',alignItems:'center',gap:'12px',padding:'8px 14px',background:gridDirty?'#0f172a':'#f8fafc',borderBottom:'2px solid #e2e8f0',transition:'background 0.2s',minHeight:'44px'}},
+    React.createElement('div',{style:{display:'flex',alignItems:'center',gap:'12px',padding:'8px 14px',background:gridDirty?'#0f172a':'#f8fafc',borderBottom:'2px solid #e2e8f0',transition:'background 0.2s',minHeight:'44px'}},
       React.createElement('span',{style:{fontSize:'11px',color:gridDirty?'#94a3b8':'#94a3b8',fontWeight:600}},
         gridDirty?'● Unsaved changes — click Save to commit':'Click any cell to enter hours · Arrow keys / Tab to navigate · Sunday & holidays = ×1.5 · >10h = ×1.25'),
       gridSaveMsg&&React.createElement('span',{style:{fontWeight:700,fontSize:'12px',color:gridSaveMsg.startsWith('✅')?'#86efac':'#fca5a5'}},gridSaveMsg),
@@ -1434,9 +1436,10 @@ const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
           showFinancials&&React.createElement('td',{style:{...S.td,fontSize:'10px',color:'#64748b'}},w.supplier_name||'—'),
           ...days.map(day=>{
   const wid=w.mob_register_id||w.id;
-  const edited=gridEdits[`${wid}_${day.d}`];
-  const h=edited!==undefined?parseFloat(edited)||0:wm.dayHours[day.d]||0;
-  const displayVal=edited!==undefined?edited:(wm.dayHours[day.d]>0?String(wm.dayHours[day.d]):'');
+  const existingH=wm.dayHours[day.d]||0;
+  const edited=gridEditsRef.current[`${wid}_${day.d}`];
+  const h=edited!==undefined?parseFloat(edited)||0:existingH;
+  const displayVal=edited!==undefined?edited:(existingH>0?String(existingH):'');
   const isBeforeMob=w.mobilisation_date&&day.ds<w.mobilisation_date;
   // off-day styling: grey bg
   const cellBg=isBeforeMob?'#f8fafc':day.isOff?'#f3f4f6':rowBg;
@@ -1450,9 +1453,31 @@ const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
         : React.createElement('div',{style:{display:'flex',flexDirection:'column',alignItems:'center'}},
             React.createElement('input',{
               type:'number',min:'0',max:'24',step:'0.5',
-              value:displayVal,
+              defaultValue:displayVal,
+              key:key+'_'+history.length,
               placeholder:'',
               ref:el=>{if(el)gridRefs.current[key]=el;else delete gridRefs.current[key];},
+              onChange:e=>setGridCell(wid,day.d,e.target.value),
+              onKeyDown:e=>handleGridKeyDown(e,wid,day.d,workers2,days),
+              onFocus:e=>e.target.select(),
+              style:{width:'28px',height:'24px',border:'none',background:'transparent',fontSize:'11px',fontWeight:h>0?800:400,textAlign:'center',color:day.isOff?(h>0?'#374151':'#9ca3af'):(h>0?'#166634':'#94a3b8'),outline:'none',cursor:'text',borderRadius:2}
+            }),
+            day.isOff&&h>0&&React.createElement('div',{style:{fontSize:'7px',fontWeight:700,color:'#6b7280',lineHeight:1}},'×1.5')
+          )
+    );
+  } else {
+    // EDITABLE in supplier tab too — same hours, supplier can adjust
+    const key2=`${wid}_${day.d}`;
+    return React.createElement('td',{key:day.d,style:{padding:'1px',background:cellBg,borderLeft:bdrL,borderBottom:'1px solid #f1f5f9'}},
+      isBeforeMob
+        ? React.createElement('div',{style:{width:'28px',height:'28px',background:'#f1f5f9',margin:'auto',borderRadius:2}})
+        : React.createElement('div',{style:{display:'flex',flexDirection:'column',alignItems:'center'}},
+            React.createElement('input',{
+              type:'number',min:'0',max:'24',step:'0.5',
+              defaultValue:displayVal,
+              key:key2+'_'+history.length,
+              placeholder:'',
+              ref:el=>{if(el)gridRefs.current[key2]=el;else delete gridRefs.current[key2];},
               onChange:e=>setGridCell(wid,day.d,e.target.value),
               onKeyDown:e=>handleGridKeyDown(e,wid,day.d,workers2,days),
               onFocus:e=>e.target.select(),
@@ -1461,9 +1486,6 @@ const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
             day.isOff&&h>0&&React.createElement('div',{style:{fontSize:'7px',fontWeight:700,color:'#6b7280',lineHeight:1}},'×1.5')
           )
     );
-  } else {
-    // READ-ONLY display (supplier tab with financials)
-    return React.createElement('td',{key:day.d,style:{...S.td,textAlign:'center',padding:'3px 1px',fontSize:'11px',fontWeight:h>0?700:400,color:h>0?'#0f172a':'#e2e8f0',background:cellBg}},h>0?h:'');
   }
 }),
           React.createElement('td',{style:{...S.td,textAlign:'center',fontWeight:800,color:showFinancials?'#166534':'#0369a1',background:showFinancials?'#f0fdf4':'#f0f9ff'}},totalHrs||'—'),
