@@ -744,6 +744,37 @@ const alreadyMob=mobList.filter(m=>m.customer_name===draft.customer_name&&m.loca
 // ══════════════════════════════════════════════════════════════════════════════
 // TIMESHEET TAB
 // ══════════════════════════════════════════════════════════════════════════════
+
+// ── GridCell — isolated input that NEVER re-renders from parent state changes ──
+// Defined outside TimesheetTab so React.memo comparison is stable.
+const GridCell=React.memo(function GridCell({cellKey,initialValue,isOff,isBeforeMob,histLen,onChange,onKeyDown,cellRef}){
+  if(isBeforeMob)return React.createElement('td',{style:{padding:'1px',background:'#f1f5f9',borderBottom:'1px solid #f1f5f9',borderLeft:'1px solid #e2e8f0'}},
+    React.createElement('div',{style:{width:'40px',height:'28px',background:'#f1f5f9',margin:'auto',borderRadius:2}}));
+  const cellBg=isOff?'#f3f4f6':'transparent';
+  const bdrL=isOff?'1px solid #d1d5db':'1px solid #e2e8f0';
+  return React.createElement('td',{style:{padding:'1px',background:cellBg,borderBottom:'1px solid #f1f5f9',borderLeft:bdrL}},
+    React.createElement('div',{style:{display:'flex',flexDirection:'column',alignItems:'center'}},
+      React.createElement('input',{
+        type:'number',min:'0',max:'24',step:'0.5',
+        defaultValue:initialValue,
+        placeholder:'',
+        ref:cellRef,
+        onChange:e=>onChange(cellKey,e.target.value),
+        onKeyDown:e=>onKeyDown(e,cellKey),
+        onFocus:e=>e.target.select(),
+        style:{width:'40px',height:'26px',border:'none',background:'transparent',
+          fontSize:'12px',fontWeight:initialValue&&parseFloat(initialValue)>0?800:400,
+          textAlign:'center',
+          color:isOff?'#374151':initialValue&&parseFloat(initialValue)>0?'#166534':'#94a3b8',
+          outline:'none',cursor:'text',borderRadius:2,boxSizing:'border-box'}
+      })
+    )
+  );
+},{
+  // Only re-render if initial value or off-day status changes (i.e. history reloads)
+  // NOT when parent state changes (save bar dirty flag etc.)
+});
+
 function TimesheetTab({mobList=[],onRefresh,candidates=[],suppliers=[]}){
 const[subTab,setSubTab]=React.useState('customer');
 const today=new Date().toISOString().slice(0,10);
@@ -789,7 +820,9 @@ const[gridDirty,setGridDirty]=React.useState(false);
 const[gridSaving,setGridSaving]=React.useState(false);
 const[gridSaveMsg,setGridSaveMsg]=React.useState('');
 const gridRefs=React.useRef({});
-const setGridCell=(wid,d,val)=>{const clean=val.replace(/[^0-9.]/g,'');gridEditsRef.current[`${wid}_${d}`]=clean;if(!gridDirty)setGridDirty(true);setGridSaveMsg('');};
+const gridDirtyTimer=React.useRef(null);
+const setGridCell=(wid,d,val)=>{const clean=val.replace(/[^0-9.]/g,'');gridEditsRef.current[`${wid}_${d}`]=clean;setGridSaveMsg('');// Debounce the dirty flag so it doesn't re-render on every keystroke
+if(gridDirtyTimer.current)clearTimeout(gridDirtyTimer.current);gridDirtyTimer.current=setTimeout(()=>setGridDirty(true),300);};
 const handleGridKeyDown=(e,wid,day,allWorkers,allDays)=>{const wi=allWorkers.findIndex(w=>(w.mob_register_id||w.id)===wid);const di=allDays.findIndex(d=>d.d===day);let nwi=wi,ndi=di;if(e.key==='ArrowRight'||(e.key==='Tab'&&!e.shiftKey)){ndi++;if(ndi>=allDays.length){ndi=0;nwi++;}e.preventDefault();}else if(e.key==='ArrowLeft'||(e.key==='Tab'&&e.shiftKey)){ndi--;if(ndi<0){ndi=allDays.length-1;nwi--;}e.preventDefault();}else if(e.key==='ArrowDown'||e.key==='Enter'){nwi++;e.preventDefault();}else if(e.key==='ArrowUp'){nwi--;e.preventDefault();}else return;if(nwi<0)nwi=0;if(nwi>=allWorkers.length)nwi=allWorkers.length-1;const nw=allWorkers[nwi];const nd=allDays[ndi];if(nw&&nd){const key=`${nw.mob_register_id||nw.id}_${nd.d}`;const ref=gridRefs.current[key];if(ref){ref.focus();ref.select();}}};
 const saveGridMonth=async(allWorkers,allDays)=>{if(!selCustomer||!selLocation)return;setGridSaving(true);setGridSaveMsg('');try{const rows=[];allWorkers.forEach(w=>{const wid=w.mob_register_id||w.id;const srcW=workers.find(x=>x.id===wid)||w;allDays.forEach(({d,ds,isOff,holName})=>{const key=`${wid}_${d}`;const edited=gridEditsRef.current[key];const existing=history.find(h=>h.mob_register_id===wid&&new Date(h.work_date+'T00:00:00').getDate()===d);const hrs=edited!==undefined?parseFloat(edited)||0:parseFloat(existing?.hours)||0;const hadData=!!existing;if(hrs>0||hadData){rows.push({work_date:ds,mob_register_id:wid,full_name:srcW.full_name||w.full_name||'',designation:srcW.designation||w.designation||'',supplier_name:srcW.supplier_name||w.supplier_name||'',supplier_emp_no:srcW.supplier_emp_no||w.supplier_emp_no||'',customer_name:selCustomer,location:selLocation,hours:hrs,is_holiday:isOff,holiday_name:isOff?holName||null:null,notes:null,updated_at:new Date().toISOString()});}});});for(let i=0;i<rows.length;i+=100){const{error}=await db.from('mob_timesheets').upsert(rows.slice(i,i+100),{onConflict:'work_date,mob_register_id'});if(error)throw new Error(error.message);}setGridSaveMsg('✅ '+rows.length+' cells saved');setGridDirty(false);gridEditsRef.current={};await loadHistoryForMonth(calMonth);}catch(ex){setGridSaveMsg('❌ '+ex.message);}setGridSaving(false);};
 
@@ -1409,7 +1442,7 @@ const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
         React.createElement('th',{style:{...S.th,color:'#fff',background:hdrBg,width:'150px',position:'sticky',left:'136px',zIndex:12}},'Name'),
         React.createElement('th',{style:{...S.th,color:'#fff',background:hdrBg,width:'110px'}},'Craft'),
         showFinancials&&React.createElement('th',{style:{...S.th,color:'#fff',background:hdrBg,width:'120px'}},'Supplier'),
-        ...days.map(day=>React.createElement('th',{key:day.d,style:{...S.th,color:day.isOff?'#94a3b8':'#fff',background:day.isOff?'#1e293b':hdrBg,width:'30px',textAlign:'center',padding:'4px 2px',fontSize:'9px',borderRight:'1px solid rgba(255,255,255,0.1)'}},
+        ...days.map(day=>React.createElement('th',{key:day.d,style:{...S.th,color:day.isOff?'#94a3b8':'#fff',background:day.isOff?'#1e293b':hdrBg,width:'44px',textAlign:'center',padding:'4px 2px',fontSize:'10px',borderRight:'1px solid rgba(255,255,255,0.1)'}},
           React.createElement('div',null,String(day.d)),React.createElement('div',null,day.label)
         )),
         React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'50px',textAlign:'center'}},'HRS'),
@@ -1445,47 +1478,33 @@ const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
   const cellBg=isBeforeMob?'#f8fafc':day.isOff?'#f3f4f6':rowBg;
   const bdrL=day.isOff?'1px solid #d1d5db':'1px solid #e2e8f0';
   if(!showFinancials){
-    // EDITABLE input cell
+    // EDITABLE via memoized GridCell — no re-renders on parent state change
     const key=`${wid}_${day.d}`;
-    return React.createElement('td',{key:day.d,style:{padding:'1px',background:cellBg,borderLeft:bdrL,borderBottom:'1px solid #f1f5f9'}},
-      isBeforeMob
-        ? React.createElement('div',{style:{width:'28px',height:'28px',background:'#f1f5f9',margin:'auto',borderRadius:2}})
-        : React.createElement('div',{style:{display:'flex',flexDirection:'column',alignItems:'center'}},
-            React.createElement('input',{
-              type:'number',min:'0',max:'24',step:'0.5',
-              defaultValue:displayVal,
-              key:key+'_'+history.length,
-              placeholder:'',
-              ref:el=>{if(el)gridRefs.current[key]=el;else delete gridRefs.current[key];},
-              onChange:e=>setGridCell(wid,day.d,e.target.value),
-              onKeyDown:e=>handleGridKeyDown(e,wid,day.d,workers2,days),
-              onFocus:e=>e.target.select(),
-              style:{width:'28px',height:'24px',border:'none',background:'transparent',fontSize:'11px',fontWeight:h>0?800:400,textAlign:'center',color:day.isOff?(h>0?'#374151':'#9ca3af'):(h>0?'#166634':'#94a3b8'),outline:'none',cursor:'text',borderRadius:2}
-            }),
-            day.isOff&&h>0&&React.createElement('div',{style:{fontSize:'7px',fontWeight:700,color:'#6b7280',lineHeight:1}},'×1.5')
-          )
-    );
+    return React.createElement(GridCell,{
+      key:day.d,
+      cellKey:key,
+      initialValue:displayVal,
+      isOff:day.isOff,
+      isBeforeMob:isBeforeMob,
+      histLen:history.length,
+      onChange:(k,v)=>setGridCell(wid,day.d,v),
+      onKeyDown:(e,k)=>handleGridKeyDown(e,wid,day.d,workers2,days),
+      cellRef:el=>{if(el)gridRefs.current[key]=el;else delete gridRefs.current[key];}
+    });
   } else {
-    // EDITABLE in supplier tab too — same hours, supplier can adjust
+    // EDITABLE in supplier tab too
     const key2=`${wid}_${day.d}`;
-    return React.createElement('td',{key:day.d,style:{padding:'1px',background:cellBg,borderLeft:bdrL,borderBottom:'1px solid #f1f5f9'}},
-      isBeforeMob
-        ? React.createElement('div',{style:{width:'28px',height:'28px',background:'#f1f5f9',margin:'auto',borderRadius:2}})
-        : React.createElement('div',{style:{display:'flex',flexDirection:'column',alignItems:'center'}},
-            React.createElement('input',{
-              type:'number',min:'0',max:'24',step:'0.5',
-              defaultValue:displayVal,
-              key:key2+'_'+history.length,
-              placeholder:'',
-              ref:el=>{if(el)gridRefs.current[key2]=el;else delete gridRefs.current[key2];},
-              onChange:e=>setGridCell(wid,day.d,e.target.value),
-              onKeyDown:e=>handleGridKeyDown(e,wid,day.d,workers2,days),
-              onFocus:e=>e.target.select(),
-              style:{width:'28px',height:'24px',border:'none',background:'transparent',fontSize:'11px',fontWeight:h>0?800:400,textAlign:'center',color:day.isOff?(h>0?'#374151':'#9ca3af'):(h>0?'#166534':'#94a3b8'),outline:'none',cursor:'text',borderRadius:2}
-            }),
-            day.isOff&&h>0&&React.createElement('div',{style:{fontSize:'7px',fontWeight:700,color:'#6b7280',lineHeight:1}},'×1.5')
-          )
-    );
+    return React.createElement(GridCell,{
+      key:day.d,
+      cellKey:key2,
+      initialValue:displayVal,
+      isOff:day.isOff,
+      isBeforeMob:isBeforeMob,
+      histLen:history.length,
+      onChange:(k,v)=>setGridCell(wid,day.d,v),
+      onKeyDown:(e,k)=>handleGridKeyDown(e,wid,day.d,workers2,days),
+      cellRef:el=>{if(el)gridRefs.current[key2]=el;else delete gridRefs.current[key2];}
+    });
   }
 }),
           React.createElement('td',{style:{...S.td,textAlign:'center',fontWeight:800,color:showFinancials?'#166534':'#0369a1',background:showFinancials?'#f0fdf4':'#f0f9ff'}},totalHrs||'—'),
