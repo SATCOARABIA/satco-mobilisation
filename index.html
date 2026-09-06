@@ -745,7 +745,7 @@ const alreadyMob=mobList.filter(m=>m.customer_name===draft.customer_name&&m.loca
 // TIMESHEET TAB
 // ══════════════════════════════════════════════════════════════════════════════
 function TimesheetTab({mobList=[],onRefresh,candidates=[],suppliers=[]}){
-const[subTab,setSubTab]=React.useState('entry');
+const[subTab,setSubTab]=React.useState('customer');
 const today=new Date().toISOString().slice(0,10);
 const[selDate,setSelDate]=React.useState(today);
 const[selCustomer,setSelCustomer]=React.useState('');
@@ -783,6 +783,15 @@ const[saving,setSaving]=React.useState(false);
 const[saveMsg,setSaveMsg]=React.useState('');
 const[history,setHistory]=React.useState([]);
 const[histLoading,setHistLoading]=React.useState(false);
+// ── Inline edit grid state (customer tab = entry grid) ──────────────────────
+const[gridEdits,setGridEdits]=React.useState({});// {`${mob_id}_${day}`: hrsString}
+const[gridDirty,setGridDirty]=React.useState(false);
+const[gridSaving,setGridSaving]=React.useState(false);
+const[gridSaveMsg,setGridSaveMsg]=React.useState('');
+const gridRefs=React.useRef({});
+const setGridCell=(wid,d,val)=>{const clean=val.replace(/[^0-9.]/g,'');setGridEdits(g=>({...g,[`${wid}_${d}`]:clean}));setGridDirty(true);setGridSaveMsg('');};
+const handleGridKeyDown=(e,wid,day,allWorkers,allDays)=>{const wi=allWorkers.findIndex(w=>(w.mob_register_id||w.id)===wid);const di=allDays.findIndex(d=>d.d===day);let nwi=wi,ndi=di;if(e.key==='ArrowRight'||(e.key==='Tab'&&!e.shiftKey)){ndi++;if(ndi>=allDays.length){ndi=0;nwi++;}e.preventDefault();}else if(e.key==='ArrowLeft'||(e.key==='Tab'&&e.shiftKey)){ndi--;if(ndi<0){ndi=allDays.length-1;nwi--;}e.preventDefault();}else if(e.key==='ArrowDown'||e.key==='Enter'){nwi++;e.preventDefault();}else if(e.key==='ArrowUp'){nwi--;e.preventDefault();}else return;if(nwi<0)nwi=0;if(nwi>=allWorkers.length)nwi=allWorkers.length-1;const nw=allWorkers[nwi];const nd=allDays[ndi];if(nw&&nd){const key=`${nw.mob_register_id||nw.id}_${nd.d}`;const ref=gridRefs.current[key];if(ref){ref.focus();ref.select();}}};
+const saveGridMonth=async(allWorkers,allDays)=>{if(!selCustomer||!selLocation)return;setGridSaving(true);setGridSaveMsg('');try{const rows=[];allWorkers.forEach(w=>{const wid=w.mob_register_id||w.id;const srcW=workers.find(x=>x.id===wid)||w;allDays.forEach(({d,ds,isOff,holName})=>{const key=`${wid}_${d}`;const edited=gridEdits[key];const existing=history.find(h=>h.mob_register_id===wid&&new Date(h.work_date+'T00:00:00').getDate()===d);const hrs=edited!==undefined?parseFloat(edited)||0:parseFloat(existing?.hours)||0;const hadData=!!existing;if(hrs>0||hadData){rows.push({work_date:ds,mob_register_id:wid,full_name:srcW.full_name||w.full_name||'',designation:srcW.designation||w.designation||'',supplier_name:srcW.supplier_name||w.supplier_name||'',supplier_emp_no:srcW.supplier_emp_no||w.supplier_emp_no||'',customer_name:selCustomer,location:selLocation,hours:hrs,is_holiday:isOff,holiday_name:isOff?holName||null:null,notes:null,updated_at:new Date().toISOString()});}});});for(let i=0;i<rows.length;i+=100){const{error}=await db.from('mob_timesheets').upsert(rows.slice(i,i+100),{onConflict:'work_date,mob_register_id'});if(error)throw new Error(error.message);}setGridSaveMsg('✅ '+rows.length+' cells saved');setGridDirty(false);setGridEdits({});await loadHistoryForMonth(calMonth);}catch(ex){setGridSaveMsg('❌ '+ex.message);}setGridSaving(false);};
 
 // ── Import state ──────────────────────────────────────────────────────────
 const[importRows,setImportRows]=React.useState(null);// parsed client data: [{empNo,name,days:{1:h,2:h,...}}]
@@ -822,9 +831,9 @@ const loadHistoryForMonth=React.useCallback(async ym=>{
   const from=`${y}-${String(m).padStart(2,'0')}-01`;
   const to=`${y}-${String(m).padStart(2,'0')}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`;
   const{data}=await db.from('mob_timesheets').select('*').eq('customer_name',selCustomer).eq('location',selLocation).gte('work_date',from).lte('work_date',to).order('work_date',{ascending:true});
-  setHistory(data||[]);setHistLoading(false);
+  setHistory(data||[]);setGridEdits({});setGridDirty(false);setGridSaveMsg('');setHistLoading(false);
 },[selCustomer,selLocation]);
-React.useEffect(()=>{if((subTab==='customer'||subTab==='supplier'||subTab==='import')&&selCustomer&&selLocation)loadHistoryForMonth(calMonth);},[subTab,selCustomer,selLocation,calMonth]);
+React.useEffect(()=>{if((subTab==='customer'||subTab==='supplier'||subTab==='import'||subTab==='entry')&&selCustomer&&selLocation)loadHistoryForMonth(calMonth);},[subTab,selCustomer,selLocation,calMonth]);
 
 const setHours=(id,val)=>setEntries(e=>({...e,[id]:{...(e[id]||{}),hours:val}}));
 const setNotes=(id,val)=>setEntries(e=>({...e,[id]:{...(e[id]||{}),notes:val}}));
@@ -844,7 +853,7 @@ const handleSave=async()=>{
 const buildMonthPivot=React.useCallback((hist=history)=>{
   const[calY,calM]=calMonth.split('-').map(Number);
   const daysInMonth=new Date(calY,calM,0).getDate();
-  const days=Array.from({length:daysInMonth},(_,i)=>{const d=i+1;const dateStr=`${calY}-${String(calM).padStart(2,'0')}-${String(d).padStart(2,'0')}`;return{d,dateStr,label:dayLabel(dateStr),isOff:isOffDay(dateStr),isHol:isHolidayDate(dateStr),holName:holidays[dateStr]||''};});
+  const days=Array.from({length:daysInMonth},(_,i)=>{const d=i+1;const dateStr=`${calY}-${String(calM).padStart(2,'0')}-${String(d).padStart(2,'0')}`;return{d,ds:dateStr,dateStr,label:dayLabel(dateStr),isOff:isOffDay(dateStr),isHol:isHolidayDate(dateStr),holName:holidays[dateStr]||''};});
   const workerMap={};hist.forEach(r=>{const key=r.mob_register_id||r.full_name;if(!workerMap[key])workerMap[key]={...r,dayHours:{}};workerMap[key].dayHours[new Date(r.work_date+'T00:00:00').getDate()]=parseFloat(r.hours||0);});
   return{days,workerMap};
 },[calMonth,history,holidays,settings]);
@@ -1013,7 +1022,7 @@ const applyMerge=async()=>{
 // ── Excel exports ─────────────────────────────────────────────────────────
 const sortWorkers=ws=>[...ws].sort((a,b)=>{const pa=(a.supplier_emp_no||'').split('-');const pb=(b.supplier_emp_no||'').split('-');try{const d=parseInt(pa[1])-parseInt(pb[1]);return d!==0?d:parseInt(pa[2])-parseInt(pb[2]);}catch{return 0;}});
 const shortSupplier=(name,max=18)=>{const skip=new Set(['L.L.C','S.P.C','AND','GENERAL','CONTRACTING','LLC','SPC','-','&','MAINTENANCE','WORKS','CO.','COMPANY','SERVICES','TRADING','EST']);const words=(name||'').toUpperCase().split(' ').filter(w=>!skip.has(w));let r='';for(const w of words){if((r+(r?' ':'')+w).length<=max)r+=(r?' ':'')+w.charAt(0)+w.slice(1).toLowerCase();else break;}return r||name.slice(0,max);};
-const buildTsData=()=>({year:parseInt(calMonth.split('-')[0]),month:parseInt(calMonth.split('-')[1]),settings,rates,holidays,workers:sortWorkers([...new Set(history.map(r=>r.mob_register_id))].map(id=>{const r=history.find(h=>h.mob_register_id===id);if(!r)return null;const dayHours={};history.filter(h=>h.mob_register_id===id).forEach(h=>{const d=new Date(h.work_date+'T00:00:00').getDate();if(parseFloat(h.hours)>0)dayHours[String(d)]=parseFloat(h.hours);});return{emp:r.supplier_emp_no||'',name:r.full_name||'',craft:r.designation||'Other',supplier:r.supplier_name||'',hours:dayHours};}).filter(Boolean))});
+const buildTsData=()=>({year:parseInt(calMonth.split('-')[0]),month:parseInt(calMonth.split('-')[1]),settings,rates,holidays,workers:sortWorkers((()=>{const histIds=new Set(history.map(r=>r.mob_register_id));const liveIds=new Set(workers.map(w=>w.id));const allIds=[...new Set([...histIds,...liveIds])];return allIds.map(id=>{const histRow=history.find(h=>h.mob_register_id===id);const liveRow=workers.find(w=>w.id===id);const src=histRow||liveRow;if(!src)return null;const dayHours={};history.filter(h=>h.mob_register_id===id).forEach(h=>{const d=new Date(h.work_date+'T00:00:00').getDate();if(parseFloat(h.hours)>0)dayHours[String(d)]=parseFloat(h.hours);});return{emp:src.supplier_emp_no||'',name:src.full_name||'',craft:src.designation||'Other',supplier:src.supplier_name||'',hours:dayHours};}).filter(Boolean);})())});
 const callTsApi=async(payload,filename)=>{try{const res=await fetch('/api/generate-timesheet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,filename})});if(!res.ok){const txt=await res.text();throw new Error(txt||'API error '+res.status);}const blob=await res.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);}catch(ex){alert('Export failed: '+ex.message);}};
 const exportCustomerExcel=async()=>{if(!history.length)return alert('No timesheet data for this month.');const[calY,calM]=calMonth.split('-').map(Number);const mn=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'short',year:'numeric'}).replace(' ','');await callTsApi({type:'customer',data:buildTsData()},`SATCO_Customer_${(selCustomer||'').split(' ')[0]}_${mn}.xlsx`);};
 const exportSupplierExcel=async(suppName)=>{if(!history.length)return alert('No timesheet data for this month.');const[calY,calM]=calMonth.split('-').map(Number);const mn=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'short',year:'numeric'}).replace(' ','');const s=n=>{const sk=new Set(['L.L.C','S.P.C','AND','GENERAL','CONTRACTING','LLC','SPC','-','&','MAINTENANCE']);return(n||'ALL').split(' ').filter(w=>!sk.has(w.toUpperCase())).slice(0,2).join('_');};await callTsApi({type:'supplier',supplier:suppName||null,data:buildTsData()},suppName?`SATCO_Supplier_${s(suppName)}_${mn}.xlsx`:`SATCO_AllSuppliers_${mn}.xlsx`);}
@@ -1032,8 +1041,13 @@ const SelectorCard=()=>React.createElement('div',{style:{background:'#fff',borde
   selCustomer&&React.createElement('div',null,React.createElement('div',{style:{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}},'Location'),
     React.createElement('select',{value:selLocation,onChange:e=>setSelLocation(e.target.value),style:{padding:'6px 10px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:'13px',fontWeight:600,minWidth:'200px'}},
       React.createElement('option',{value:''},'— Select Location —'),locations.map(l=>React.createElement('option',{key:l,value:l},l)))),
-  subTab==='entry'&&selCustomer&&selLocation&&React.createElement('div',null,React.createElement('div',{style:{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}},'Date'),
-    React.createElement('input',{type:'date',value:selDate,onChange:e=>setSelDate(e.target.value),style:{padding:'6px 10px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:'13px',fontWeight:600}})),
+  false&&subTab==='entry'&&selCustomer&&selLocation&&React.createElement('div',{style:{display:'flex',gap:'6px',alignItems:'flex-end'}},
+    React.createElement('div',null,React.createElement('div',{style:{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}},'Month'),
+    React.createElement('div',{style:{display:'flex',gap:'4px',alignItems:'center'}},
+      React.createElement('button',{onClick:prevMonth,style:{padding:'5px 10px',border:'1px solid #cbd5e1',borderRadius:6,cursor:'pointer',fontWeight:700,fontSize:'12px',background:'#fff'}},'‹'),
+      React.createElement('div',{style:{padding:'6px 14px',background:'#0f172a',color:'#fff',borderRadius:6,fontWeight:700,fontSize:'13px',minWidth:'120px',textAlign:'center'}},new Date(calMonth+'-01').toLocaleDateString('en-GB',{month:'long',year:'numeric'})),
+      React.createElement('button',{onClick:nextMonth,style:{padding:'5px 10px',border:'1px solid #cbd5e1',borderRadius:6,cursor:'pointer',fontWeight:700,fontSize:'12px',background:'#fff'}},'›')
+    ))),
   (subTab==='customer'||subTab==='supplier'||subTab==='import')&&selCustomer&&selLocation&&React.createElement('div',{style:{display:'flex',gap:'6px',alignItems:'flex-end'}},
     React.createElement('button',{onClick:prevMonth,style:{padding:'6px 12px',border:'1px solid #e2e8f0',borderRadius:6,background:'#fff',cursor:'pointer',fontSize:'16px'}},'‹'),
     React.createElement('div',{style:{padding:'6px 14px',background:'#0f172a',color:'#fff',borderRadius:6,fontWeight:700,fontSize:'13px',minWidth:'120px',textAlign:'center'}},new Date(calMonth+'-01').toLocaleDateString('en-GB',{month:'long',year:'numeric'})),
@@ -1041,6 +1055,256 @@ const SelectorCard=()=>React.createElement('div',{style:{background:'#fff',borde
 );
 
 // ── Entry sub-tab ─────────────────────────────────────────────────────────
+
+// ── Monthly Grid Entry Panel ─────────────────────────────────────────────────
+// Spreadsheet-style: workers as rows, days as columns. Arrow/Tab navigation.
+// Saves the whole month in one shot via upsert.
+
+const MonthlyGridPanel=({selCustomer,selLocation,calMonth,workers,history,holidays,settings,isWeekend,isHolidayDate,onMonthSaved})=>{
+  const[y,mo]=calMonth.split('-').map(Number);
+  const daysInMonth=new Date(y,mo,0).getDate();
+  const today=new Date().toISOString().slice(0,10);
+
+  // Grid state: {`${workerId}_${day}`: hrsString}
+  const[grid,setGrid]=React.useState({});
+  const[dirty,setDirty]=React.useState(false);
+  const[saving,setSaving]=React.useState(false);
+  const[saveMsg,setSaveMsg]=React.useState('');
+  const inputRefs=React.useRef({});// key -> <input> el
+
+  // Days array
+  const days=React.useMemo(()=>{
+    return Array.from({length:daysInMonth},(_,i)=>{
+      const d=i+1;
+      const ds=`${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const dow=new Date(ds+'T00:00:00').getDay();
+      const isWknd=isWeekend(ds);
+      const isHol=isHolidayDate(ds);
+      return{d,ds,dow,isOff:isWknd||isHol,isWknd,isHol,isToday:ds===today,holName:holidays[ds]||''};
+    });
+  },[calMonth,holidays,settings]);
+
+  // Seed grid from history when history or workers changes
+  React.useEffect(()=>{
+    const g={};
+    history.forEach(r=>{
+      const d=new Date(r.work_date+'T00:00:00').getDate();
+      const key=`${r.mob_register_id}_${d}`;
+      const h=parseFloat(r.hours);
+      g[key]=h>0?String(h):'';
+    });
+    setGrid(g);
+    setDirty(false);
+    setSaveMsg('');
+  },[history]);
+
+  const setCell=(wid,d,val)=>{
+    const clean=val.replace(/[^0-9.]/g,'');
+    setGrid(g=>({...g,[`${wid}_${d}`]:clean}));
+    setDirty(true);
+    setSaveMsg('');
+  };
+
+  // Keyboard navigation: Arrow keys move focus between cells
+  const handleKeyDown=(e,wid,day)=>{
+    const wi=workers.findIndex(w=>w.id===wid);
+    const di=days.findIndex(d=>d.d===day);
+    let nwi=wi,ndi=di;
+    if(e.key==='ArrowRight'||e.key==='Tab'){if(!e.shiftKey){ndi=di+1;if(ndi>=days.length){ndi=0;nwi=wi+1;}e.preventDefault();}}
+    else if(e.key==='ArrowLeft'||(e.key==='Tab'&&e.shiftKey)){ndi=di-1;if(ndi<0){ndi=days.length-1;nwi=wi-1;}e.preventDefault();}
+    else if(e.key==='ArrowDown'||e.key==='Enter'){nwi=wi+1;e.preventDefault();}
+    else if(e.key==='ArrowUp'){nwi=wi-1;e.preventDefault();}
+    else return;
+    if(nwi<0)nwi=0;if(nwi>=workers.length)nwi=workers.length-1;
+    const nw=workers[nwi];const nd=days[ndi];
+    if(nw&&nd){const ref=inputRefs.current[`${nw.id}_${nd.d}`];if(ref){ref.focus();ref.select();}}
+  };
+
+  // Fill a whole column with one value
+  const fillColumn=(d,val)=>{
+    setGrid(g=>{const next={...g};workers.forEach(w=>{next[`${w.id}_${d}`]=val;});return next;});
+    setDirty(true);setSaveMsg('');
+  };
+
+  // Clear a worker's whole row
+  const clearRow=(wid)=>{
+    setGrid(g=>{const next={...g};days.forEach(day=>{delete next[`${wid}_${day.d}`];});return next;});
+    setDirty(true);setSaveMsg('');
+  };
+
+  // Totals
+  const workerTotals=React.useMemo(()=>{
+    const t={};
+    workers.forEach(w=>{t[w.id]=days.reduce((s,{d})=>s+(parseFloat(grid[`${w.id}_${d}`])||0),0);});
+    return t;
+  },[grid,workers,days]);
+  const dayTotals=React.useMemo(()=>{
+    const t={};
+    days.forEach(({d})=>{t[d]=workers.reduce((s,w)=>s+(parseFloat(grid[`${w.id}_${d}`])||0),0);});
+    return t;
+  },[grid,workers,days]);
+  const grandTotal=Object.values(workerTotals).reduce((s,v)=>s+v,0);
+
+  // Save whole month
+  const handleSave=async()=>{
+    if(!selCustomer||!selLocation)return;
+    setSaving(true);setSaveMsg('');
+    try{
+      const rows=[];
+      workers.forEach(w=>{
+        days.forEach(({d,ds,isOff,holName})=>{
+          const hrs=parseFloat(grid[`${w.id}_${d}`])||0;
+          // Only upsert days that have data OR previously had data (to allow zeroing out)
+          const hadData=history.some(h=>h.mob_register_id===w.id&&new Date(h.work_date+'T00:00:00').getDate()===d);
+          if(hrs>0||hadData){
+            rows.push({work_date:ds,mob_register_id:w.id,full_name:w.full_name||'',designation:w.designation||'',supplier_name:w.supplier_name||'',supplier_emp_no:w.supplier_emp_no||'',customer_name:selCustomer,location:selLocation,hours:hrs,is_holiday:isOff,holiday_name:isOff?(holName||null):null,notes:null,updated_at:new Date().toISOString()});
+          }
+        });
+      });
+      if(rows.length>0){
+        // Supabase upsert in batches of 100
+        for(let i=0;i<rows.length;i+=100){
+          const batch=rows.slice(i,i+100);
+          const{error}=await db.from('mob_timesheets').upsert(batch,{onConflict:'work_date,mob_register_id'});
+          if(error)throw new Error(error.message);
+        }
+      }
+      setSaveMsg(`✅ ${rows.length} cells saved`);
+      setDirty(false);
+      if(onMonthSaved)onMonthSaved();
+    }catch(ex){setSaveMsg('❌ '+ex.message);}
+    setSaving(false);
+  };
+
+  if(!selCustomer||!selLocation)return React.createElement('div',{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},
+    React.createElement('div',{style:{fontSize:'32px',marginBottom:'8px'}},'🏗️'),
+    React.createElement('div',{style:{fontWeight:700}},'Select customer and site above'));
+
+  if(workers.length===0)return React.createElement('div',{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},'No mobilised employees for this site.');
+
+  const DOW=['Su','M','Tu','W','Th','F','Sa'];
+  const hdrBg='#0f172a';
+
+  return React.createElement('div',{style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',overflow:'hidden'}},
+    // Header bar
+    React.createElement('div',{style:{background:hdrBg,padding:'10px 16px',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}},
+      React.createElement('div',{style:{fontWeight:800,fontSize:'14px',color:'#f8fafc'}},
+        '📅 ',new Date(y,mo-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'}),' — Monthly Entry'),
+      React.createElement('span',{style:{fontSize:'11px',color:'#94a3b8'}},selCustomer,' · ',selLocation),
+      React.createElement('div',{style:{marginLeft:'auto',display:'flex',gap:'8px',alignItems:'center'}},
+        dirty&&React.createElement('span',{style:{fontSize:'11px',color:'#fde68a',fontWeight:700}},'● unsaved changes'),
+        saveMsg&&React.createElement('span',{style:{fontWeight:700,fontSize:'12px',color:saveMsg.startsWith('✅')?'#86efac':'#fca5a5'}},saveMsg),
+        React.createElement('button',{onClick:handleSave,disabled:saving||!dirty,style:{padding:'6px 18px',background:dirty?'#166534':'#334155',color:'#fff',border:'none',borderRadius:6,fontWeight:800,fontSize:'12px',cursor:dirty?'pointer':'default',opacity:dirty?1:0.5}},saving?'Saving…':'💾 Save Month')
+      )
+    ),
+    // Legend
+    React.createElement('div',{style:{padding:'6px 16px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',display:'flex',gap:'16px',fontSize:'10px',color:'#64748b',fontWeight:600,alignItems:'center'}},
+      React.createElement('span',null,'Navigate: ','Arrow keys',' / ','Tab'),
+      React.createElement('span',{style:{width:'1px',height:'12px',background:'#e2e8f0'}}),
+      React.createElement('span',{style:{background:'#f3f4f6',border:'1px solid #d1d5db',padding:'1px 5px',borderRadius:3,color:'#374151'}},'Sunday ×1.5'),
+      React.createElement('span',{style:{background:'#e5e7eb',border:'1px solid #9ca3af',padding:'1px 5px',borderRadius:3,color:'#374151'}},'Holiday ×1.5'),
+      React.createElement('span',{style:{background:'#dbeafe',border:'1px solid #93c5fd',padding:'1px 5px',borderRadius:3}},'Today'),
+      React.createElement('span',{style:{marginLeft:'auto',fontSize:'11px',color:'#0369a1',fontWeight:700}},
+        'Total: ',grandTotal.toFixed(1),' hrs')
+    ),
+    // Grid
+    React.createElement('div',{style:{overflowX:'auto'}},
+      React.createElement('table',{style:{borderCollapse:'collapse',fontSize:'11px',tableLayout:'fixed',width:'max-content',minWidth:'100%'}},
+        // Colgroup
+        React.createElement('colgroup',null,
+          React.createElement('col',{style:{width:'36px'}}),
+          React.createElement('col',{style:{width:'92px'}}),
+          React.createElement('col',{style:{width:'140px'}}),
+          ...days.map(({d})=>React.createElement('col',{key:d,style:{width:'36px'}})),
+          React.createElement('col',{style:{width:'52px'}})
+        ),
+        React.createElement('thead',null,
+          // Row 1: day numbers
+          React.createElement('tr',null,
+            React.createElement('th',{style:{background:hdrBg,color:'#fff',padding:'5px 4px',textAlign:'center',position:'sticky',left:0,zIndex:12,fontSize:'10px'}},'#'),
+            React.createElement('th',{style:{background:hdrBg,color:'#fff',padding:'5px 6px',textAlign:'left',position:'sticky',left:'36px',zIndex:12,fontSize:'10px'},'colSpan':2},'Name'),
+            ...days.map(({d,ds,isOff,isWknd,isHol,isToday,holName})=>{
+              const bg=isHol?'#374151':isWknd?'#6b7280':hdrBg;
+              const co=isToday?'#fbbf24':isOff?'#d1d5db':'#cbd5e1';
+              return React.createElement('th',{key:d,style:{background:bg,color:co,padding:'4px 2px',textAlign:'center',fontWeight:isToday?900:700,fontSize:'11px',cursor:'pointer',userSelect:'none',borderLeft:'1px solid rgba(255,255,255,0.08)'},
+                onClick:()=>{const val=prompt(`Fill all workers for day ${d} with hours (blank to clear):`,'10');if(val!==null)fillColumn(d,val);},
+                title:isHol?(holName+' — Holiday ×1.5 OT rate'):isWknd?'Sunday — ×1.5 OT rate (click to fill column)':'Click to fill column — regular rate (>10h = ×1.25 OT)'},d);}),
+            React.createElement('th',{style:{background:hdrBg,color:'#94a3b8',padding:'5px 4px',textAlign:'center',fontSize:'10px'}},'Hrs')
+          ),
+          // Row 2: day-of-week
+          React.createElement('tr',null,
+            React.createElement('th',{style:{background:'#1e293b',padding:'3px 4px',position:'sticky',left:0,zIndex:12}}),
+            React.createElement('th',{'colSpan':2,style:{background:'#1e293b',padding:'3px 6px',textAlign:'left',fontSize:'9px',color:'#64748b',fontWeight:600,position:'sticky',left:'36px',zIndex:12}},workers.length+' workers'),
+            ...days.map(({d,dow,isOff,isWknd,isHol})=>{
+              const bg=isHol?'#1f2937':isWknd?'#374151':'#1e293b';
+              const co=isHol?'#d1d5db':isWknd?'#9ca3af':'#64748b';
+              return React.createElement('th',{key:d,style:{background:bg,color:co,padding:'2px 2px',textAlign:'center',fontSize:'9px',fontWeight:600,borderLeft:'1px solid rgba(255,255,255,0.06)'}},DOW[dow]);
+            }),
+            React.createElement('th',{style:{background:'#1e293b',padding:'2px 4px',fontSize:'9px',color:'#64748b',textAlign:'center'}})
+          )
+        ),
+        React.createElement('tbody',null,workers.map((w,wi)=>{
+          const tot=workerTotals[w.id]||0;
+          const rowBg=wi%2===0?'#fff':'#f8fafc';
+          const shortName=(w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' ');
+          return React.createElement('tr',{key:w.id,style:{background:rowBg}},
+            React.createElement('td',{style:{textAlign:'center',color:'#94a3b8',fontSize:'10px',padding:'0 2px',borderBottom:'1px solid #f1f5f9',position:'sticky',left:0,zIndex:8,background:rowBg}},wi+1),
+            React.createElement('td',{style:{fontFamily:'monospace',fontSize:'10px',fontWeight:700,color:'#0369a1',padding:'0 4px',borderBottom:'1px solid #f1f5f9',whiteSpace:'nowrap',position:'sticky',left:'36px',zIndex:8,background:rowBg}},
+              React.createElement('div',null,w.supplier_emp_no||'—'),
+              React.createElement('div',{style:{fontWeight:400,color:'#94a3b8',fontSize:'9px',fontFamily:'system-ui',maxWidth:'88px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},shortName)
+            ),
+            React.createElement('td',{style:{fontSize:'11px',fontWeight:600,padding:'0 6px',borderBottom:'1px solid #f1f5f9',whiteSpace:'nowrap',maxWidth:'140px',overflow:'hidden',textOverflow:'ellipsis',cursor:'pointer',position:'sticky',left:'128px',zIndex:8,background:rowBg},title:'Click to clear row',onClick:()=>{if(window.confirm('Clear all hours for '+shortName+'?'))clearRow(w.id);}},shortName),
+            ...days.map(({d,isOff,isWknd,isHol,isToday,ds})=>{
+              const key=`${w.id}_${d}`;
+              const val=grid[key]??'';
+              const isMobDay=w.mobilisation_date&&ds<w.mobilisation_date;
+              // Off days (Sunday/holiday) = medium grey so they stand out as non-standard-rate
+              const cellBg=isMobDay?'#f1f5f9':isHol?'#e5e7eb':isWknd?'#f3f4f6':isToday?'#eff6ff':'transparent';
+              const bdrCol=isHol?'#9ca3af':isWknd?'#d1d5db':isToday?'#93c5fd':'#e2e8f0';
+              return React.createElement('td',{key:d,style:{padding:'1px',borderBottom:'1px solid #f1f5f9',borderLeft:`1px solid ${bdrCol}`,background:cellBg}},
+                isMobDay
+                  ? React.createElement('div',{style:{width:'32px',height:'26px',background:'#f1f5f9',borderRadius:3}})
+                  : React.createElement('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:0}},
+                      React.createElement('input',{
+                        type:'number',min:'0',max:'24',step:'0.5',
+                        value:val,
+                        placeholder:'',
+                        ref:el=>{if(el)inputRefs.current[key]=el;else delete inputRefs.current[key];},
+                        onChange:e=>setCell(w.id,d,e.target.value),
+                        onKeyDown:e=>handleKeyDown(e,w.id,d),
+                        onFocus:e=>e.target.select(),
+                        style:{width:'32px',height:'22px',border:'none',borderRadius:3,fontSize:'11px',fontWeight:700,textAlign:'center',background:'transparent',color:isOff?'#374151':val&&parseFloat(val)>0?'#166534':'#94a3b8',outline:'none',cursor:'text'}
+                      }),
+                      isOff&&val&&parseFloat(val)>0&&React.createElement('div',{
+                        style:{fontSize:'8px',fontWeight:700,color:'#6b7280',lineHeight:1,marginTop:'1px',letterSpacing:'-0.2px'}
+                      },'×1.5')
+                    )
+              );
+            }),
+            React.createElement('td',{style:{textAlign:'center',fontWeight:800,fontSize:'11px',padding:'0 4px',borderBottom:'1px solid #f1f5f9',borderLeft:'2px solid #e2e8f0',color:tot>0?'#0f172a':'#cbd5e1',background:rowBg}},tot>0?tot.toFixed(1):'—')
+          );
+        })),
+        // Totals footer
+        React.createElement('tfoot',null,React.createElement('tr',{style:{background:'#f0f9ff',borderTop:'2px solid #0369a1'}},
+          React.createElement('td',{colSpan:3,style:{padding:'6px 10px',fontWeight:800,color:'#0369a1',fontSize:'11px',position:'sticky',left:0,zIndex:8,background:'#f0f9ff'}},
+            'Daily totals — Grand: ',React.createElement('span',{style:{fontSize:'14px'}},grandTotal.toFixed(1),' hrs')),
+          ...days.map(({d,isOff})=>{
+            const t=dayTotals[d]||0;
+            return React.createElement('td',{key:d,style:{textAlign:'center',fontWeight:t>0?800:400,color:isOff&&t>0?'#6b7280':t>0?'#166534':'#cbd5e1',fontSize:'11px',padding:'4px 2px',borderLeft:'1px solid #e2e8f0',background:'#f0f9ff'}},t>0?t:'');
+          }),
+          React.createElement('td',{style:{textAlign:'center',fontWeight:800,color:'#0369a1',fontSize:'12px',padding:'4px',background:'#f0f9ff'}},grandTotal.toFixed(1))
+        ))
+      )
+    ),
+    // Save bar
+    React.createElement('div',{style:{padding:'10px 16px',background:'#f8fafc',borderTop:'1px solid #e2e8f0',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}},
+      React.createElement('button',{onClick:handleSave,disabled:saving||!dirty,style:{padding:'8px 24px',background:dirty?'#166534':'#94a3b8',color:'#fff',border:'none',borderRadius:7,fontWeight:800,fontSize:'13px',cursor:dirty?'pointer':'default'}},saving?'Saving…':'💾 Save Month'),
+      saveMsg&&React.createElement('span',{style:{fontWeight:700,color:saveMsg.startsWith('✅')?'#16a34a':'#dc2626'}},saveMsg),
+      React.createElement('span',{style:{marginLeft:'auto',fontSize:'11px',color:'#94a3b8'}},'Arrow keys / Tab to navigate · Click day header to fill column · Sunday & holidays = ×1.5 · >10h weekdays = ×1.25')
+    )
+  );
+};
+
 const EntryPanel=({selCustomer,selLocation,selDate,workers,entries,saved,loading,saving,saveMsg,holidays,settings,totalHours,isWeekend,isHolidayDate,setHours,setNotes,handleSave})=>{
   if(!selCustomer||!selLocation)return React.createElement('div',{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},React.createElement('div',{style:{fontSize:'32px',marginBottom:'8px'}},'🏗️'),React.createElement('div',{style:{fontWeight:700}},'Select customer and site above'));
   const isHolDay=isHolidayDate(selDate),isWknd=isWeekend(selDate),isOff=isHolDay||isWknd;
@@ -1101,15 +1365,41 @@ const EntryPanel=({selCustomer,selLocation,selDate,workers,entries,saved,loading
 const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
   if(!selCustomer||!selLocation)return React.createElement('div',{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},'Select customer and site above.');
   if(histLoading)return React.createElement('div',{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},'Loading…');
-  if(!history.length)return React.createElement('div',{style:{padding:'40px',textAlign:'center',color:'#94a3b8'}},'No timesheet data for this month. Enter daily hours in the Entry tab first.');
+  // No early-return on empty history — customer tab IS the entry grid, always show workers
   const filtH=supplierFilter?history.filter(r=>r.supplier_name===supplierFilter):history;
-  const{days,workerMap}=buildMonthPivot(filtH);
-  const workerIds=[...new Set(filtH.map(r=>r.mob_register_id))];
-  const workers2=workerIds.map(id=>history.find(h=>h.mob_register_id===id)).filter(Boolean);
+  const{days:pivotDays,workerMap}=buildMonthPivot(filtH);
+  // If no history yet, still build full month days from calMonth
+  const[calY_fb,calM_fb]=calMonth.split('-').map(Number);
+  const dimFb=new Date(calY_fb,calM_fb,0).getDate();
+  const fallbackDays=Array.from({length:dimFb},(_,i)=>{const d=i+1;const ds=`${calY_fb}-${String(calM_fb).padStart(2,'0')}-${String(d).padStart(2,'0')}`;const dow=new Date(ds+'T00:00:00').getDay();const DOW_SHORT=['SUN','MON','TUE','WED','THU','FRI','SAT'];return{d,ds,dow,label:DOW_SHORT[dow],isOff:isOffDay(ds),isHol:isHolidayDate(ds),holName:holidays[ds]||''};});
+  const days=pivotDays.length>0?pivotDays:fallbackDays;
+  const histWorkerIds=new Set(filtH.map(r=>r.mob_register_id));const liveWorkerIds=new Set(workers.map(w=>w.id));const allWorkerIds=[...new Set([...histWorkerIds,...liveWorkerIds])];const workerIds=allWorkerIds;
+  const workers2=workerIds.map(id=>{const h=history.find(h=>h.mob_register_id===id);const w=workers.find(w=>w.id===id);return h||w||null;}).filter(Boolean);
   workers2.sort((a,b)=>{const na=parseInt((a.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');const nb=parseInt((b.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');return na-nb;});
   const VAT=parseFloat(settings.vat||'5')/100;
   const hdrBg=showFinancials?'#166534':'#1e3a5f';
-  return React.createElement('div',{style:{overflowX:'auto'}},
+  // Build allWorkers and allDays for save callback
+  const allWorkers4Save=workers2;
+  const[calY4S,calM4S]=calMonth.split('-').map(Number);
+  const dim4S=new Date(calY4S,calM4S,0).getDate();
+  const allDays4Save=Array.from({length:dim4S},(_,i)=>{const d=i+1;const ds=`${calY4S}-${String(calM4S).padStart(2,'0')}-${String(d).padStart(2,'0')}`;return{d,ds,isOff:isOffDay(ds),holName:holidays[ds]||''};});
+
+  return React.createElement('div',null,
+    // ── Save bar (appears when dirty) ──────────────────────────────────────
+    !showFinancials&&React.createElement('div',{style:{display:'flex',alignItems:'center',gap:'12px',padding:'8px 14px',background:gridDirty?'#0f172a':'#f8fafc',borderBottom:'2px solid #e2e8f0',transition:'background 0.2s',minHeight:'44px'}},
+      React.createElement('span',{style:{fontSize:'11px',color:gridDirty?'#94a3b8':'#94a3b8',fontWeight:600}},
+        gridDirty?'● Unsaved changes — click Save to commit':'Click any cell to enter hours · Arrow keys / Tab to navigate · Sunday & holidays = ×1.5 · >10h = ×1.25'),
+      gridSaveMsg&&React.createElement('span',{style:{fontWeight:700,fontSize:'12px',color:gridSaveMsg.startsWith('✅')?'#86efac':'#fca5a5'}},gridSaveMsg),
+      React.createElement('div',{style:{marginLeft:'auto',display:'flex',gap:'8px',alignItems:'center'}},
+        gridDirty&&React.createElement('button',{onClick:()=>{setGridEdits({});setGridDirty(false);setGridSaveMsg('');},style:{padding:'5px 14px',background:'#334155',color:'#94a3b8',border:'none',borderRadius:6,fontWeight:700,fontSize:'12px',cursor:'pointer'}},'Discard'),
+        React.createElement('button',{
+          onClick:()=>saveGridMonth(allWorkers4Save,allDays4Save),
+          disabled:gridSaving||!gridDirty,
+          style:{padding:'6px 20px',background:gridDirty?'#166534':'#334155',color:'#fff',border:'none',borderRadius:6,fontWeight:800,fontSize:'12px',cursor:gridDirty?'pointer':'default',opacity:gridDirty?1:0.5}
+        },gridSaving?'Saving…':'💾 Save')
+      )
+    ),
+    React.createElement('div',{style:{overflowX:'auto'}},
     React.createElement('table',{style:{borderCollapse:'collapse',width:'max-content',minWidth:'100%',fontSize:'11px'}},
       React.createElement('thead',null,React.createElement('tr',{style:{background:hdrBg}},
         React.createElement('th',{style:{...S.th,color:'#fff',background:hdrBg,width:'36px',textAlign:'center',position:'sticky',left:0,zIndex:12}},'#'),
@@ -1142,7 +1432,40 @@ const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
           React.createElement('td',{style:{...S.td,fontWeight:700,position:'sticky',left:'136px',background:rowBg,zIndex:10}},sn),
           React.createElement('td',{style:{...S.td,fontSize:'11px',color:'#475569'}},craft),
           showFinancials&&React.createElement('td',{style:{...S.td,fontSize:'10px',color:'#64748b'}},w.supplier_name||'—'),
-          ...days.map(day=>{const h=wm.dayHours[day.d]||0;return React.createElement('td',{key:day.d,style:{...S.td,textAlign:'center',padding:'3px 1px',fontSize:'11px',fontWeight:h>0?700:400,color:h>0?'#0f172a':'#e2e8f0',background:day.isOff?'#f1f5f9':rowBg}},h>0?h:'');}),
+          ...days.map(day=>{
+  const wid=w.mob_register_id||w.id;
+  const edited=gridEdits[`${wid}_${day.d}`];
+  const h=edited!==undefined?parseFloat(edited)||0:wm.dayHours[day.d]||0;
+  const displayVal=edited!==undefined?edited:(wm.dayHours[day.d]>0?String(wm.dayHours[day.d]):'');
+  const isBeforeMob=w.mobilisation_date&&day.ds<w.mobilisation_date;
+  // off-day styling: grey bg
+  const cellBg=isBeforeMob?'#f8fafc':day.isOff?'#f3f4f6':rowBg;
+  const bdrL=day.isOff?'1px solid #d1d5db':'1px solid #e2e8f0';
+  if(!showFinancials){
+    // EDITABLE input cell
+    const key=`${wid}_${day.d}`;
+    return React.createElement('td',{key:day.d,style:{padding:'1px',background:cellBg,borderLeft:bdrL,borderBottom:'1px solid #f1f5f9'}},
+      isBeforeMob
+        ? React.createElement('div',{style:{width:'28px',height:'28px',background:'#f1f5f9',margin:'auto',borderRadius:2}})
+        : React.createElement('div',{style:{display:'flex',flexDirection:'column',alignItems:'center'}},
+            React.createElement('input',{
+              type:'number',min:'0',max:'24',step:'0.5',
+              value:displayVal,
+              placeholder:'',
+              ref:el=>{if(el)gridRefs.current[key]=el;else delete gridRefs.current[key];},
+              onChange:e=>setGridCell(wid,day.d,e.target.value),
+              onKeyDown:e=>handleGridKeyDown(e,wid,day.d,workers2,days),
+              onFocus:e=>e.target.select(),
+              style:{width:'28px',height:'24px',border:'none',background:'transparent',fontSize:'11px',fontWeight:h>0?800:400,textAlign:'center',color:day.isOff?(h>0?'#374151':'#9ca3af'):(h>0?'#166534':'#94a3b8'),outline:'none',cursor:'text',borderRadius:2}
+            }),
+            day.isOff&&h>0&&React.createElement('div',{style:{fontSize:'7px',fontWeight:700,color:'#6b7280',lineHeight:1}},'×1.5')
+          )
+    );
+  } else {
+    // READ-ONLY display (supplier tab with financials)
+    return React.createElement('td',{key:day.d,style:{...S.td,textAlign:'center',padding:'3px 1px',fontSize:'11px',fontWeight:h>0?700:400,color:h>0?'#0f172a':'#e2e8f0',background:cellBg}},h>0?h:'');
+  }
+}),
           React.createElement('td',{style:{...S.td,textAlign:'center',fontWeight:800,color:showFinancials?'#166534':'#0369a1',background:showFinancials?'#f0fdf4':'#f0f9ff'}},totalHrs||'—'),
           showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'center',fontSize:'11px',color:'#0369a1'}},rate),
           showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'right',fontWeight:700,fontSize:'11px'}},gross>0?gross.toLocaleString('en',{maximumFractionDigits:2}):'—'),
@@ -1163,7 +1486,8 @@ const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
         })())
       ))
     )
-  );
+  )
+  ));
 };
 
 // ── Import sub-tab ────────────────────────────────────────────────────────
@@ -1307,7 +1631,7 @@ const HolidaysPanel=({holidays,setHolidays,newHolDate,setNewHolDate,newHolName,s
   const firstDow=new Date(calY,calM-1,1).getDay();
   return React.createElement('div',{style:{...S.card,padding:'16px',background:'#fffbeb',border:'1px solid #fde68a'}},
     React.createElement('div',{style:{fontWeight:800,fontSize:'14px',color:'#92400e',marginBottom:'4px'}},'🗓 Holidays — ',new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'})),
-    React.createElement('div',{style:{fontSize:'11px',color:'#b45309',marginBottom:'12px'}},'Click any day to mark/unmark as holiday. Weekends (',settings.weekendDay==='fri'?'Fri+Sat':settings.weekendDay==='sun'?'Sat+Sun':'Fri+Sat+Sun',') are auto-highlighted.'),
+    React.createElement('div',{style:{fontSize:'11px',color:'#b45309',marginBottom:'12px'}},'Click any day to mark/unmark as holiday. ',settings.weekendDay==='fri'?'Fri+Sat':settings.weekendDay==='sun'?'Sunday':'Fri+Sat+Sun','s are shown as off — click any other day to mark it as a public holiday.'),
     React.createElement('div',{style:{display:'flex',gap:'10px',marginBottom:'14px',flexWrap:'wrap',alignItems:'center'}},
       React.createElement('input',{type:'date',value:newHolDate,onChange:e=>setNewHolDate(e.target.value),style:{...S.input,width:'160px'}}),
       React.createElement('input',{value:newHolName,onChange:e=>setNewHolName(e.target.value),placeholder:'Holiday name e.g. Prophet Birthday',style:{...S.input,width:'260px'}}),
@@ -1339,14 +1663,14 @@ const HolidaysPanel=({holidays,setHolidays,newHolDate,setNewHolDate,newHolName,s
 };
 
 // ── Main render ───────────────────────────────────────────────────────────
-const TABS=[{k:'entry',l:'📝 Daily Entry'},{k:'customer',l:'📋 Customer Timesheet'},{k:'supplier',l:'🏭 Supplier Timesheet'},{k:'import',l:'📥 Import Client TS'},{k:'rates',l:'💰 Rates & Settings'},{k:'holidays',l:'🗓 Holidays'}];
+const TABS=[{k:'customer',l:'📋 Customer Timesheet'},{k:'supplier',l:'🏭 Supplier Timesheet'},{k:'import',l:'📥 Import Client TS'},{k:'rates',l:'💰 Rates & Settings'},{k:'holidays',l:'🗓 Holidays'}];
 const[selSupp,setSelSupp]=React.useState('');
 return React.createElement('div',{style:{maxWidth:'1600px',margin:'0 auto',padding:'16px 8px'}},
   React.createElement('div',{style:{display:'flex',gap:'3px',marginBottom:'14px',borderBottom:'2px solid #e2e8f0',flexWrap:'wrap'}},
     TABS.map(t=>React.createElement('button',{key:t.k,onClick:()=>setSubTab(t.k),style:{padding:'8px 13px',fontSize:'12px',fontWeight:700,border:'none',borderRadius:'6px 6px 0 0',cursor:'pointer',background:subTab===t.k?'#0f172a':t.k==='import'?'#eff6ff':'transparent',color:subTab===t.k?'#fff':t.k==='import'?'#1d4ed8':'#64748b',borderBottom:subTab===t.k?'2px solid #0f172a':'none',marginBottom:subTab===t.k?'-2px':'0'}},t.l))
   ),
   React.createElement(SelectorCard,null),
-  subTab==='entry'&&React.createElement(EntryPanel,{selCustomer,selLocation,selDate,workers,entries,saved,loading,saving,saveMsg,holidays,settings,totalHours,isWeekend,isHolidayDate,setHours,setNotes,handleSave}),
+  // entry tab merged into customer tab — MonthlyGridPanel no longer needed as separate tab
   subTab==='customer'&&React.createElement('div',null,
     React.createElement('div',{style:{...S.card,padding:'12px 16px',marginBottom:'10px',display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap',background:'#eff6ff',border:'1px solid #bfdbfe'}},
       React.createElement('div',{style:{fontWeight:700,fontSize:'13px',color:'#1e40af'}},'📋 ',settings.clientName),
