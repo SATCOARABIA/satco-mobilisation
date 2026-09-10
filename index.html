@@ -913,9 +913,27 @@ const importFileRef=React.useRef(null);
 // ── Helpers ───────────────────────────────────────────────────────────────
 const customers=React.useMemo(()=>[...new Set(mobList.filter(r=>r.status==='mobilised').map(r=>r.customer_name).filter(Boolean))].sort(),[mobList]);
 const locations=React.useMemo(()=>[...new Set(mobList.filter(r=>r.status==='mobilised'&&(!selCustomer||r.customer_name===selCustomer)).map(r=>r.location).filter(Boolean))].sort(),[mobList,selCustomer]);
-const workers=React.useMemo(()=>mobList.filter(r=>r.status==='mobilised'&&(!selCustomer||r.customer_name===selCustomer)&&(!selLocation||r.location===selLocation)).sort((a,b)=>{
-  const pa=(a.supplier_emp_no||'').split('-');const pb=(b.supplier_emp_no||'').split('-');
-  try{const d=parseInt(pa[1]||'0')-parseInt(pb[1]||'0');return d!==0?d:parseInt(pa[2]||'0')-parseInt(pb[2]||'0');}catch{return 0;}
+const workers=React.useMemo(()=>{
+  // Include mobilised + demobilised-this-month workers
+  const[calY2,calM2]=calMonth.split('-').map(Number);
+  const monthStart=`${calY2}-${String(calM2).padStart(2,'0')}-01`;
+  const monthEnd=`${calY2}-${String(calM2).padStart(2,'0')}-${String(new Date(calY2,calM2,0).getDate()).padStart(2,'0')}`;
+  return mobList.filter(r=>{
+    if(!selCustomer||r.customer_name!==selCustomer)return false;
+    if(!selLocation||r.location!==selLocation)return false;
+    if(r.status==='mobilised')return true;
+    // Include demobilised if they were on site during this calendar month
+    if(r.status==='demobilised'&&r.demobilisation_date){
+      return r.demobilisation_date>=monthStart&&r.demobilisation_date<=monthEnd;
+    }
+    return false;
+  }).sort((a,b)=>{
+    // Mobilised first, then demobbed
+    if(a.status==='mobilised'&&b.status!=='mobilised')return -1;
+    if(a.status!=='mobilised'&&b.status==='mobilised')return 1;
+    const pa=(a.supplier_emp_no||'').split('-');const pb=(b.supplier_emp_no||'').split('-');
+    try{const d=parseInt(pa[1]||'0')-parseInt(pb[1]||'0');return d!==0?d:parseInt(pa[2]||'0')-parseInt(pb[2]||'0');}catch{return 0;}
+  });
 }),[mobList,selCustomer,selLocation]);
 const isWeekend=dateStr=>{const dow=new Date(dateStr+'T00:00:00').getDay();const wd=settings.weekendDay||'sun';return wd==='fri'?dow===5:dow===0;};// 1 day off/week — Sat always working
 const isHolidayDate=dateStr=>!!(holidays[dateStr]);
@@ -1533,13 +1551,22 @@ const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
         const otPol=settings.otPolicy||'flat';const otThr=parseFloat(settings.otDailyThreshold||10);const otDM=parseFloat(settings.otDailyMultiplier||1.25);const otWM=parseFloat(settings.otWeekendMultiplier||1.5);
         let gross=0;if(otPol==='flat'){gross=totalHrs*rate;}else{days.forEach(day=>{const h=wm.dayHours[day.d]||0;if(h<=0)return;if(day.isOff){gross+=h*rate*otWM;}else if(h>otThr){gross+=otThr*rate+(h-otThr)*rate*otDM;}else{gross+=h*rate;}});}
         const vat=gross*VAT;const amt=gross+vat;
-        const rowBg=i%2===0?'#fff':'#f8fafc';
+        const isDemob=w.status==='demobilised';
+        const demobDate=w.demobilisation_date||null;
+        const demobDay=demobDate?new Date(demobDate+'T00:00:00').getDate():null;
+        const rowBg=isDemob?(i%2===0?'#fff1f2':'#fef2f2'):(i%2===0?'#fff':'#f8fafc');
         const sn=(w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' ');
-        return React.createElement('tr',{key:w.mob_register_id,className:'hr-row',style:{background:rowBg}},
+        return React.createElement('tr',{key:w.mob_register_id,className:'hr-row',style:{background:rowBg,opacity:isDemob?0.85:1}},
           React.createElement('td',{style:{...S.td,textAlign:'center',color:'#94a3b8',position:'sticky',left:0,background:rowBg,zIndex:10}},(i+1)),
-          React.createElement('td',{style:{...S.td,fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:'#0369a1',position:'sticky',left:'36px',background:rowBg,zIndex:10}},w.supplier_emp_no||'—'),
-          React.createElement('td',{style:{...S.td,fontWeight:700,position:'sticky',left:'136px',background:rowBg,zIndex:10}},sn),
-          React.createElement('td',{style:{...S.td,fontSize:'11px',color:'#475569'}},craft),
+          React.createElement('td',{style:{...S.td,fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:isDemob?'#dc2626':'#0369a1',position:'sticky',left:'36px',background:rowBg,zIndex:10}},w.supplier_emp_no||'—'),
+          React.createElement('td',{style:{...S.td,fontWeight:700,position:'sticky',left:'136px',background:rowBg,zIndex:10}},
+            React.createElement('div',{style:{display:'flex',alignItems:'center',gap:'5px'}},
+              sn,
+              isDemob&&React.createElement('span',{style:{background:'#dc2626',color:'#fff',fontSize:'9px',fontWeight:800,padding:'1px 5px',borderRadius:3,whiteSpace:'nowrap',flexShrink:0}},
+                'DEMOB',demobDate?` ${demobDay}/${String(new Date(demobDate+'T00:00:00').getMonth()+1).padStart(2,'0')}`:'')
+            )
+          ),
+          React.createElement('td',{style:{...S.td,fontSize:'11px',color:isDemob?'#b91c1c':'#475569'}},craft),
           showFinancials&&React.createElement('td',{style:{...S.td,fontSize:'10px',color:'#64748b'}},w.supplier_name||'—'),
           ...days.map(day=>{
   const wid=w.mob_register_id||w.id;
@@ -1548,12 +1575,19 @@ const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
   const h=edited!==undefined?parseFloat(edited)||0:existingH;
   const displayVal=edited!==undefined?edited:(existingH>0?String(existingH):'');
   const isBeforeMob=w.mobilisation_date&&day.ds<w.mobilisation_date;
+  const isAfterDemob=isDemob&&demobDate&&day.ds>demobDate;
   // off-day styling: grey bg
   const cellBg=isBeforeMob?'#f8fafc':day.isOff?'#f3f4f6':rowBg;
   const bdrL=day.isOff?'1px solid #d1d5db':'1px solid #e2e8f0';
   if(!showFinancials){
     // EDITABLE via memoized GridCell — no re-renders on parent state change
     const key=`${wid}_${day.d}`;
+    // After demob date: show red DEMOB cell, no input
+    if(isAfterDemob){
+      return React.createElement('td',{key:day.d,style:{padding:'1px',background:'#fef2f2',borderBottom:'1px solid #f1f5f9',borderLeft:'1px solid #fecaca'}},
+        React.createElement('div',{style:{width:'36px',height:'26px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'8px',fontWeight:800,color:'#fca5a5'}},existingH>0?existingH:'·')
+      );
+    }
     return React.createElement(GridCell,{
       key:day.d,
       cellKey:key,
@@ -1566,6 +1600,12 @@ const MonthPivotTable=({showFinancials=false,supplierFilter=''})=>{
       cellRef:el=>{if(el)gridRefs.current[key]=el;else delete gridRefs.current[key];}
     });
   } else {
+    // After demob date: show red cell, no input
+    if(isAfterDemob){
+      return React.createElement('td',{key:day.d,style:{padding:'1px',background:'#fef2f2',borderBottom:'1px solid #f1f5f9',borderLeft:'1px solid #fecaca'}},
+        React.createElement('div',{style:{width:'36px',height:'26px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'8px',fontWeight:800,color:'#fca5a5'}},existingH>0?existingH:'·')
+      );
+    }
     // EDITABLE in supplier tab too
     const key2=`${wid}_${day.d}`;
     return React.createElement(GridCell,{
@@ -1778,7 +1818,7 @@ const HolidaysPanel=({holidays,setHolidays,newHolDate,setNewHolDate,newHolName,s
 };
 
 // ── Main render ───────────────────────────────────────────────────────────
-const TABS=[{k:'customer',l:'📋 Customer Timesheet'},{k:'supplier',l:'🏭 Supplier Timesheet'},{k:'import',l:'📥 Import Client TS'},{k:'rates',l:'💰 Rates & Settings'},{k:'holidays',l:'🗓 Holidays'}];
+const TABS=[{k:'roster',l:'👥 Site Roster'},{k:'customer',l:'📋 Customer Timesheet'},{k:'supplier',l:'🏭 Supplier Timesheet'},{k:'import',l:'📥 Import Client TS'},{k:'rates',l:'💰 Rates & Settings'},{k:'holidays',l:'🗓 Holidays'}];
 const[selSupp,setSelSupp]=React.useState('');
 return React.createElement('div',{style:{maxWidth:'1600px',margin:'0 auto',padding:'16px 8px'}},
   React.createElement('div',{style:{display:'flex',gap:'3px',marginBottom:'14px',borderBottom:'2px solid #e2e8f0',flexWrap:'wrap'}},
@@ -1786,6 +1826,87 @@ return React.createElement('div',{style:{maxWidth:'1600px',margin:'0 auto',paddi
   ),
   React.createElement(SelectorCard,null),
   // entry tab merged into customer tab — MonthlyGridPanel no longer needed as separate tab
+  subTab==='roster'&&React.createElement('div',null,
+    // ── Site Roster Panel ─────────────────────────────────────────────────
+    (()=>{
+      const[calY_r,calM_r]=calMonth.split('-').map(Number);
+      const monthStart=`${calY_r}-${String(calM_r).padStart(2,'0')}-01`;
+      const monthEnd=`${calY_r}-${String(calM_r).padStart(2,'0')}-${String(new Date(calY_r,calM_r,0).getDate()).padStart(2,'0')}`;
+      // All mob records for this customer+location
+      const allRec=mobList.filter(r=>(!selCustomer||r.customer_name===selCustomer)&&(!selLocation||r.location===selLocation));
+      const mobilised=allRec.filter(r=>r.status==='mobilised').sort((a,b)=>(a.full_name||'').localeCompare(b.full_name||''));
+      const demobThisMonth=allRec.filter(r=>r.status==='demobilised'&&r.demobilisation_date&&r.demobilisation_date>=monthStart&&r.demobilisation_date<=monthEnd).sort((a,b)=>(b.demobilisation_date||'').localeCompare(a.demobilisation_date||''));
+      const demobPast=allRec.filter(r=>r.status==='demobilised'&&(!r.demobilisation_date||r.demobilisation_date<monthStart)).sort((a,b)=>(b.demobilisation_date||'').localeCompare(a.demobilisation_date||''));
+      const fD=d=>d?new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}):'—';
+      const PersonRow=({r,showDemob})=>React.createElement('tr',{className:'hr-row',style:{background:showDemob?'#fef2f2':'#fff'}},
+        React.createElement('td',{style:{...S.td,fontWeight:700,color:showDemob?'#b91c1c':'#0f172a'}},
+          r.full_name,showDemob&&React.createElement('span',{style:{marginLeft:6,background:'#dc2626',color:'#fff',fontSize:'9px',fontWeight:800,padding:'1px 6px',borderRadius:3}},'DEMOB')
+        ),
+        React.createElement('td',{style:{...S.td,fontFamily:'monospace',fontSize:'11px',color:showDemob?'#dc2626':'#0369a1'}},r.supplier_emp_no||'—'),
+        React.createElement('td',{style:{...S.td,fontSize:'12px'}},r.designation||'—'),
+        React.createElement('td',{style:{...S.td,fontSize:'12px',color:'#64748b'}},r.supplier_name||'—'),
+        React.createElement('td',{style:{...S.td,fontSize:'12px'}},fD(r.mobilisation_date)),
+        React.createElement('td',{style:{...S.td,fontSize:'12px',fontWeight:showDemob?700:400,color:showDemob?'#dc2626':'inherit'}},showDemob?fD(r.demobilisation_date):'—'),
+        React.createElement('td',{style:{...S.td,fontSize:'11px',color:'#64748b'}},showDemob?(r.demob_reason||'—'):'Active')
+      );
+      const THead=()=>React.createElement('thead',null,React.createElement('tr',{style:{background:'#f8fafc'}},
+        ['Name','Emp No','Designation','Supplier','Mob Date','Demob Date','Status / Reason'].map(h=>React.createElement('th',{key:h,style:S.th},h))
+      ));
+      return React.createElement('div',null,
+        // Summary badges
+        React.createElement('div',{style:{display:'flex',gap:'12px',marginBottom:'14px',flexWrap:'wrap'}},
+          React.createElement('div',{style:{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:8,padding:'10px 18px',display:'flex',gap:'12px',alignItems:'center'}},
+            React.createElement('div',{style:{fontWeight:800,fontSize:'24px',color:'#166534'}},mobilised.length),
+            React.createElement('div',{style:{fontSize:'12px',color:'#166534',fontWeight:600}},'Currently On Site')
+          ),
+          React.createElement('div',{style:{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:8,padding:'10px 18px',display:'flex',gap:'12px',alignItems:'center'}},
+            React.createElement('div',{style:{fontWeight:800,fontSize:'24px',color:'#dc2626'}},demobThisMonth.length),
+            React.createElement('div',{style:{fontSize:'12px',color:'#dc2626',fontWeight:600}},'Demobbed This Month')
+          ),
+          React.createElement('div',{style:{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:8,padding:'10px 18px',display:'flex',gap:'12px',alignItems:'center'}},
+            React.createElement('div',{style:{fontWeight:800,fontSize:'24px',color:'#64748b'}},demobPast.length),
+            React.createElement('div',{style:{fontSize:'12px',color:'#64748b',fontWeight:600}},'Previously Demobbed')
+          )
+        ),
+        // Mobilised table
+        mobilised.length>0&&React.createElement('div',{style:{...S.card,marginBottom:'16px',overflow:'hidden'}},
+          React.createElement('div',{style:{padding:'10px 16px',background:'#166534',display:'flex',justifyContent:'space-between',alignItems:'center'}},
+            React.createElement('div',{style:{fontWeight:800,fontSize:'13px',color:'#fff'}},'✅ Currently On Site — ',mobilised.length,' person'+(mobilised.length!==1?'s':'')),
+            React.createElement('div',{style:{fontSize:'11px',color:'#86efac'}},selCustomer,' · ',selLocation)
+          ),
+          React.createElement('div',{style:{overflowX:'auto'}},
+            React.createElement('table',{style:{width:'100%',borderCollapse:'collapse'}},
+              React.createElement(THead,null),
+              React.createElement('tbody',null,mobilised.map(r=>React.createElement(PersonRow,{key:r.id,r,showDemob:false})))
+            )
+          )
+        ),
+        // Demobbed this month table
+        demobThisMonth.length>0&&React.createElement('div',{style:{...S.card,marginBottom:'16px',overflow:'hidden'}},
+          React.createElement('div',{style:{padding:'10px 16px',background:'#991b1b',display:'flex',justifyContent:'space-between',alignItems:'center'}},
+            React.createElement('div',{style:{fontWeight:800,fontSize:'13px',color:'#fff'}},'🔴 Demobilised This Month — ',demobThisMonth.length,' person'+(demobThisMonth.length!==1?'s':'')),
+            React.createElement('div',{style:{fontSize:'11px',color:'#fca5a5'}},'Shown in red on timesheet · removed next month')
+          ),
+          React.createElement('div',{style:{overflowX:'auto'}},
+            React.createElement('table',{style:{width:'100%',borderCollapse:'collapse'}},
+              React.createElement(THead,null),
+              React.createElement('tbody',null,demobThisMonth.map(r=>React.createElement(PersonRow,{key:r.id,r,showDemob:true})))
+            )
+          )
+        ),
+        // Previously demobbed (collapsed)
+        demobPast.length>0&&React.createElement('details',{style:{...S.card,overflow:'hidden'}},
+          React.createElement('summary',{style:{padding:'10px 16px',background:'#f8fafc',fontWeight:700,fontSize:'13px',color:'#475569',cursor:'pointer'}},'📋 Previously Demobilised — ',demobPast.length,' person'+(demobPast.length!==1?'s':''),' (click to expand)'),
+          React.createElement('div',{style:{overflowX:'auto'}},
+            React.createElement('table',{style:{width:'100%',borderCollapse:'collapse'}},
+              React.createElement(THead,null),
+              React.createElement('tbody',null,demobPast.map(r=>React.createElement(PersonRow,{key:r.id,r,showDemob:true})))
+            )
+          )
+        )
+      );
+    })()
+  ),
   subTab==='customer'&&React.createElement('div',null,
     React.createElement('div',{style:{...S.card,padding:'12px 16px',marginBottom:'10px',display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap',background:'#eff6ff',border:'1px solid #bfdbfe'}},
       React.createElement('div',{style:{fontWeight:700,fontSize:'13px',color:'#1e40af'}},'📋 ',settings.clientName),
