@@ -934,7 +934,7 @@ const workers=React.useMemo(()=>{
     const pa=(a.supplier_emp_no||'').split('-');const pb=(b.supplier_emp_no||'').split('-');
     try{const d=parseInt(pa[1]||'0')-parseInt(pb[1]||'0');return d!==0?d:parseInt(pa[2]||'0')-parseInt(pb[2]||'0');}catch{return 0;}
   });
-}),[mobList,selCustomer,selLocation]);
+},[mobList,selCustomer,selLocation,calMonth]);
 const isWeekend=dateStr=>{const dow=new Date(dateStr+'T00:00:00').getDay();const wd=settings.weekendDay||'sun';return wd==='fri'?dow===5:dow===0;};// 1 day off/week — Sat always working
 const isHolidayDate=dateStr=>!!(holidays[dateStr]);
 const isOffDay=dateStr=>isWeekend(dateStr)||isHolidayDate(dateStr);
