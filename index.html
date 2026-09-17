@@ -704,7 +704,7 @@ function BulkLoaModal({mobList,candidates,loaList,usedMap,onClose,onSave}){
   const[loaId,setLoaId]=useState('');
   const[saving,setSaving]=useState(false);
   const[search,setSearch]=useState('');
-  const[filterMode,setFilterMode]=useState('cicpa_no_loa');
+  const[filterMode,setFilterMode]=useState('no_loa_active');
   const[supplierF,setSupplierF]=useState('');
 
   // candidate lookup by id AND by name for fallback
@@ -714,12 +714,17 @@ function BulkLoaModal({mobList,candidates,loaList,usedMap,onClose,onSave}){
     if(c.full_name)(candByName[c.full_name.trim().toLowerCase()]=c);
   });
 
-  // Get CICPA from mob record first, then candidate profile by id, then by name
+  // Get CICPA: mob record first, then candidate by id, then by name match
   var getCicpa=function(r){
-    if(r.cicpa_pass_no)return r.cicpa_pass_no;
+    if(r.cicpa_pass_no&&r.cicpa_pass_no.trim())return r.cicpa_pass_no.trim();
     var cand=r.candidate_id?candById[r.candidate_id]:null;
-    if(!cand&&r.full_name)cand=candByName[(r.full_name||'').trim().toLowerCase()];
-    return(cand&&cand.security_pass_no)||'';
+    if(!cand&&r.full_name){
+      var key=(r.full_name||'').trim().toLowerCase();
+      cand=candByName[key];
+      // also try first+last word match
+      if(!cand){var parts=key.split(' ');if(parts.length>1){var short=parts[0]+' '+parts[parts.length-1];cand=Object.values(candByName).find(function(c){var cn=(c.full_name||'').trim().toLowerCase();return cn.startsWith(parts[0])&&cn.includes(parts[parts.length-1]);});}}
+    }
+    return(cand&&(cand.security_pass_no||'').trim())||'';
   };
 
   // Get supplier name
@@ -2043,13 +2048,17 @@ const[hrMobLocs,setHrMobLocs]=useState({});// employee_id → current site locat
 // mob_demob.employee_id is the HR employee_number (e.g. "SA1015") stored as supplier_emp_no in mob_candidates
 useEffect(()=>{db.from('mob_demob').select('employee_id,full_name,location,mobilization_date,demobilization_date').is('demobilization_date',null).is('deleted_at',null).then(({data:rows})=>{const ids=new Set();const locs={};(rows||[]).forEach(r=>{if(r.employee_id){ids.add(String(r.employee_id));locs[String(r.employee_id)]=r.location||'';}});setHrMobActive(ids);setHrMobLocs(locs);});},[]);// Warn browser tab close if unsaved draft with real data exists
 // Only fires if draft has full_name filled — avoids false trigger during scan
-useEffect(()=>{const handler=e=>{const candRaw=localStorage.getItem('satco_mob_draft_candidate');const mobRaw=localStorage.getItem('satco_mob_draft_mobilisation');let hasDraft=false;try{if(candRaw){const d=JSON.parse(candRaw);if(d.full_name)hasDraft=true;}}catch{}try{if(mobRaw){const d=JSON.parse(mobRaw);if(d.full_name)hasDraft=true;}}catch{}if(hasDraft){e.preventDefault();e.returnValue='You have an unsaved form. Are you sure you want to leave?';}};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler);},[]);useEffect(()=>{db.auth.getSession().then(({data})=>{setSession(data.session);setAuthReady(true);});const{data:l}=db.auth.onAuthStateChange((_,s)=>setSession(s));return()=>l.subscription.unsubscribe();},[]);const loadAll=useCallback(async()=>{setLoading(true);try{const[supp,cand,req,loa,mob,loc,thr]=await Promise.all([db.from('mob_suppliers').select('*').order('name'),db.from('mob_candidates').select('*').order('full_name'),db.from('mob_requirements').select('*').order('created_at',{ascending:false}),db.from('mob_loa').select('*').order('loa_date',{ascending:false}),db.from('mob_register').select('*').order('created_at',{ascending:false}),db.from('mob_location_config').select('*').order('location'),db.from('mob_alert_thresholds').select('*').eq('active',true)]);if(cand.error?.code==='42P01'){setTableReady(false);setLoading(false);return;}setTableReady(true);setData({suppliers:supp.data||[],candidates:cand.data||[],requirements:req.data||[],loaList:loa.data||[],mobList:mob.data||[],locConfigs:loc.data||[],thresholds:thr.data||[]});}catch(e){console.error(e);}setLoading(false);},[]);useEffect(()=>{if(session)loadAll();},[session,loadAll]);const loaUsed=useMemo(()=>{const m={};// Count mob_register rows against their LOA
-// Rule: if loa_id is explicitly set on the record, count it regardless of status
-// (demobilised people still consumed a LOA slot while on site)
-// If no loa_id, only auto-match active (mobilised/pending) records by location+customer
-const allMob=data.mobList.filter(r=>r.status!=='rejected');
-const counted=new Set();allMob.forEach(r=>{if(counted.has(r.id))return;counted.add(r.id);let loaId=r.loa_id||null;// Only auto-match by location if no explicit loa_id and record is currently active
-if(!loaId&&(r.status==='mobilised'||r.status==='pending')&&r.location&&r.customer_name){const rL=r.location.toLowerCase().trim();const rC=r.customer_name.toLowerCase().trim();const loa=data.loaList.find(l=>(l.location||'').toLowerCase().trim()===rL&&(l.customer_name||'').toLowerCase().trim()===rC)||data.loaList.find(l=>(l.location||'').toLowerCase().includes(rL.substring(0,20))&&(l.customer_name||'').toLowerCase().includes(rC.substring(0,15)));if(loa)loaId=loa.id;}if(loaId)m[loaId]=(m[loaId]||0)+1;});// Add any manually tracked extra passes (supervisors/visitors) from LOA record
+useEffect(()=>{const handler=e=>{const candRaw=localStorage.getItem('satco_mob_draft_candidate');const mobRaw=localStorage.getItem('satco_mob_draft_mobilisation');let hasDraft=false;try{if(candRaw){const d=JSON.parse(candRaw);if(d.full_name)hasDraft=true;}}catch{}try{if(mobRaw){const d=JSON.parse(mobRaw);if(d.full_name)hasDraft=true;}}catch{}if(hasDraft){e.preventDefault();e.returnValue='You have an unsaved form. Are you sure you want to leave?';}};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler);},[]);useEffect(()=>{db.auth.getSession().then(({data})=>{setSession(data.session);setAuthReady(true);});const{data:l}=db.auth.onAuthStateChange((_,s)=>setSession(s));return()=>l.subscription.unsubscribe();},[]);const loadAll=useCallback(async()=>{setLoading(true);try{const[supp,cand,req,loa,mob,loc,thr]=await Promise.all([db.from('mob_suppliers').select('*').order('name'),db.from('mob_candidates').select('*').order('full_name'),db.from('mob_requirements').select('*').order('created_at',{ascending:false}),db.from('mob_loa').select('*').order('loa_date',{ascending:false}),db.from('mob_register').select('*').order('created_at',{ascending:false}),db.from('mob_location_config').select('*').order('location'),db.from('mob_alert_thresholds').select('*').eq('active',true)]);if(cand.error?.code==='42P01'){setTableReady(false);setLoading(false);return;}setTableReady(true);setData({suppliers:supp.data||[],candidates:cand.data||[],requirements:req.data||[],loaList:loa.data||[],mobList:mob.data||[],locConfigs:loc.data||[],thresholds:thr.data||[]});}catch(e){console.error(e);}setLoading(false);},[]);useEffect(()=>{if(session)loadAll();},[session,loadAll]);const loaUsed=useMemo(()=>{const m={};// LOA slot is permanently consumed once someone is mobilised under it.
+// Count mobilised + demobilised (used the slot) + pending (committed slot).
+// Rejected = never deployed, never counts.
+// Rule A: explicit loa_id set → always count (regardless of current status, except rejected).
+// Rule B: no explicit loa_id → auto-match by location+customer, but only for mobilised/pending.
+const countable=data.mobList.filter(r=>r.status!=='rejected');
+const counted=new Set();countable.forEach(r=>{if(counted.has(r.id))return;counted.add(r.id);let loaId=r.loa_id||null;
+// Auto-match ONLY for mobilised records with no explicit loa_id (on site, LOA not yet linked)
+// pending without explicit loa_id = LOA not committed yet, don't count
+// demobilised without explicit loa_id = never had a LOA assigned, don't count
+if(!loaId&&r.status==='mobilised'&&r.location&&r.customer_name){const rL=r.location.toLowerCase().trim();const rC=r.customer_name.toLowerCase().trim();const loa=data.loaList.find(l=>(l.location||'').toLowerCase().trim()===rL&&(l.customer_name||'').toLowerCase().trim()===rC)||data.loaList.find(l=>(l.location||'').toLowerCase().includes(rL.substring(0,20))&&(l.customer_name||'').toLowerCase().includes(rC.substring(0,15)));if(loa)loaId=loa.id;}if(loaId)m[loaId]=(m[loaId]||0)+1;});// Add any manually tracked extra passes (supervisors/visitors) from LOA record
 data.loaList.forEach(l=>{if(l.extra_used&&l.extra_used>0){m[l.id]=(m[l.id]||0)+l.extra_used;}});
 // Add cross-customer/shared usage (e.g. painters mobilised under a different customer but using this LOA's passes)
 data.loaList.forEach(l=>{if(l.shared_used&&l.shared_used>0){m[l.id]=(m[l.id]||0)+l.shared_used;}});// Pass 2 removed — visitor/supervisor CICPA slots are tracked via LOA 'extra_used' field — visitor/supervisor CICPA slots are tracked via LOA 'extra_used' field
