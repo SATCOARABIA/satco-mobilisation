@@ -704,31 +704,59 @@ function BulkLoaModal({mobList,candidates,loaList,usedMap,onClose,onSave}){
   const[loaId,setLoaId]=useState('');
   const[saving,setSaving]=useState(false);
   const[search,setSearch]=useState('');
-  // filter modes — default is the key gap: has CICPA, no LOA
   const[filterMode,setFilterMode]=useState('cicpa_no_loa');
+  const[supplierF,setSupplierF]=useState('');
 
-  // build candidate lookup for CICPA fallback
-  var candById={};(candidates||[]).forEach(function(c){if(c.id)candById[c.id]=c;});
-  var getCicpa=function(r){return r.cicpa_pass_no||(r.candidate_id&&candById[r.candidate_id]?candById[r.candidate_id].security_pass_no:'')||'';};
+  // candidate lookup by id AND by name for fallback
+  var candById={};var candByName={};
+  (candidates||[]).forEach(function(c){
+    if(c.id)candById[c.id]=c;
+    if(c.full_name)(candByName[c.full_name.trim().toLowerCase()]=c);
+  });
+
+  // Get CICPA from mob record first, then candidate profile by id, then by name
+  var getCicpa=function(r){
+    if(r.cicpa_pass_no)return r.cicpa_pass_no;
+    var cand=r.candidate_id?candById[r.candidate_id]:null;
+    if(!cand&&r.full_name)cand=candByName[(r.full_name||'').trim().toLowerCase()];
+    return(cand&&cand.security_pass_no)||'';
+  };
+
+  // Get supplier name
+  var getSupplier=function(r){return r.supplier_name||'';};
+
+  // All unique suppliers in mob list
+  var allSuppliers=[...new Set(mobList.map(getSupplier).filter(Boolean))].sort();
 
   var rows=mobList.filter(function(r){
     if(r.status==='rejected')return false;
     var hasCicpa=!!getCicpa(r);
     var hasLoa=!!r.loa_id;
     var active=r.status==='mobilised'||r.status==='pending';
+    // supplier filter
+    if(supplierF&&getSupplier(r)!==supplierF)return false;
+    // search filter
     var q=search.toLowerCase();
-    if(q&&!(r.full_name||'').toLowerCase().includes(q)&&!(r.designation||'').toLowerCase().includes(q)&&!(r.customer_name||'').toLowerCase().includes(q)&&!(r.location||'').toLowerCase().includes(q))return false;
-    if(filterMode==='cicpa_no_loa')return hasCicpa&&!hasLoa; // the key gap — any status
+    if(q&&!(r.full_name||'').toLowerCase().includes(q)
+        &&!(r.designation||'').toLowerCase().includes(q)
+        &&!(r.customer_name||'').toLowerCase().includes(q)
+        &&!(r.location||'').toLowerCase().includes(q)
+        &&!(getSupplier(r)||'').toLowerCase().includes(q))return false;
+    // mode filter
+    if(filterMode==='cicpa_no_loa')return hasCicpa&&!hasLoa;
+    if(filterMode==='no_cicpa_no_loa')return!hasCicpa&&!hasLoa&&active;
     if(filterMode==='no_loa_active')return!hasLoa&&active;
     if(filterMode==='no_loa_all')return!hasLoa;
     if(filterMode==='has_loa')return hasLoa;
     if(filterMode==='all_active')return active;
+    if(filterMode==='all')return true;
     if(filterMode.startsWith('loa:'))return r.loa_id===filterMode.slice(4);
     return true;
   });
 
-  // count for badge
-  var gapCount=mobList.filter(function(r){return r.status!=='rejected'&&!!getCicpa(r)&&!r.loa_id;}).length;
+  // gap counts for badge
+  var gapCicpaNoLoa=mobList.filter(function(r){return r.status!=='rejected'&&!!getCicpa(r)&&!r.loa_id;}).length;
+  var gapNoCicpaActive=mobList.filter(function(r){return(r.status==='mobilised'||r.status==='pending')&&!getCicpa(r)&&!r.loa_id;}).length;
 
   var allSel=rows.length>0&&selIds.size===rows.length;
   var toggleAll=function(){setSelIds(allSel?new Set():new Set(rows.map(function(r){return r.id;})));};
@@ -750,84 +778,129 @@ function BulkLoaModal({mobList,candidates,loaList,usedMap,onClose,onSave}){
   };
 
   var FILTERS=[
-    {v:'cicpa_no_loa', label:'🔴 Has CICPA — No LOA', desc:'People with a CICPA pass but no LOA assigned (any status)', hot:true},
-    {v:'no_loa_active', label:'No LOA — Active only', desc:'Mobilised/Pending with no LOA'},
-    {v:'no_loa_all',   label:'No LOA — All statuses', desc:'Everyone without a LOA including demobilised'},
-    {v:'has_loa',      label:'Already has a LOA', desc:'Review or reassign'},
-    {v:'all_active',   label:'All active records', desc:'All mobilised and pending'},
+    {v:'cicpa_no_loa',    label:'🔴 Has CICPA — No LOA',  desc:'Active or demobilised: has a CICPA pass but no LOA linked', hot:true,  badge:gapCicpaNoLoa},
+    {v:'no_cicpa_no_loa', label:'⚠ No CICPA — No LOA',   desc:'Active: no CICPA pass and no LOA linked',                  hot:false, badge:gapNoCicpaActive},
+    {v:'no_loa_active',   label:'No LOA — Active only',   desc:'Mobilised/Pending with no LOA',                           hot:false, badge:null},
+    {v:'no_loa_all',      label:'No LOA — All statuses',  desc:'Everyone without a LOA including demobilised',            hot:false, badge:null},
+    {v:'has_loa',         label:'Has LOA',                desc:'Review or reassign existing LOA links',                   hot:false, badge:null},
+    {v:'all_active',      label:'All active',             desc:'All mobilised and pending records',                       hot:false, badge:null},
   ];
 
-  return React.createElement('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'},onClick:onClose},
-    React.createElement('div',{style:{background:'#fff',borderRadius:'12px',width:'100%',maxWidth:'920px',maxHeight:'92vh',display:'flex',flexDirection:'column',boxShadow:'0 24px 64px rgba(0,0,0,0.3)'},onClick:function(e){e.stopPropagation();}},
+  var statusStyle=function(s){
+    if(s==='mobilised')return{bg:'#dcfce7',c:'#166534'};
+    if(s==='pending')return{bg:'#fef3c7',c:'#92400e'};
+    if(s==='demobilised')return{bg:'#f1f5f9',c:'#64748b'};
+    return{bg:'#fee2e2',c:'#dc2626'};
+  };
 
-      // Header
+  return React.createElement('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'},onClick:onClose},
+    React.createElement('div',{style:{background:'#fff',borderRadius:'12px',width:'100%',maxWidth:'1000px',maxHeight:'92vh',display:'flex',flexDirection:'column',boxShadow:'0 24px 64px rgba(0,0,0,0.3)'},onClick:function(e){e.stopPropagation();}},
+
+      // ── Header
       React.createElement('div',{style:{padding:'14px 20px',background:'#0f172a',borderRadius:'12px 12px 0 0',display:'flex',alignItems:'center',gap:'12px'}},
         React.createElement('div',{style:{flex:1}},
           React.createElement('div',{style:{fontWeight:800,fontSize:'15px',color:'#f8fafc'}},'📋 Bulk LOA Assignment'),
-          React.createElement('div',{style:{fontSize:'11px',color:'#94a3b8',marginTop:'2px'}},'Identify records missing a LOA, select them, pick a LOA and save in one shot')),
-        gapCount>0&&React.createElement('div',{style:{background:'#dc2626',color:'#fff',fontWeight:800,fontSize:'12px',padding:'4px 12px',borderRadius:20}},gapCount+' with CICPA & no LOA'),
+          React.createElement('div',{style:{fontSize:'11px',color:'#94a3b8',marginTop:'2px'}},'Find records missing a LOA, select them, pick a LOA and save in one shot')),
+        gapCicpaNoLoa>0&&React.createElement('div',{style:{background:'#dc2626',color:'#fff',fontWeight:800,fontSize:'12px',padding:'4px 12px',borderRadius:20,whiteSpace:'nowrap'}},gapCicpaNoLoa+' CICPA without LOA'),
         React.createElement('button',{onClick:onClose,style:{background:'rgba(255,255,255,0.15)',border:'none',color:'#fff',width:32,height:32,borderRadius:'50%',cursor:'pointer',fontSize:'18px',display:'flex',alignItems:'center',justifyContent:'center'}},'×')),
 
-      // Quick-filter chips
-      React.createElement('div',{style:{padding:'10px 16px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',display:'flex',gap:'6px',flexWrap:'wrap',alignItems:'center'}},
-        React.createElement('span',{style:{fontSize:'11px',fontWeight:700,color:'#64748b',marginRight:'4px'}},'SHOW:'),
+      // ── Filter chips
+      React.createElement('div',{style:{padding:'8px 14px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',display:'flex',gap:'5px',flexWrap:'wrap',alignItems:'center'}},
+        React.createElement('span',{style:{fontSize:'10px',fontWeight:700,color:'#64748b',textTransform:'uppercase',marginRight:'4px',whiteSpace:'nowrap'}},'Show:'),
         FILTERS.map(function(f){
           var active=filterMode===f.v;
-          return React.createElement('button',{key:f.v,title:f.desc,onClick:function(){setFilterMode(f.v);setSelIds(new Set());},style:{padding:'4px 12px',borderRadius:20,border:'1.5px solid '+(active?(f.hot?'#dc2626':'#7c3aed'):'#e2e8f0'),background:active?(f.hot?'#dc2626':'#7c3aed'):'#fff',color:active?'#fff':(f.hot?'#dc2626':'#374151'),fontWeight:active?700:400,fontSize:'12px',cursor:'pointer',whiteSpace:'nowrap'}},f.label);
+          var border=active?(f.hot?'#dc2626':'#7c3aed'):'#e2e8f0';
+          var bg=active?(f.hot?'#dc2626':'#7c3aed'):'#fff';
+          var col=active?'#fff':(f.hot?'#dc2626':'#374151');
+          return React.createElement('button',{key:f.v,title:f.desc,onClick:function(){setFilterMode(f.v);setSelIds(new Set());},
+            style:{padding:'3px 10px',borderRadius:20,border:'1.5px solid '+border,background:bg,color:col,fontWeight:active?700:400,fontSize:'11px',cursor:'pointer',whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:'5px'}},
+            f.label,
+            f.badge!=null&&f.badge>0&&React.createElement('span',{style:{background:active?'rgba(255,255,255,0.3)':'#fee2e2',color:active?'#fff':'#dc2626',fontWeight:800,fontSize:'10px',padding:'0px 5px',borderRadius:10}},f.badge));
         }),
-        loaList.length>0&&React.createElement('select',{value:filterMode.startsWith('loa:')?filterMode:'',onChange:function(e){if(e.target.value){setFilterMode(e.target.value);setSelIds(new Set());}},style:{padding:'4px 10px',borderRadius:20,border:'1px solid #e2e8f0',fontSize:'12px',color:'#374151',cursor:'pointer'}},
+        loaList.length>0&&React.createElement('select',{value:filterMode.startsWith('loa:')?filterMode:'',
+          onChange:function(e){if(e.target.value){setFilterMode(e.target.value);setSelIds(new Set());}},
+          style:{padding:'3px 10px',borderRadius:20,border:'1px solid #e2e8f0',fontSize:'11px',color:'#374151',cursor:'pointer'}},
           React.createElement('option',{value:''},'Filter by LOA…'),
           loaList.map(function(l){return React.createElement('option',{key:l.id,value:'loa:'+l.id},'LOA: '+(l.loa_reference||l.customer_name));}))),
 
-      // LOA picker + search row
-      React.createElement('div',{style:{padding:'10px 16px',background:'#fffbeb',borderBottom:'1px solid #fde68a',display:'flex',gap:'12px',flexWrap:'wrap',alignItems:'flex-end'}},
-        React.createElement('div',{style:{flex:2,minWidth:'240px'}},
-          React.createElement('div',{style:{fontSize:'10px',fontWeight:700,color:'#92400e',textTransform:'uppercase',marginBottom:'4px'}},'LOA to Assign *'),
-          React.createElement('select',{value:loaId,onChange:function(e){setLoaId(e.target.value);},style:{width:'100%',padding:'7px 10px',border:'2px solid '+(loaId?'#b8972a':'#fca5a5'),borderRadius:6,fontSize:'13px',fontWeight:600,background:'#fff'}},
+      // ── LOA picker + search + supplier
+      React.createElement('div',{style:{padding:'10px 14px',background:'#fffbeb',borderBottom:'1px solid #fde68a',display:'flex',gap:'10px',flexWrap:'wrap',alignItems:'flex-end'}},
+        React.createElement('div',{style:{flex:3,minWidth:'240px'}},
+          React.createElement('div',{style:{fontSize:'10px',fontWeight:700,color:'#92400e',textTransform:'uppercase',marginBottom:'3px'}},'LOA to Assign *'),
+          React.createElement('select',{value:loaId,onChange:function(e){setLoaId(e.target.value);},
+            style:{width:'100%',padding:'6px 10px',border:'2px solid '+(loaId?'#b8972a':'#fca5a5'),borderRadius:6,fontSize:'13px',fontWeight:600,background:'#fff'}},
             React.createElement('option',{value:''},'— Select LOA —'),
             loaList.map(function(l){
               var used=usedMap[l.id]||0,rem=l.total_count-used;
-              return React.createElement('option',{key:l.id,value:l.id},l.customer_name+' / '+(l.loa_reference||'LOA')+' — '+rem+' of '+l.total_count+' remaining');
+              return React.createElement('option',{key:l.id,value:l.id},l.customer_name+' / '+(l.loa_reference||'LOA')+' — '+rem+' remaining of '+l.total_count);
             }))),
-        React.createElement('div',{style:{flex:1,minWidth:'180px'}},
-          React.createElement('div',{style:{fontSize:'10px',fontWeight:700,color:'#64748b',textTransform:'uppercase',marginBottom:'4px'}},'Search'),
-          React.createElement('input',{value:search,onChange:function(e){setSearch(e.target.value);},placeholder:'Name, designation, customer…',style:{width:'100%',padding:'7px 10px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:'12px'}})),
-        React.createElement('div',{style:{alignSelf:'flex-end',fontSize:'12px',color:'#64748b',whiteSpace:'nowrap',paddingBottom:'8px'}},rows.length+' record'+(rows.length!==1?'s':''))),
+        React.createElement('div',{style:{flex:1,minWidth:'160px'}},
+          React.createElement('div',{style:{fontSize:'10px',fontWeight:700,color:'#64748b',textTransform:'uppercase',marginBottom:'3px'}},'Supplier'),
+          React.createElement('select',{value:supplierF,onChange:function(e){setSupplierF(e.target.value);setSelIds(new Set());},
+            style:{width:'100%',padding:'6px 10px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:'12px',background:'#fff'}},
+            React.createElement('option',{value:''},'All suppliers'),
+            allSuppliers.map(function(s){return React.createElement('option',{key:s,value:s},s.length>35?s.slice(0,33)+'…':s);}))),
+        React.createElement('div',{style:{flex:1,minWidth:'160px'}},
+          React.createElement('div',{style:{fontSize:'10px',fontWeight:700,color:'#64748b',textTransform:'uppercase',marginBottom:'3px'}},'Search'),
+          React.createElement('input',{value:search,onChange:function(e){setSearch(e.target.value);},placeholder:'Name, designation, location…',
+            style:{width:'100%',padding:'6px 10px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:'12px'}})),
+        React.createElement('div',{style:{alignSelf:'flex-end',fontSize:'11px',fontWeight:700,color:'#64748b',paddingBottom:'7px',whiteSpace:'nowrap'}},
+          rows.length+' record'+(rows.length!==1?'s':''))),
 
-      // Table
+      // ── Table
       React.createElement('div',{style:{flex:1,overflowY:'auto'}},
         React.createElement('table',{style:{width:'100%',borderCollapse:'collapse'}},
           React.createElement('thead',null,
             React.createElement('tr',{style:{background:'#f8fafc',position:'sticky',top:0,zIndex:5}},
               React.createElement('th',{style:{...S.th,width:36,textAlign:'center'}},
                 React.createElement('input',{type:'checkbox',checked:allSel,onChange:toggleAll,style:{width:14,height:14,accentColor:'#b8972a',cursor:'pointer'}})),
-              ['Name','Designation','Customer / Location','Status','Mob Date','CICPA','Current LOA'].map(function(h){return React.createElement('th',{key:h,style:S.th},h);}))),
+              ['Name','Designation','Supplier','Customer / Location','Status','Mob Date','CICPA','Current LOA'].map(function(h){
+                return React.createElement('th',{key:h,style:{...S.th,whiteSpace:'nowrap'}},h);
+              }))),
           React.createElement('tbody',null,
             rows.length===0&&React.createElement('tr',null,
-              React.createElement('td',{colSpan:8,style:{padding:'32px',textAlign:'center',color:'#94a3b8',fontSize:'13px'}},
-                filterMode==='cicpa_no_loa'?'No records with a CICPA pass and missing LOA — all good! ✅':'No records match this filter')),
+              React.createElement('td',{colSpan:9,style:{padding:'32px',textAlign:'center',fontSize:'13px'}},
+                filterMode==='cicpa_no_loa'
+                  ?React.createElement('div',null,
+                    React.createElement('div',{style:{fontSize:'24px',marginBottom:'8px'}},'✅'),
+                    React.createElement('div',{style:{color:'#166534',fontWeight:700}},'No records with a CICPA pass and missing LOA'),
+                    React.createElement('div',{style:{color:'#94a3b8',fontSize:'11px',marginTop:'4px'}},'Try "No LOA — All statuses" to see records without CICPA too'))
+                  :React.createElement('span',{style:{color:'#94a3b8'}},'No records match — try a different filter'))),
             rows.map(function(r,i){
               var isSel=selIds.has(r.id);
               var curLoa=r.loa_id?loaList.find(function(l){return l.id===r.loa_id;}):null;
               var cicpa=getCicpa(r);
-              var statusCol=r.status==='mobilised'?{bg:'#dcfce7',c:'#166534'}:r.status==='pending'?{bg:'#fef3c7',c:'#92400e'}:r.status==='demobilised'?{bg:'#f1f5f9',c:'#64748b'}:{bg:'#fee2e2',c:'#dc2626'};
-              return React.createElement('tr',{key:r.id,style:{background:isSel?'#fffbeb':i%2===0?'#fff':'#fafafa',cursor:'pointer',borderBottom:'1px solid #f1f5f9'},onClick:function(){toggle(r.id);}},
+              var ss=statusStyle(r.status);
+              var supplier=getSupplier(r);
+              return React.createElement('tr',{key:r.id,
+                style:{background:isSel?'#fffbeb':i%2===0?'#fff':'#fafafa',cursor:'pointer',borderBottom:'1px solid #f1f5f9'},
+                onClick:function(){toggle(r.id);}},
                 React.createElement('td',{style:{...S.td,textAlign:'center',width:36}},
                   React.createElement('input',{type:'checkbox',checked:isSel,readOnly:true,style:{width:14,height:14,accentColor:'#b8972a',cursor:'pointer'}})),
-                React.createElement('td',{style:{...S.td,fontWeight:700}},r.full_name),
-                React.createElement('td',{style:{...S.td,fontSize:'12px'}},r.designation||'—'),
-                React.createElement('td',{style:{...S.td,fontSize:'12px',color:'#475569'}},r.customer_name||'—',' / ',r.location||'—'),
-                React.createElement('td',{style:{...S.td}},React.createElement('span',{style:{background:statusCol.bg,color:statusCol.c,fontSize:'10px',fontWeight:700,padding:'2px 7px',borderRadius:4}},r.status)),
-                React.createElement('td',{style:{...S.td,fontSize:'11px',color:'#64748b'}},r.mobilisation_date?fmtDate(r.mobilisation_date):'—'),
-                React.createElement('td',{style:{...S.td}},cicpa?React.createElement('span',{style:{background:'#eff6ff',color:'#1e40af',fontSize:'10px',fontWeight:700,padding:'2px 7px',borderRadius:4,fontFamily:'monospace'}},cicpa):React.createElement('span',{style:{color:'#fca5a5',fontSize:'11px',fontWeight:700}},'✗ No CICPA')),
-                React.createElement('td',{style:{...S.td}},curLoa?React.createElement('span',{style:{background:'#dcfce7',color:'#166534',fontSize:'10px',fontWeight:700,padding:'2px 8px',borderRadius:4}},'✓ '+(curLoa.loa_reference||curLoa.customer_name)):React.createElement('span',{style:{color:'#dc2626',fontSize:'11px',fontWeight:700}},'— None')));
+                React.createElement('td',{style:{...S.td,fontWeight:700,whiteSpace:'nowrap'}},r.full_name),
+                React.createElement('td',{style:{...S.td,fontSize:'11px',whiteSpace:'nowrap'}},r.designation||'—'),
+                React.createElement('td',{style:{...S.td,fontSize:'11px',color:'#64748b',maxWidth:'180px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},title:supplier},supplier||'—'),
+                React.createElement('td',{style:{...S.td,fontSize:'11px',color:'#475569',whiteSpace:'nowrap'}},(r.customer_name||'—')+' / '+(r.location||'—')),
+                React.createElement('td',{style:{...S.td,whiteSpace:'nowrap'}},
+                  React.createElement('span',{style:{background:ss.bg,color:ss.c,fontSize:'10px',fontWeight:700,padding:'2px 7px',borderRadius:4}},r.status)),
+                React.createElement('td',{style:{...S.td,fontSize:'11px',color:'#64748b',whiteSpace:'nowrap'}},r.mobilisation_date?fmtDate(r.mobilisation_date):'—'),
+                React.createElement('td',{style:{...S.td,whiteSpace:'nowrap'}},
+                  cicpa
+                    ?React.createElement('span',{style:{background:'#eff6ff',color:'#1e40af',fontSize:'10px',fontWeight:700,padding:'2px 7px',borderRadius:4,fontFamily:'monospace'}},cicpa)
+                    :React.createElement('span',{style:{color:'#dc2626',fontSize:'11px',fontWeight:700}},'✗ None')),
+                React.createElement('td',{style:{...S.td,whiteSpace:'nowrap'}},
+                  curLoa
+                    ?React.createElement('span',{style:{background:'#dcfce7',color:'#166534',fontSize:'10px',fontWeight:700,padding:'2px 8px',borderRadius:4}},'✓ '+(curLoa.loa_reference||curLoa.customer_name))
+                    :React.createElement('span',{style:{color:'#dc2626',fontSize:'11px',fontWeight:700}},'— None')));
             })))),
 
-      // Footer
-      React.createElement('div',{style:{padding:'12px 16px',borderTop:'1px solid #e2e8f0',background:'#f8fafc',display:'flex',alignItems:'center',gap:'10px',borderRadius:'0 0 12px 12px',flexWrap:'wrap'}},
-        rows.length>0&&selIds.size===0&&React.createElement('button',{onClick:toggleAll,style:{...S.btnSm,fontSize:'12px',padding:'5px 12px'}},'Select all '+rows.length),
-        React.createElement('span',{style:{fontSize:'12px',fontWeight:700,color:selIds.size>0?'#0f172a':'#94a3b8'}},selIds.size>0?selIds.size+' selected':''),
-        React.createElement('button',{onClick:save,disabled:saving||selIds.size===0||!loaId,style:{background:selIds.size>0&&loaId?'#b8972a':'#e2e8f0',color:selIds.size>0&&loaId?'#000':'#94a3b8',border:'none',borderRadius:7,padding:'8px 22px',fontWeight:800,fontSize:'13px',cursor:selIds.size>0&&loaId?'pointer':'not-allowed'}},saving?'Saving…':'💾 Assign LOA to '+selIds.size+' Record(s)'),
+      // ── Footer
+      React.createElement('div',{style:{padding:'10px 14px',borderTop:'1px solid #e2e8f0',background:'#f8fafc',display:'flex',alignItems:'center',gap:'8px',borderRadius:'0 0 12px 12px',flexWrap:'wrap'}},
+        rows.length>0&&selIds.size===0&&React.createElement('button',{onClick:toggleAll,style:{...S.btnSm,fontSize:'11px',padding:'4px 12px'}},'Select all '+rows.length),
+        selIds.size>0&&React.createElement('span',{style:{fontSize:'12px',fontWeight:700,color:'#0f172a'}},selIds.size+' selected'),
+        React.createElement('button',{onClick:save,disabled:saving||selIds.size===0||!loaId,
+          style:{background:selIds.size>0&&loaId?'#b8972a':'#e2e8f0',color:selIds.size>0&&loaId?'#000':'#94a3b8',border:'none',borderRadius:7,padding:'7px 20px',fontWeight:800,fontSize:'13px',cursor:selIds.size>0&&loaId?'pointer':'not-allowed'}},
+          saving?'Saving…':'\U0001F4BE Assign LOA to '+selIds.size+' Record(s)'),
         React.createElement('button',{onClick:onClose,style:{...S.btnSec,marginLeft:'auto'}},'Cancel'))));
 }
 function MobilisationTab({mobList,candidates,loaList,requirements,usedMap,locConfigs,onSave,onDemob,onRefresh,initialStatus,tabSearch,bulkMobFilter=null,onClearBulkFilter=()=>{}}){const[draft,setDraft]=usePersistentDraft('mobilisation');const[savedDraft,setSavedDraft]=useState(()=>{try{const v=localStorage.getItem('satco_mob_draft_mobilisation');return v?JSON.parse(v):null;}catch{return null;}});const[demobRec,setDemobRec]=useState(null);const[docPanel,setDocPanel]=useState(null);const[readinessRow,setReadinessRow]=useState(null);const clickTimer=useRef(null);const[search,setSearch]=useState(tabSearch||'');const[fCust,setFCust]=useState(new Set());const[fLoc,setFLoc]=useState(new Set());const[fStatus,setFStatus]=useState(()=>initialStatus?new Set([initialStatus]):new Set(['mobilised','pending']));const[fReady,setFReady]=useState(new Set());const[mobSel,setMobSel]=useState(new Set());const[bulkLoaOpen,setBulkLoaOpen]=useState(false);useEffect(()=>{if(initialStatus)setFStatus(new Set([initialStatus]));},[initialStatus]);useEffect(()=>{setMobSel(new Set());},[fCust,fLoc,fStatus,fReady,search]);useEffect(()=>{if(tabSearch)setSearch(tabSearch);},[tabSearch]);useEffect(()=>{if(!bulkMobFilter)return;// Auto-filter to show the just-bulk-mobilised candidates
@@ -1970,10 +2043,13 @@ const[hrMobLocs,setHrMobLocs]=useState({});// employee_id → current site locat
 // mob_demob.employee_id is the HR employee_number (e.g. "SA1015") stored as supplier_emp_no in mob_candidates
 useEffect(()=>{db.from('mob_demob').select('employee_id,full_name,location,mobilization_date,demobilization_date').is('demobilization_date',null).is('deleted_at',null).then(({data:rows})=>{const ids=new Set();const locs={};(rows||[]).forEach(r=>{if(r.employee_id){ids.add(String(r.employee_id));locs[String(r.employee_id)]=r.location||'';}});setHrMobActive(ids);setHrMobLocs(locs);});},[]);// Warn browser tab close if unsaved draft with real data exists
 // Only fires if draft has full_name filled — avoids false trigger during scan
-useEffect(()=>{const handler=e=>{const candRaw=localStorage.getItem('satco_mob_draft_candidate');const mobRaw=localStorage.getItem('satco_mob_draft_mobilisation');let hasDraft=false;try{if(candRaw){const d=JSON.parse(candRaw);if(d.full_name)hasDraft=true;}}catch{}try{if(mobRaw){const d=JSON.parse(mobRaw);if(d.full_name)hasDraft=true;}}catch{}if(hasDraft){e.preventDefault();e.returnValue='You have an unsaved form. Are you sure you want to leave?';}};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler);},[]);useEffect(()=>{db.auth.getSession().then(({data})=>{setSession(data.session);setAuthReady(true);});const{data:l}=db.auth.onAuthStateChange((_,s)=>setSession(s));return()=>l.subscription.unsubscribe();},[]);const loadAll=useCallback(async()=>{setLoading(true);try{const[supp,cand,req,loa,mob,loc,thr]=await Promise.all([db.from('mob_suppliers').select('*').order('name'),db.from('mob_candidates').select('*').order('full_name'),db.from('mob_requirements').select('*').order('created_at',{ascending:false}),db.from('mob_loa').select('*').order('loa_date',{ascending:false}),db.from('mob_register').select('*').order('created_at',{ascending:false}),db.from('mob_location_config').select('*').order('location'),db.from('mob_alert_thresholds').select('*').eq('active',true)]);if(cand.error?.code==='42P01'){setTableReady(false);setLoading(false);return;}setTableReady(true);setData({suppliers:supp.data||[],candidates:cand.data||[],requirements:req.data||[],loaList:loa.data||[],mobList:mob.data||[],locConfigs:loc.data||[],thresholds:thr.data||[]});}catch(e){console.error(e);}setLoading(false);},[]);useEffect(()=>{if(session)loadAll();},[session,loadAll]);const loaUsed=useMemo(()=>{const m={};// Count active mob_register rows against their LOA — one count per row, no more
-// ONLY count records explicitly marked mobilised or pending — nothing else
-const activeMob=data.mobList.filter(r=>r.status==='mobilised'||r.status==='pending');// Deduplicate by row id — each mob_register row counted exactly once
-const counted=new Set();activeMob.forEach(r=>{if(counted.has(r.id))return;counted.add(r.id);let loaId=r.loa_id||null;if(!loaId&&r.location&&r.customer_name){const rL=r.location.toLowerCase().trim();const rC=r.customer_name.toLowerCase().trim();const loa=data.loaList.find(l=>(l.location||'').toLowerCase().trim()===rL&&(l.customer_name||'').toLowerCase().trim()===rC)||data.loaList.find(l=>(l.location||'').toLowerCase().includes(rL.substring(0,20))&&(l.customer_name||'').toLowerCase().includes(rC.substring(0,15)));if(loa)loaId=loa.id;}if(loaId)m[loaId]=(m[loaId]||0)+1;});// Add any manually tracked extra passes (supervisors/visitors) from LOA record
+useEffect(()=>{const handler=e=>{const candRaw=localStorage.getItem('satco_mob_draft_candidate');const mobRaw=localStorage.getItem('satco_mob_draft_mobilisation');let hasDraft=false;try{if(candRaw){const d=JSON.parse(candRaw);if(d.full_name)hasDraft=true;}}catch{}try{if(mobRaw){const d=JSON.parse(mobRaw);if(d.full_name)hasDraft=true;}}catch{}if(hasDraft){e.preventDefault();e.returnValue='You have an unsaved form. Are you sure you want to leave?';}};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler);},[]);useEffect(()=>{db.auth.getSession().then(({data})=>{setSession(data.session);setAuthReady(true);});const{data:l}=db.auth.onAuthStateChange((_,s)=>setSession(s));return()=>l.subscription.unsubscribe();},[]);const loadAll=useCallback(async()=>{setLoading(true);try{const[supp,cand,req,loa,mob,loc,thr]=await Promise.all([db.from('mob_suppliers').select('*').order('name'),db.from('mob_candidates').select('*').order('full_name'),db.from('mob_requirements').select('*').order('created_at',{ascending:false}),db.from('mob_loa').select('*').order('loa_date',{ascending:false}),db.from('mob_register').select('*').order('created_at',{ascending:false}),db.from('mob_location_config').select('*').order('location'),db.from('mob_alert_thresholds').select('*').eq('active',true)]);if(cand.error?.code==='42P01'){setTableReady(false);setLoading(false);return;}setTableReady(true);setData({suppliers:supp.data||[],candidates:cand.data||[],requirements:req.data||[],loaList:loa.data||[],mobList:mob.data||[],locConfigs:loc.data||[],thresholds:thr.data||[]});}catch(e){console.error(e);}setLoading(false);},[]);useEffect(()=>{if(session)loadAll();},[session,loadAll]);const loaUsed=useMemo(()=>{const m={};// Count mob_register rows against their LOA
+// Rule: if loa_id is explicitly set on the record, count it regardless of status
+// (demobilised people still consumed a LOA slot while on site)
+// If no loa_id, only auto-match active (mobilised/pending) records by location+customer
+const allMob=data.mobList.filter(r=>r.status!=='rejected');
+const counted=new Set();allMob.forEach(r=>{if(counted.has(r.id))return;counted.add(r.id);let loaId=r.loa_id||null;// Only auto-match by location if no explicit loa_id and record is currently active
+if(!loaId&&(r.status==='mobilised'||r.status==='pending')&&r.location&&r.customer_name){const rL=r.location.toLowerCase().trim();const rC=r.customer_name.toLowerCase().trim();const loa=data.loaList.find(l=>(l.location||'').toLowerCase().trim()===rL&&(l.customer_name||'').toLowerCase().trim()===rC)||data.loaList.find(l=>(l.location||'').toLowerCase().includes(rL.substring(0,20))&&(l.customer_name||'').toLowerCase().includes(rC.substring(0,15)));if(loa)loaId=loa.id;}if(loaId)m[loaId]=(m[loaId]||0)+1;});// Add any manually tracked extra passes (supervisors/visitors) from LOA record
 data.loaList.forEach(l=>{if(l.extra_used&&l.extra_used>0){m[l.id]=(m[l.id]||0)+l.extra_used;}});
 // Add cross-customer/shared usage (e.g. painters mobilised under a different customer but using this LOA's passes)
 data.loaList.forEach(l=>{if(l.shared_used&&l.shared_used>0){m[l.id]=(m[l.id]||0)+l.shared_used;}});// Pass 2 removed — visitor/supervisor CICPA slots are tracked via LOA 'extra_used' field — visitor/supervisor CICPA slots are tracked via LOA 'extra_used' field
