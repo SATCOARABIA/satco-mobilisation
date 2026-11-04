@@ -1153,12 +1153,23 @@ const[applyingMerge,setApplyingMerge]=React.useState(false);
 const importFileRef=React.useRef(null);
 
 // ── Helpers ───────────────────────────────────────────────────────────────
-const customers=React.useMemo(()=>[...new Set(mobList.filter(r=>r.status==='mobilised').map(r=>r.customer_name).filter(Boolean))].sort(),[mobList]);
-const locations=React.useMemo(()=>[...new Set(mobList.filter(r=>r.status==='mobilised'&&(!selCustomer||r.customer_name===selCustomer)).map(r=>r.location).filter(Boolean))].sort(),[mobList,selCustomer]);
-const workers=React.useMemo(()=>mobList.filter(r=>r.status==='mobilised'&&(!selCustomer||r.customer_name===selCustomer)&&(!selLocation||r.location===selLocation)).sort((a,b)=>{
+// Timesheet eligibility: mobilised people, plus demobilised people for the days they were still on site.
+// Final client timesheets can arrive a month+ after demob, so demobbed staff stay selectable for 6 months.
+const TS_DEMOB_KEEP_DAYS=190;
+const tsDemobRecent=r=>{if(r.status!=='demobilised')return false;if(!r.demobilisation_date)return true;return(new Date()-new Date(r.demobilisation_date+'T00:00:00'))/86400000<=TS_DEMOB_KEEP_DAYS;};
+const tsEligible=r=>r.status==='mobilised'||tsDemobRecent(r);
+const tsActiveBetween=(r,from,to)=>{if(r.status!=='mobilised'&&r.status!=='demobilised')return false;if(r.mobilisation_date&&r.mobilisation_date>to)return false;if(r.status==='demobilised'&&r.demobilisation_date&&r.demobilisation_date<from)return false;return true;};
+const tsSortWorkers=(a,b)=>{
   const pa=(a.supplier_emp_no||'').split('-');const pb=(b.supplier_emp_no||'').split('-');
   try{const d=parseInt(pa[1]||'0')-parseInt(pb[1]||'0');return d!==0?d:parseInt(pa[2]||'0')-parseInt(pb[2]||'0');}catch{return 0;}
-}),[mobList,selCustomer,selLocation]);
+};
+const tsMonthRange=ym=>{if(!ym)return null;const[y,m]=ym.split('-').map(Number);return[`${y}-${String(m).padStart(2,'0')}-01`,`${y}-${String(m).padStart(2,'0')}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`];};
+const customers=React.useMemo(()=>[...new Set(mobList.filter(tsEligible).map(r=>r.customer_name).filter(Boolean))].sort(),[mobList]);
+const locations=React.useMemo(()=>[...new Set(mobList.filter(r=>tsEligible(r)&&(!selCustomer||r.customer_name===selCustomer)).map(r=>r.location).filter(Boolean))].sort(),[mobList,selCustomer]);
+// Daily entry: who was on site on the selected date (or already has hours saved for it)
+const workers=React.useMemo(()=>mobList.filter(r=>(!selCustomer||r.customer_name===selCustomer)&&(!selLocation||r.location===selLocation)&&(saved[r.id]||(selDate?tsActiveBetween(r,selDate,selDate):r.status==='mobilised'))).sort(tsSortWorkers),[mobList,selCustomer,selLocation,selDate,saved]);
+// Client timesheet import: anyone on site at any point in the imported month, incl. since-demobilised staff
+const importWorkers=React.useMemo(()=>{const rg=tsMonthRange(importMonth||calMonth);return mobList.filter(r=>(!selCustomer||r.customer_name===selCustomer)&&(!selLocation||r.location===selLocation)&&(rg?tsActiveBetween(r,rg[0],rg[1]):r.status==='mobilised')).sort(tsSortWorkers);},[mobList,selCustomer,selLocation,importMonth,calMonth]);
 const isWeekend=dateStr=>{const dow=new Date(dateStr+'T00:00:00').getDay();const wd=settings.weekendDay||'sun';return wd==='fri'?dow===5:dow===0;};// 1 day off/week — Sat always working
 const isHolidayDate=dateStr=>!!(holidays[dateStr]);
 const isOffDay=dateStr=>isWeekend(dateStr)||isHolidayDate(dateStr);
@@ -1321,9 +1332,9 @@ const buildComparison=React.useCallback(()=>{
   // Match client rows to our workers
   return importRows.map(cr=>{
     // Match by emp no first, then by name similarity
-    let matched=workers.find(w=>(w.supplier_emp_no||'').toLowerCase()===cr.empNo.toLowerCase());
-    if(!matched&&cr.empNo)matched=workers.find(w=>(w.supplier_emp_no||'').replace(/[^0-9]/g,'').endsWith(cr.empNo.replace(/[^0-9]/g,'')));
-    if(!matched&&cr.name)matched=workers.find(w=>{const wn=(w.full_name||'').toLowerCase();const cn=cr.name.toLowerCase();return wn.includes(cn.split(' ')[0])||cn.includes(wn.split(' ')[0]);});
+    let matched=importWorkers.find(w=>(w.supplier_emp_no||'').toLowerCase()===(cr.empNo||'').toLowerCase());
+    if(!matched&&cr.empNo)matched=importWorkers.find(w=>(w.supplier_emp_no||'').replace(/[^0-9]/g,'').endsWith(cr.empNo.replace(/[^0-9]/g,'')));
+    if(!matched&&cr.name)matched=importWorkers.find(w=>{const wn=(w.full_name||'').toLowerCase();const cn=cr.name.toLowerCase();return wn.includes(cn.split(' ')[0])||cn.includes(wn.split(' ')[0]);});
     const our=matched?ourPivot[matched.id]||{dayHours:{}}:{dayHours:{}};
     // Find diffs
     const diffs=[];
@@ -1334,7 +1345,7 @@ const buildComparison=React.useCallback(()=>{
     }
     return{clientRow:cr,worker:matched||null,ourData:our,diffs,hasDiff:diffs.length>0,totalOurs:Object.values(our.dayHours).reduce((s,h)=>s+h,0),totalClient:Object.values(cr.days).reduce((s,h)=>s+h,0)};
   });
-},[importRows,importMonth,history,workers]);
+},[importRows,importMonth,history,importWorkers]);
 
 // Apply merge decisions and save to DB
 const applyMerge=async()=>{
@@ -1410,7 +1421,7 @@ const EntryPanel=({selCustomer,selLocation,selDate,workers,entries,saved,loading
       React.createElement('span',{style:{marginLeft:'auto',fontSize:'11px',color:'#94a3b8'}},selCustomer,' · ',selLocation)
     ),
     loading?React.createElement('div',{style:{padding:'32px',textAlign:'center',color:'#94a3b8'}},'Loading…'):
-    workers.length===0?React.createElement('div',{style:{padding:'32px',textAlign:'center',color:'#94a3b8'}},'No mobilised employees for this site.'):
+    workers.length===0?React.createElement('div',{style:{padding:'32px',textAlign:'center',color:'#94a3b8'}},'No one was on site at this location on this date.'):
     React.createElement(React.Fragment,null,
       React.createElement('table',{style:{width:'100%',borderCollapse:'collapse'}},
         React.createElement('thead',null,React.createElement('tr',{style:{background:'#f8fafc',borderBottom:'2px solid #e2e8f0'}},
@@ -1430,7 +1441,8 @@ const EntryPanel=({selCustomer,selLocation,selDate,workers,entries,saved,loading
             React.createElement('td',{style:{...S.td,fontFamily:'monospace',fontSize:'11px',fontWeight:700,color:'#0369a1'}},w.supplier_emp_no||'—'),
             React.createElement('td',{style:{...S.td,fontWeight:700}},
               (w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' '),
-              React.createElement('span',{style:{display:'block',fontSize:'10px',color:'#94a3b8',fontWeight:400}},w.full_name)
+              React.createElement('span',{style:{display:'block',fontSize:'10px',color:'#94a3b8',fontWeight:400}},w.full_name),
+              w.status==='demobilised'&&React.createElement('span',{style:{display:'inline-block',marginTop:'2px',background:'#fee2e2',color:'#991b1b',fontSize:'10px',fontWeight:700,padding:'1px 6px',borderRadius:8}},'DEMOB ',w.demobilisation_date?fmtDate(w.demobilisation_date):'')
             ),
             React.createElement('td',{style:{...S.td,fontSize:'12px',color:'#475569'}},w.designation||'—'),
             React.createElement('td',{style:{...S.td,textAlign:'center',padding:'4px 6px'}},
@@ -1575,7 +1587,7 @@ const ImportPanel=()=>{
               React.createElement('span',{style:{fontWeight:700,fontSize:'13px',color:'#0f172a'}},clientRow.name),
               React.createElement('span',{style:{fontSize:'11px',color:'#64748b'}},clientRow.craft),
               worker&&React.createElement('span',{style:{fontSize:'10px',background:'#dbeafe',color:'#1e40af',padding:'1px 7px',borderRadius:8,fontWeight:700}},'✓ Matched: ',worker.full_name),
-              !worker&&React.createElement('span',{style:{fontSize:'10px',background:'#fef3c7',color:'#92400e',padding:'1px 7px',borderRadius:8,fontWeight:700}},'⚠ No match in mobilised list'),
+              !worker&&React.createElement('span',{style:{fontSize:'10px',background:'#fef3c7',color:'#92400e',padding:'1px 7px',borderRadius:8,fontWeight:700}},'⚠ No match on site this month'),
               React.createElement('div',{style:{marginLeft:'auto',display:'flex',gap:'10px',alignItems:'center'}},
                 React.createElement('span',{style:{fontSize:'12px',color:'#64748b'}},'Our total: ',React.createElement('strong',{style:{color:'#0369a1'}},totalOurs,'h')),
                 React.createElement('span',{style:{fontSize:'12px',color:'#64748b'}},'Client total: ',React.createElement('strong',{style:{color:totalClient!==totalOurs?'#dc2626':'#166534'}},totalClient,'h')),
