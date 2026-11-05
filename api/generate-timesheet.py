@@ -1,3 +1,4 @@
+import re
 # api/generate-timesheet.py
 import json, base64, io, calendar, datetime
 from http.server import BaseHTTPRequestHandler
@@ -200,16 +201,32 @@ def build_supplier(ws,data,supp_label):
         c3.font=Font(name="Arial",bold=True,size=6,color=fc); c3.fill=fl(bg); c3.alignment=al(); c3.border=bord
         c4=ws.cell(row=4,column=col,value=day_name(year,month,d))
         c4.font=Font(name="Arial",bold=True,size=6,color=fc); c4.fill=fl(bg); c4.alignment=al(); c4.border=bord
-    for fi,h in enumerate(["Total\nHrs","Rate","Deduct.","Gross Amt","VAT","Amount"]):
+    for fi,h in enumerate(["Total\nHrs","Rate","Gross Amt","Deduct.","VAT","Amount"]):
         merge_cc(ws,3,FIN+fi,4,FIN+fi,h,bold=True,sz=8,color=GOLD,bg=NAVY,ha="center",wrap=True)
 
-    dr=5; gh=gg=gv=0
+    deds=data.get("deductions",[]) or []
+    shown_ids={w.get("mob_id") for w in workers if w.get("mob_id")}
+    def wded(mid):
+        b=a=0.0
+        if not mid: return b,a
+        for d in deds:
+            if d.get("mob_id")==mid:
+                v=float(d.get("aed") or 0)
+                if d.get("vat_treatment")=="after_vat": a+=v
+                else: b+=v
+        return round(b,2),round(a,2)
+    lvl=[d for d in deds if not d.get("mob_id") or d.get("mob_id") not in shown_ids]
+    lvl_b=round(sum(float(d.get("aed") or 0) for d in lvl if d.get("vat_treatment")!="after_vat"),2)
+    lvl_a=round(sum(float(d.get("aed") or 0) for d in lvl if d.get("vat_treatment")=="after_vat"),2)
+
+    dr=5; gh=gg=gd=gv=ga=0
     for idx,w in enumerate(workers):
         total=sum(float(v) for v in w["hours"].values())
         craft=w.get("craft","Other")
         rate=float((rates.get(craft) or {}).get("supplierRate") or def_rate)
-        gross=round(total*rate,2); vat=round(gross*vat_pct,2); amt=round(gross+vat,2)
-        gh+=total; gg+=gross; gv+=vat
+        db_,da_=wded(w.get("mob_id"))
+        gross=round(total*rate,2); ded=round(db_+da_,2); vat=round((gross-db_)*vat_pct,2); amt=round(gross-db_+vat-da_,2)
+        gh+=total; gg+=gross; gd+=ded; gv+=vat; ga+=amt
         rb="FFFFFF" if idx%2==0 else "F0FDF4"
         sn=" ".join(p.capitalize() for p in (w.get("name","") or "").split()[:2])
         supp_display=short_supplier(w.get("supplier","") or supp_label)
@@ -227,21 +244,29 @@ def build_supplier(ws,data,supp_label):
             c=ws.cell(row=dr,column=col,value=int(h_val) if h_val and h_val==int(h_val) else (h_val if h_val else ""))
             c.font=Font(name="Arial",size=8,bold=bool(h_val),color="0F172A" if h_val else "CBD5E1")
             c.fill=fl("E5E7EB" if off(d) else rb); c.alignment=al(); c.border=bord
-        for fi,(v,fbg,fb,fmt) in enumerate(zip([total,rate,0,gross,vat,amt],["DBEAFE","FFFFFF","FFFFFF","F0FDF4","FFFFFF","F0FDF4"],[True,False,False,True,False,True],[None,None,None,"#,##0.00","#,##0.00","#,##0.00"])):
+        for fi,(v,fbg,fb,fmt) in enumerate(zip([total,rate,gross,(-ded if ded else ""),vat,amt],["DBEAFE","FFFFFF","F0FDF4","FEF2F2","FFFFFF","F0FDF4"],[True,False,True,bool(ded),False,True],[None,None,"#,##0.00","#,##0.00","#,##0.00","#,##0.00"])):
             c=ws.cell(row=dr,column=FIN+fi,value=v)
-            c.font=Font(name="Arial",bold=fb,size=8,color="166634" if fb else "374151")
+            c.font=Font(name="Arial",bold=fb,size=8,color=("DC2626" if fi==3 else "166634") if fb else "374151")
             c.fill=fl(fbg); c.alignment=al("right"); c.border=bord
             if fmt: c.number_format=fmt
         ws.row_dimensions[dr].height=14; dr+=1
 
+    if lvl:
+        lv_vat=round(-lvl_b*vat_pct,2); lv_amt=round(-(lvl_b+lvl_b*vat_pct+lvl_a),2)
+        merge_cc(ws,dr,1,dr,FIN+1,f"SUPPLIER-LEVEL DEDUCTIONS ({len(lvl)}) - see Deductions Detail below",bold=True,sz=8,color="991B1B",bg="FEF2F2",ha="right")
+        for fi,(v,fmt) in enumerate([("",None),(-(lvl_b+lvl_a),"#,##0.00"),(lv_vat,"#,##0.00"),(lv_amt,"#,##0.00")]):
+            c=ws.cell(row=dr,column=FIN+2+fi,value=v)
+            c.font=Font(name="Arial",bold=True,size=8,color="DC2626"); c.fill=fl("FEF2F2"); c.alignment=al("right"); c.border=bord
+            if fmt: c.number_format=fmt
+        gd+=lvl_b+lvl_a; gv+=lv_vat; ga+=lv_amt
+        ws.row_dimensions[dr].height=14; dr+=1
     merge_cc(ws,dr,1,dr,FIX,"TOTAL",bold=True,sz=9,color=WHITE,bg=NAVY,ha="right")
     for d in range(1,days_in_month+1):
         col=DS+d-1
         dt=sum(float(w["hours"].get(str(d),w["hours"].get(d,0)) or 0) for w in workers)
         c=ws.cell(row=dr,column=col,value=int(dt) if dt and dt==int(dt) else (dt if dt else ""))
         c.font=Font(name="Arial",bold=True,size=8,color=GOLD); c.fill=fl(NAVY); c.alignment=al(); c.border=bord
-    ga=round(gg+gv,2)
-    for fi,(v,fmt) in enumerate([(round(gh,1),None),(None,None),(0,None),(round(gg,2),"#,##0.00"),(round(gv,2),"#,##0.00"),(ga,"#,##0.00")]):
+    for fi,(v,fmt) in enumerate([(round(gh,1),None),(None,None),(round(gg,2),"#,##0.00"),((-round(gd,2) if gd else ""),"#,##0.00"),(round(gv,2),"#,##0.00"),(round(ga,2),"#,##0.00")]):
         c=ws.cell(row=dr,column=FIN+fi,value=v if v is not None else "")
         c.font=Font(name="Arial",bold=True,size=9,color=GOLD); c.fill=fl(NAVY); c.alignment=al("right"); c.border=bord
         if fmt: c.number_format=fmt
@@ -251,26 +276,65 @@ def build_supplier(ws,data,supp_label):
     for w in workers:
         cr=w.get("craft","Other"); h2=sum(float(v) for v in w["hours"].values())
         r2=float((rates.get(cr) or {}).get("supplierRate") or def_rate)
-        g2=round(h2*r2,2); v2=round(g2*vat_pct,2)
-        if cr not in cm: cm[cr]={"h":0,"g":0,"v":0,"a":0}
-        cm[cr]["h"]+=h2; cm[cr]["g"]+=g2; cm[cr]["v"]+=v2; cm[cr]["a"]+=round(g2+v2,2)
+        b2,a2=wded(w.get("mob_id"))
+        g2=round(h2*r2,2); v2=round((g2-b2)*vat_pct,2)
+        if cr not in cm: cm[cr]={"h":0,"g":0,"d":0,"v":0,"a":0}
+        cm[cr]["h"]+=h2; cm[cr]["g"]+=g2; cm[cr]["d"]+=b2+a2; cm[cr]["v"]+=v2; cm[cr]["a"]+=round(g2-b2+v2-a2,2)
+    if lvl:
+        cm["Supplier-level"]={"h":0,"g":0,"d":lvl_b+lvl_a,"v":round(-lvl_b*vat_pct,2),"a":round(-(lvl_b+lvl_b*vat_pct+lvl_a),2)}
     for fi,h in enumerate(["CRAFT","TOTAL HRS","GROSS AMT","DEDUCT.","VAT","AMOUNT"]):
         c=ws.cell(row=dr,column=FIN+fi,value=h)
         c.font=Font(name="Arial",bold=True,size=8,color=WHITE); c.fill=fl(NAVY); c.alignment=al("center"); c.border=bord
     ws.row_dimensions[dr].height=13; dr+=1
     for craft,d2 in cm.items():
-        for fi,(v,ha) in enumerate([(craft,"left"),(d2["h"],"right"),(d2["g"],"right"),(0,"right"),(d2["v"],"right"),(d2["a"],"right")]):
+        for fi,(v,ha) in enumerate([(craft,"left"),(d2["h"],"right"),(d2["g"],"right"),((-round(d2["d"],2) if d2["d"] else 0),"right"),(d2["v"],"right"),(d2["a"],"right")]):
             c=ws.cell(row=dr,column=FIN+fi,value=v)
             c.font=Font(name="Arial",bold=(fi==0),size=8,color="166634"); c.fill=fl("F0FDF4"); c.alignment=al(ha); c.border=bord
             if fi>=2: c.number_format="#,##0.00"
         ws.row_dimensions[dr].height=13; dr+=1
     gh2=sum(d["h"] for d in cm.values()); gg2=sum(d["g"] for d in cm.values())
-    gv2=sum(d["v"] for d in cm.values()); ga2=sum(d["a"] for d in cm.values())
-    for fi,(v,ha,fmt) in enumerate([("GRAND TOTAL","left",None),(gh2,"right",None),(round(gg2,2),"right","#,##0.00"),(0,"right",None),(round(gv2,2),"right","#,##0.00"),(round(ga2,2),"right","#,##0.00")]):
+    gv2=sum(d["v"] for d in cm.values()); ga2=sum(d["a"] for d in cm.values()); gd2=sum(d["d"] for d in cm.values())
+    for fi,(v,ha,fmt) in enumerate([("GRAND TOTAL","left",None),(gh2,"right",None),(round(gg2,2),"right","#,##0.00"),((-round(gd2,2) if gd2 else 0),"right","#,##0.00"),(round(gv2,2),"right","#,##0.00"),(round(ga2,2),"right","#,##0.00")]):
         c=ws.cell(row=dr,column=FIN+fi,value=v)
         c.font=Font(name="Arial",bold=True,size=9,color=GOLD); c.fill=fl(NAVY); c.alignment=al(ha); c.border=bord
         if fmt: c.number_format=fmt
-    ws.row_dimensions[dr].height=15; dr+=3
+    ws.row_dimensions[dr].height=15; dr+=2
+
+    if deds:
+        RED="7F1D1D"
+        c_desc=(DS,DS+13); c_ref=(DS+14,DS+18); c_amt=(DS+19,DS+23); c_rem=(DS+24,FIN-1); c_vat=(FIN,FIN+2); c_aed=(FIN+3,FIN+5)
+        merge_cc(ws,dr,1,dr,LAST,"DEDUCTIONS DETAIL",bold=True,sz=9,color=WHITE,bg=RED,ha="left"); ws.row_dimensions[dr].height=15; dr+=1
+        for (sc,ec),h in zip([(1,1),(2,2),(3,3),(4,4),(5,5),c_desc,c_ref,c_amt,c_rem,c_vat,c_aed],["SL","EMP No","NAME","DATE","CATEGORY","REASON / DESCRIPTION","REFERENCE","AMOUNT (ORIG.)","REMARKS","VAT TREATMENT","AED"]):
+            merge_cc(ws,dr,sc,dr,ec,h,bold=True,sz=7,color=WHITE,bg="991B1B",ha="center",wrap=True)
+        ws.row_dimensions[dr].height=14; dr+=1
+        def dkey(d):
+            p=(d.get("emp") or "").split("-")
+            try: return (d.get("supplier",""),0 if d.get("mob_id") else 1,int(p[1]),int(p[2]))
+            except: return (d.get("supplier",""),0 if d.get("mob_id") else 1,9999,0)
+        tot=0.0
+        for i,d in enumerate(sorted(deds,key=dkey)):
+            rb="FFFFFF" if i%2==0 else "FEF2F2"
+            amt_o=float(d.get("amount") or 0); cur=d.get("currency") or "AED"; fx=float(d.get("fx") or 1)
+            orig=f"{cur} {amt_o:,.2f}"+("" if cur=="AED" else f" @ {fx:g}")
+            dt=d.get("date") or ""
+            try: dt=datetime.date.fromisoformat(dt).strftime("%d-%b") if dt else ""
+            except: pass
+            nm=" ".join(p.capitalize() for p in (d.get("name","") or "").split()[:2]) or "Supplier-level"
+            aed=float(d.get("aed") or 0); tot+=aed
+            vals=[((1,1),i+1,"center"),((2,2),d.get("emp","") or "-","left"),((3,3),nm,"left"),((4,4),dt,"center"),((5,5),d.get("category",""),"left"),
+                  (c_desc,d.get("description",""),"left"),(c_ref,d.get("ref","") or "-","left"),(c_amt,orig,"right"),(c_rem,d.get("remarks",""),"left"),
+                  (c_vat,"After VAT" if d.get("vat_treatment")=="after_vat" else "Before VAT","center")]
+            for (sc,ec),v,ha in vals:
+                merge_cc(ws,dr,sc,dr,ec,v,sz=7,color="374151",bg=rb,ha=ha,wrap=True)
+            merge_cc(ws,dr,c_aed[0],dr,c_aed[1],-round(aed,2),bold=True,sz=8,color="DC2626",bg=rb,ha="right")
+            ws.cell(row=dr,column=c_aed[0]).number_format="#,##0.00"
+            ln=max(len(str(d.get("description",""))),len(str(d.get("remarks",""))))
+            ws.row_dimensions[dr].height=14 if ln<45 else 24; dr+=1
+        merge_cc(ws,dr,1,dr,c_vat[1],"TOTAL DEDUCTIONS (AED)",bold=True,sz=9,color=WHITE,bg=RED,ha="right")
+        merge_cc(ws,dr,c_aed[0],dr,c_aed[1],-round(tot,2),bold=True,sz=9,color=GOLD,bg=RED,ha="right")
+        ws.cell(row=dr,column=c_aed[0]).number_format="#,##0.00"
+        ws.row_dimensions[dr].height=15; dr+=1
+    dr+=2
 
     third=LAST//3
     for (sc,ec),txt,sub in zip([(1,third),(third+1,third*2),(third*2+1,LAST)],
@@ -285,7 +349,7 @@ def build_supplier(ws,data,supp_label):
     ws.column_dimensions["C"].width=14; ws.column_dimensions["D"].width=7.5
     ws.column_dimensions["E"].width=14
     for d in range(1,days_in_month+1): ws.column_dimensions[get_column_letter(DS+d-1)].width=2.8
-    for fi,w in enumerate([9,6,9,13,9,13]): ws.column_dimensions[get_column_letter(FIN+fi)].width=w
+    for fi,w in enumerate([9,6,12,11,9,13]): ws.column_dimensions[get_column_letter(FIN+fi)].width=w
     ws.freeze_panes=ws.cell(row=5,column=DS); print_setup(ws)
 
 class handler(BaseHTTPRequestHandler):
@@ -307,7 +371,10 @@ class handler(BaseHTTPRequestHandler):
             if ts_type=="customer":
                 ws=wb.create_sheet("Timesheet"); build_customer(ws,data)
             else:
-                ws_all=wb.create_sheet("All Suppliers"); build_supplier(ws_all,data,supp or "ALL SUPPLIERS")
+                if supp:
+                    data={**data,"workers":[w for w in data.get("workers",[]) if w.get("supplier","")==supp],
+                          "deductions":[d for d in data.get("deductions",[]) or [] if d.get("supplier","")==supp]}
+                ws_all=wb.create_sheet(re.sub(r"[\[\]:*?/\\]","",supp)[:31] if supp else "All Suppliers"); build_supplier(ws_all,data,supp or "ALL SUPPLIERS")
                 if not supp:
                     sm=defaultdict(list)
                     for w in data.get("workers",[]): sm[w.get("supplier","")].append(w)
@@ -317,8 +384,8 @@ class handler(BaseHTTPRequestHandler):
                         try: return (int(p[1]),int(p[2]))
                         except: return (9999,0)
                     for sn,sw in sorted(sm.items(),key=sk):
-                        sub={**data,"workers":sw}
-                        ws2=wb.create_sheet(sn[:31]); build_supplier(ws2,sub,sn)
+                        sub={**data,"workers":sw,"deductions":[d for d in data.get("deductions",[]) or [] if d.get("supplier","")==sn]}
+                        ws2=wb.create_sheet(re.sub(r"[\[\]:*?/\\]","",sn)[:31] or "Supplier"); build_supplier(ws2,sub,sn)
             buf=io.BytesIO(); wb.save(buf); xlsx=buf.getvalue()
             self.send_response(200); self._cors()
             self.send_header("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

@@ -1416,12 +1416,56 @@ const applyMerge=async()=>{
 // ── Excel exports ─────────────────────────────────────────────────────────
 const sortWorkers=ws=>[...ws].sort((a,b)=>{const pa=(a.supplier_emp_no||'').split('-');const pb=(b.supplier_emp_no||'').split('-');try{const d=parseInt(pa[1])-parseInt(pb[1]);return d!==0?d:parseInt(pa[2])-parseInt(pb[2]);}catch{return 0;}});
 const shortSupplier=(name,max=18)=>{const skip=new Set(['L.L.C','S.P.C','AND','GENERAL','CONTRACTING','LLC','SPC','-','&','MAINTENANCE','WORKS','CO.','COMPANY','SERVICES','TRADING','EST']);const words=(name||'').toUpperCase().split(' ').filter(w=>!skip.has(w));let r='';for(const w of words){if((r+(r?' ':'')+w).length<=max)r+=(r?' ':'')+w.charAt(0)+w.slice(1).toLowerCase();else break;}return r||name.slice(0,max);};
-const buildTsData=()=>({year:parseInt(calMonth.split('-')[0]),month:parseInt(calMonth.split('-')[1]),settings,rates,holidays,workers:sortWorkers([...new Set(history.map(r=>r.mob_register_id))].map(id=>{const r=history.find(h=>h.mob_register_id===id);if(!r)return null;const dayHours={};history.filter(h=>h.mob_register_id===id).forEach(h=>{const d=new Date(h.work_date+'T00:00:00').getDate();if(parseFloat(h.hours)>0)dayHours[String(d)]=parseFloat(h.hours);});return{emp:r.supplier_emp_no||'',name:r.full_name||'',craft:r.designation||'Other',supplier:r.supplier_name||'',hours:dayHours};}).filter(Boolean))});
+const buildTsData=()=>({year:parseInt(calMonth.split('-')[0]),month:parseInt(calMonth.split('-')[1]),settings,rates,holidays,workers:sortWorkers([...new Set(history.map(r=>r.mob_register_id))].map(id=>{const r=history.find(h=>h.mob_register_id===id);if(!r)return null;const dayHours={};history.filter(h=>h.mob_register_id===id).forEach(h=>{const d=new Date(h.work_date+'T00:00:00').getDate();if(parseFloat(h.hours)>0)dayHours[String(d)]=parseFloat(h.hours);});return{mob_id:id,emp:r.supplier_emp_no||'',name:r.full_name||'',craft:r.designation||'Other',supplier:r.supplier_name||'',hours:dayHours};}).filter(Boolean)),deductions:dedApproved.map(d=>({mob_id:d.mob_register_id||null,supplier:d.supplier_name,emp:d.emp_no||'',name:d.worker_name||'',date:d.deduction_date||'',category:d.category||'',description:d.description||'',ref:d.reference_no||'',amount:Number(d.amount)||0,currency:d.currency||'AED',fx:Number(d.fx_rate)||1,aed:dedAED(d),vat_treatment:d.vat_treatment||'before_vat',remarks:d.remarks||''}))});
 const callTsApi=async(payload,filename)=>{try{const res=await fetch('/api/generate-timesheet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,filename})});if(!res.ok){const txt=await res.text();throw new Error(txt||'API error '+res.status);}const blob=await res.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);}catch(ex){alert('Export failed: '+ex.message);}};
 const exportCustomerExcel=async()=>{if(!history.length)return alert('No timesheet data for this month.');const[calY,calM]=calMonth.split('-').map(Number);const mn=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'short',year:'numeric'}).replace(' ','');await callTsApi({type:'customer',data:buildTsData()},`SATCO_Customer_${(selCustomer||'').split(' ')[0]}_${mn}.xlsx`);};
 const exportSupplierExcel=async(suppName)=>{if(!history.length)return alert('No timesheet data for this month.');const[calY,calM]=calMonth.split('-').map(Number);const mn=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'short',year:'numeric'}).replace(' ','');const s=n=>{const sk=new Set(['L.L.C','S.P.C','AND','GENERAL','CONTRACTING','LLC','SPC','-','&','MAINTENANCE']);return(n||'ALL').split(' ').filter(w=>!sk.has(w.toUpperCase())).slice(0,2).join('_');};await callTsApi({type:'supplier',supplier:suppName||null,data:buildTsData()},suppName?`SATCO_Supplier_${s(suppName)}_${mn}.xlsx`:`SATCO_AllSuppliers_${mn}.xlsx`);}
 
 const monthSuppliers=React.useMemo(()=>[...new Set(history.map(r=>r.supplier_name).filter(Boolean))].sort(),[history]);
+
+// ── Supplier deductions (per customer + site + month) ─────────────────────
+const DED_CATS=['Absence / No-show','Camp / Accommodation','Food / Mess','Transportation','PPE / Tools Issued','Damage / Loss','Safety Violation / Penalty','Advance Paid','Visa / Medical / Gate Pass Cost','Rework / Quality','Overtime Not Approved','Other'];
+const DED_CURR={AED:1,USD:3.6725,SAR:0.9793,EUR:'',GBP:'',INR:'',PKR:'',NPR:''};// AED/USD/SAR pegged; others must be entered
+const[deductions,setDeductions]=React.useState([]);
+const[dedLoading,setDedLoading]=React.useState(false);
+const[dedErr,setDedErr]=React.useState('');
+const[dedForm,setDedForm]=React.useState(null);
+const[dedSaving,setDedSaving]=React.useState(false);
+const loadDeductions=React.useCallback(async()=>{
+  if(!selCustomer||!selLocation){setDeductions([]);setDedErr('');return;}
+  setDedLoading(true);setDedErr('');
+  const{data,error}=await db.from('mob_supplier_deductions').select('*').eq('customer_name',selCustomer).eq('location',selLocation).eq('ts_month',calMonth).order('created_at');
+  if(error){setDedErr(error.message||'Could not load deductions');setDeductions([]);}else setDeductions(data||[]);
+  setDedLoading(false);
+},[selCustomer,selLocation,calMonth]);
+React.useEffect(()=>{loadDeductions();setDedForm(null);},[loadDeductions]);
+const dedAED=d=>Math.round((parseFloat(d.amount)||0)*(parseFloat(d.fx_rate)||1)*100)/100;
+const dedApproved=React.useMemo(()=>deductions.filter(d=>d.status==='approved'),[deductions]);
+// Worker pool for the deduction form: everyone on site this month + anyone with hours in the month
+const dedWorkerPool=React.useMemo(()=>{const m={};monthWorkers.forEach(r=>{m[r.id]={id:r.id,emp:r.supplier_emp_no||'',name:r.full_name||'',supplier:r.supplier_name||''};});history.forEach(h=>{if(h.mob_register_id&&!m[h.mob_register_id])m[h.mob_register_id]={id:h.mob_register_id,emp:h.supplier_emp_no||'',name:h.full_name||'',supplier:h.supplier_name||''};});return Object.values(m).sort((a,b)=>tsSortWorkers({supplier_emp_no:a.emp},{supplier_emp_no:b.emp}));},[monthWorkers,history]);
+const dedSuppliers=React.useMemo(()=>[...new Set([...monthSuppliers,...dedWorkerPool.map(w=>w.supplier),...deductions.map(d=>d.supplier_name)].filter(Boolean))].sort(),[monthSuppliers,dedWorkerPool,deductions]);
+const newDedForm=(over={})=>({supplier_name:selSupp||'',mob_register_id:'',deduction_date:'',category:DED_CATS[0],description:'',qty:'',unit_rate:'',amount:'',currency:'AED',fx_rate:'1',vat_treatment:'before_vat',reference_no:'',remarks:'',status:'approved',...over});
+const saveDeduction=async()=>{
+  const f=dedForm;if(!f)return;
+  if(!f.supplier_name)return alert('Select the supplier.');
+  if(!(f.description||'').trim())return alert('Enter the reason / description.');
+  const amt=parseFloat(f.amount);if(!(amt>0))return alert('Enter an amount greater than 0.');
+  const fx=parseFloat(f.fx_rate);if(!(fx>0))return alert('Enter the exchange rate to AED (1 '+f.currency+' = ? AED).');
+  const w=f.mob_register_id?dedWorkerPool.find(x=>x.id===f.mob_register_id):null;
+  let by='';try{const{data}=await db.auth.getUser();by=data?.user?.email||'';}catch{}
+  const row={customer_name:selCustomer,location:selLocation,ts_month:calMonth,supplier_name:f.supplier_name,mob_register_id:f.mob_register_id||null,emp_no:w?w.emp:null,worker_name:w?w.name:null,deduction_date:f.deduction_date||null,category:f.category,description:f.description.trim(),qty:f.qty===''||f.qty==null?null:parseFloat(f.qty),unit_rate:f.unit_rate===''||f.unit_rate==null?null:parseFloat(f.unit_rate),amount:Math.round(amt*100)/100,currency:f.currency,fx_rate:fx,vat_treatment:f.vat_treatment,reference_no:(f.reference_no||'').trim()||null,remarks:(f.remarks||'').trim()||null,status:f.status,updated_at:new Date().toISOString()};
+  setDedSaving(true);
+  const res=f.id?await db.from('mob_supplier_deductions').update(row).eq('id',f.id):await db.from('mob_supplier_deductions').insert({...row,created_by:by||null});
+  setDedSaving(false);
+  if(res.error)return alert('Save failed: '+res.error.message);
+  setDedForm(null);loadDeductions();
+};
+const deleteDeduction=async d=>{
+  if(!window.confirm(`Delete this deduction?\n\n${d.supplier_name}\n${d.worker_name||'Supplier-level'} — ${d.description}\n${d.currency} ${Number(d.amount).toLocaleString('en',{minimumFractionDigits:2})}`))return;
+  const{error}=await db.from('mob_supplier_deductions').delete().eq('id',d.id);
+  if(error)return alert('Delete failed: '+error.message);
+  loadDeductions();
+};
 const calDayMap=React.useMemo(()=>{const m={};history.forEach(r=>{const d=r.work_date;if(!m[d])m[d]={total:0,count:0};m[d].total+=parseFloat(r.hours||0);m[d].count+=1;});return m;},[history]);
 const prevMonth=()=>{const[y,mo]=calMonth.split('-').map(Number);const d=new Date(y,mo-2,1);setCalMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);};
 const nextMonth=()=>{const[y,mo]=calMonth.split('-').map(Number);const d=new Date(y,mo,1);setCalMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);};
@@ -1517,6 +1561,27 @@ const MonthPivotTable=({showFinancials=false,supplierFilter='',editable=false})=
   workers2.sort((a,b)=>{const na=parseInt((a.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');const nb=parseInt((b.supplier_emp_no||'').match(/(\d+)$/)?.[1]||'0');return na-nb;});
   const VAT=parseFloat(settings.vat||'5')/100;
   const hdrBg=showFinancials?'#166534':'#1e3a5f';
+  // Deductions in scope for this view (approved only)
+  const dScope=showFinancials?dedApproved.filter(d=>!supplierFilter||d.supplier_name===supplierFilter):[];
+  const shownIds=new Set(workers2.map(w=>w.mob_register_id));
+  const wDed=id=>{let b=0,a=0;dScope.forEach(d=>{if(d.mob_register_id===id){const v=dedAED(d);if(d.vat_treatment==='after_vat')a+=v;else b+=v;}});return{b,a};};
+  // Supplier-level deductions + any worker deduction for someone not listed in the grid
+  const lvl=dScope.filter(d=>!d.mob_register_id||!shownIds.has(d.mob_register_id));
+  const lvlB=lvl.filter(d=>d.vat_treatment!=='after_vat').reduce((s,d)=>s+dedAED(d),0);
+  const lvlA=lvl.filter(d=>d.vat_treatment==='after_vat').reduce((s,d)=>s+dedAED(d),0);
+  const calcRow=w=>{
+    const wm=workerMap[w.mob_register_id]||{dayHours:{}};
+    const totalHrs=days.reduce((s,d)=>s+effH(w.mob_register_id,d.d,wm),0);
+    const craft=w.designation||'Other';
+    const rate=parseFloat((rates[craft]||{}).supplierRate||settings.defaultSupplierRate||16);
+    const otPol=settings.otPolicy||'flat';const otThr=parseFloat(settings.otDailyThreshold||10);const otDM=parseFloat(settings.otDailyMultiplier||1.25);const otWM=parseFloat(settings.otWeekendMultiplier||1.5);
+    let gross=0;if(otPol==='flat'){gross=totalHrs*rate;}else{days.forEach(day=>{const h=effH(w.mob_register_id,day.d,wm);if(h<=0)return;if(day.isOff){gross+=h*rate*otWM;}else if(h>otThr){gross+=otThr*rate+(h-otThr)*rate*otDM;}else{gross+=h*rate;}});}
+    const{b,a}=wDed(w.mob_register_id);
+    const vat=(gross-b)*VAT;const amt=gross-b+vat-a;
+    return{wm,totalHrs,craft,rate,gross,ded:b+a,vat,amt};
+  };
+  const fmt2=v=>v.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const dedCell=(v,w)=>React.createElement('td',{title:showFinancials?'Click to add a deduction for this person':'',onClick:()=>{if(!w)return;setDedForm(newDedForm({supplier_name:w.supplier_name||'',mob_register_id:w.mob_register_id}));setTimeout(()=>document.getElementById('ded-panel')?.scrollIntoView({behavior:'smooth',block:'start'}),50);},style:{...S.td,textAlign:'right',fontSize:'11px',fontWeight:v>0?700:400,color:v>0?'#dc2626':'#cbd5e1',cursor:w?'pointer':'default'}},v>0?'−'+fmt2(v):'+');
   return React.createElement('div',{style:{overflowX:'auto'}},
     React.createElement('table',{style:{borderCollapse:'collapse',width:'max-content',minWidth:'100%',fontSize:'11px'}},
       React.createElement('thead',null,React.createElement('tr',{style:{background:hdrBg}},
@@ -1531,17 +1596,12 @@ const MonthPivotTable=({showFinancials=false,supplierFilter='',editable=false})=
         React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'50px',textAlign:'center'}},'HRS'),
         showFinancials&&React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'50px',textAlign:'center'}},'RATE'),
         showFinancials&&React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'80px',textAlign:'right'}},'GROSS'),
+        showFinancials&&React.createElement('th',{style:{...S.th,color:'#fca5a5',background:hdrBg,width:'80px',textAlign:'right'}},'DEDUCT.'),
         showFinancials&&React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'65px',textAlign:'right'}},'VAT'),
         showFinancials&&React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'80px',textAlign:'right'}},'TOTAL')
       )),
       React.createElement('tbody',null,workers2.map((w,i)=>{
-        const wm=workerMap[w.mob_register_id]||{dayHours:{}};
-        const totalHrs=days.reduce((s,d)=>s+effH(w.mob_register_id,d.d,wm),0);
-        const craft=w.designation||'Other';
-        const rate=parseFloat((rates[craft]||{}).supplierRate||settings.defaultSupplierRate||16);
-        const otPol=settings.otPolicy||'flat';const otThr=parseFloat(settings.otDailyThreshold||10);const otDM=parseFloat(settings.otDailyMultiplier||1.25);const otWM=parseFloat(settings.otWeekendMultiplier||1.5);
-        let gross=0;if(otPol==='flat'){gross=totalHrs*rate;}else{days.forEach(day=>{const h=effH(w.mob_register_id,day.d,wm);if(h<=0)return;if(day.isOff){gross+=h*rate*otWM;}else if(h>otThr){gross+=otThr*rate+(h-otThr)*rate*otDM;}else{gross+=h*rate;}});}
-        const vat=gross*VAT;const amt=gross+vat;
+        const{wm,totalHrs,craft,rate,gross,ded,vat,amt}=calcRow(w);
         const rowBg=i%2===0?'#fff':'#f8fafc';
         const sn=(w.full_name||'').split(' ').slice(0,2).map(n=>n.charAt(0).toUpperCase()+n.slice(1).toLowerCase()).join(' ');
         return React.createElement('tr',{key:w.mob_register_id,className:'hr-row',style:{background:rowBg}},
@@ -1554,19 +1614,29 @@ const MonthPivotTable=({showFinancials=false,supplierFilter='',editable=false})=
           React.createElement('td',{style:{...S.td,textAlign:'center',fontWeight:800,color:showFinancials?'#166534':'#0369a1',background:showFinancials?'#f0fdf4':'#f0f9ff'}},totalHrs||'—'),
           showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'center',fontSize:'11px',color:'#0369a1'}},rate),
           showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'right',fontWeight:700,fontSize:'11px'}},gross>0?gross.toLocaleString('en',{maximumFractionDigits:2}):'—'),
-          showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'right',fontSize:'11px',color:'#64748b'}},vat>0?vat.toFixed(2):'—'),
-          showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'right',fontWeight:800,fontSize:'11px',color:'#166534',background:'#f0fdf4'}},amt>0?amt.toLocaleString('en',{maximumFractionDigits:2}):'—')
+          showFinancials&&dedCell(ded,w),
+          showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'right',fontSize:'11px',color:'#64748b'}},vat!==0?vat.toFixed(2):'—'),
+          showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'right',fontWeight:800,fontSize:'11px',color:amt<0?'#dc2626':'#166534',background:'#f0fdf4'}},amt!==0?amt.toLocaleString('en',{maximumFractionDigits:2}):'—')
         );
-      })),
+      }),
+      showFinancials&&lvl.length>0&&React.createElement('tr',{key:'lvl',style:{background:'#fef2f2'}},
+        React.createElement('td',{colSpan:5+days.length+3,style:{...S.td,textAlign:'right',fontWeight:700,fontSize:'11px',color:'#991b1b',background:'#fef2f2'}},`Supplier-level deductions (${lvl.length}) — see Deductions below`),
+        dedCell(lvlB+lvlA,null),
+        React.createElement('td',{style:{...S.td,textAlign:'right',fontSize:'11px',color:'#64748b'}},lvlB>0?(-lvlB*VAT).toFixed(2):'—'),
+        React.createElement('td',{style:{...S.td,textAlign:'right',fontWeight:800,fontSize:'11px',color:'#dc2626',background:'#fef2f2'}},'−'+fmt2(lvlB*(1+VAT)+lvlA))
+      )),
       React.createElement('tfoot',null,React.createElement('tr',{style:{background:hdrBg}},
         React.createElement('td',{colSpan:showFinancials?5:4,style:{...S.td,fontWeight:800,color:'#fff',textAlign:'right',background:hdrBg,fontSize:'11px'}},'TOTAL'),
         ...days.map(day=>{const dt=workers2.reduce((s,w)=>s+effH(w.mob_register_id,day.d,workerMap[w.mob_register_id]),0);return React.createElement('td',{key:day.d,style:{...S.td,textAlign:'center',fontWeight:800,color:'#fde68a',background:day.isOff?'#1e293b':hdrBg,fontSize:'10px',padding:'4px 2px'}},dt||'');}),
         ...React.Children.toArray((()=>{
           const gHrs=workers2.reduce((s,w)=>s+days.reduce((s2,day)=>s2+effH(w.mob_register_id,day.d,workerMap[w.mob_register_id]),0),0);
-          const gGross=showFinancials?workers2.reduce((s,w)=>{const wm=workerMap[w.mob_register_id]||{dayHours:{}};const hrs=Object.values(wm.dayHours).reduce((s2,h2)=>s2+h2,0);const rate=parseFloat((rates[w.designation||'Other']||{}).supplierRate||settings.defaultSupplierRate||16);return s+hrs*rate;},0):0;
-          const gVat=gGross*parseFloat(settings.vat||'5')/100;const gAmt=gGross+gVat;
+          const rows=showFinancials?workers2.map(calcRow):[];
+          const gGross=rows.reduce((s,r)=>s+r.gross,0);
+          const gDed=rows.reduce((s,r)=>s+r.ded,0)+lvlB+lvlA;
+          const gVat=rows.reduce((s,r)=>s+r.vat,0)-lvlB*VAT;
+          const gAmt=rows.reduce((s,r)=>s+r.amt,0)-(lvlB*(1+VAT)+lvlA);
           const cells=[React.createElement('td',{key:'h',style:{...S.td,textAlign:'center',fontWeight:800,color:'#fde68a',background:hdrBg}},gHrs.toFixed(1))];
-          if(showFinancials){cells.push(React.createElement('td',{key:'r',style:{...S.td,background:hdrBg}},''));cells.push(React.createElement('td',{key:'g',style:{...S.td,textAlign:'right',fontWeight:800,color:'#fde68a',background:hdrBg,fontSize:'11px'}},gGross.toLocaleString('en',{maximumFractionDigits:2})));cells.push(React.createElement('td',{key:'v',style:{...S.td,textAlign:'right',color:'#fde68a',background:hdrBg,fontSize:'11px'}},gVat.toFixed(2)));cells.push(React.createElement('td',{key:'a',style:{...S.td,textAlign:'right',fontWeight:800,color:'#fde68a',background:hdrBg,fontSize:'11px'}},gAmt.toLocaleString('en',{maximumFractionDigits:2})));}
+          if(showFinancials){cells.push(React.createElement('td',{key:'r',style:{...S.td,background:hdrBg}},''));cells.push(React.createElement('td',{key:'g',style:{...S.td,textAlign:'right',fontWeight:800,color:'#fde68a',background:hdrBg,fontSize:'11px'}},gGross.toLocaleString('en',{maximumFractionDigits:2})));cells.push(React.createElement('td',{key:'d',style:{...S.td,textAlign:'right',fontWeight:800,color:'#fca5a5',background:hdrBg,fontSize:'11px'}},gDed>0?'−'+fmt2(gDed):'—'));cells.push(React.createElement('td',{key:'v',style:{...S.td,textAlign:'right',color:'#fde68a',background:hdrBg,fontSize:'11px'}},gVat.toFixed(2)));cells.push(React.createElement('td',{key:'a',style:{...S.td,textAlign:'right',fontWeight:800,color:'#fde68a',background:hdrBg,fontSize:'11px'}},gAmt.toLocaleString('en',{maximumFractionDigits:2})));}
           return cells;
         })())
       ))
@@ -1746,6 +1816,96 @@ const HolidaysPanel=({holidays,setHolidays,newHolDate,setNewHolDate,newHolName,s
   );
 };
 
+// ── Supplier deductions panel (called as a function so inputs keep focus) ──
+const DeductionsPanel=()=>{
+  if(!selCustomer||!selLocation)return null;
+  const E=React.createElement;
+  const[cy,cm]=calMonth.split('-').map(Number);
+  const monLbl=new Date(cy,cm-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'});
+  const list=deductions.filter(d=>!selSupp||d.supplier_name===selSupp);
+  const appr=list.filter(d=>d.status==='approved');
+  const totAED=appr.reduce((s,d)=>s+dedAED(d),0);
+  const bySupp={};appr.forEach(d=>{bySupp[d.supplier_name]=(bySupp[d.supplier_name]||0)+dedAED(d);});
+  const fmt=v=>Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const noTable=dedErr&&/does not exist|relation|schema cache|not find the table/i.test(dedErr);
+  const f=dedForm;
+  const setF=(k,v)=>setDedForm(p=>{const n={...p,[k]:v};
+    if(k==='currency'){n.fx_rate=DED_CURR[v]===''?'':String(DED_CURR[v]);}
+    if((k==='qty'||k==='unit_rate')&&n.qty!==''&&n.unit_rate!==''){const a=(parseFloat(n.qty)||0)*(parseFloat(n.unit_rate)||0);if(a>0)n.amount=String(Math.round(a*100)/100);}
+    if(k==='supplier_name'&&p.mob_register_id){const w=dedWorkerPool.find(x=>x.id===p.mob_register_id);if(w&&w.supplier!==v)n.mob_register_id='';}
+    return n;});
+  const lbl=t=>E('div',{style:{fontSize:'10px',fontWeight:700,color:'#64748b',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'3px'}},t);
+  const fld=(t,el,span)=>E('div',{style:{gridColumn:span?`span ${span}`:undefined,minWidth:0}},lbl(t),el);
+  const inp={...S.input,padding:'6px 8px',fontSize:'12px',width:'100%',boxSizing:'border-box'};
+  const poolForSupp=f?dedWorkerPool.filter(w=>!f.supplier_name||w.supplier===f.supplier_name):[];
+  const aedPreview=f?(parseFloat(f.amount)||0)*(parseFloat(f.fx_rate)||0):0;
+  const th=t=>E('th',{style:{...S.th,background:'#7f1d1d',color:'#fff',fontSize:'10px',whiteSpace:'nowrap'}},t);
+  return E('div',{id:'ded-panel',style:{...S.card,padding:'14px 16px',marginTop:'14px',border:'1px solid #fecaca'}},
+    E('div',{style:{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap',marginBottom:'10px'}},
+      E('div',{style:{fontWeight:800,fontSize:'14px',color:'#b91c1c'}},'➖ Supplier Deductions — ',monLbl,selSupp?' — '+selSupp:''),
+      E('div',{style:{fontSize:'12px',color:'#64748b'}},`${appr.length} approved · AED ${fmt(totAED)}`),
+      E('div',{style:{flex:1}}),
+      !noTable&&!f&&E('button',{onClick:()=>setDedForm(newDedForm()),style:{...S.btnPri,background:'#b91c1c',padding:'6px 14px',fontSize:'12px'}},'+ Add Deduction')
+    ),
+    noTable&&E('div',{style:{padding:'10px 12px',borderRadius:6,background:'#fffbeb',border:'1px solid #fde68a',color:'#92400e',fontSize:'12px'}},'⚠ Deductions table is not set up yet. Run the mob_supplier_deductions SQL in Supabase, then reload.'),
+    dedErr&&!noTable&&E('div',{style:{padding:'8px 12px',borderRadius:6,background:'#fef2f2',color:'#dc2626',fontSize:'12px',marginBottom:'8px'}},'❌ ',dedErr),
+    // ── Form ──
+    f&&E('div',{style:{padding:'12px',borderRadius:8,background:'#fff7ed',border:'1px solid #fed7aa',marginBottom:'12px'}},
+      E('div',{style:{fontWeight:700,fontSize:'12px',color:'#9a3412',marginBottom:'10px'}},f.id?'✏ Edit Deduction':'+ New Deduction'),
+      E('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(170px,1fr))',gap:'10px'}},
+        fld('Supplier *',E('select',{value:f.supplier_name,onChange:e=>setF('supplier_name',e.target.value),style:inp},E('option',{value:''},'— Select supplier —'),dedSuppliers.map(s=>E('option',{key:s,value:s},s))),2),
+        fld('Employee',E('select',{value:f.mob_register_id,onChange:e=>setF('mob_register_id',e.target.value),style:inp},E('option',{value:''},'— Supplier-level (no specific person) —'),poolForSupp.map(w=>E('option',{key:w.id,value:w.id},(w.emp?w.emp+' — ':'')+w.name))),2),
+        fld('Date',E('input',{type:'date',value:f.deduction_date||'',onChange:e=>setF('deduction_date',e.target.value),style:inp})),
+        fld('Category *',E('select',{value:f.category,onChange:e=>setF('category',e.target.value),style:inp},DED_CATS.map(c=>E('option',{key:c,value:c},c)))),
+        fld('Reason / Description *',E('input',{value:f.description,onChange:e=>setF('description',e.target.value),placeholder:'e.g. Absent 2 days without notice (14–15 Oct)',style:inp}),3),
+        fld('Qty (optional)',E('input',{type:'number',value:f.qty,onChange:e=>setF('qty',e.target.value),placeholder:'e.g. 2',style:inp})),
+        fld('Unit Rate (optional)',E('input',{type:'number',value:f.unit_rate,onChange:e=>setF('unit_rate',e.target.value),placeholder:'e.g. 160',style:inp})),
+        fld('Amount *',E('input',{type:'number',value:f.amount,onChange:e=>setF('amount',e.target.value),placeholder:'0.00',style:{...inp,fontWeight:700}})),
+        fld('Currency',E('select',{value:f.currency,onChange:e=>setF('currency',e.target.value),style:inp},Object.keys(DED_CURR).map(c=>E('option',{key:c,value:c},c)))),
+        fld('Rate to AED (1 '+f.currency+' = ? AED)',E('input',{type:'number',value:f.fx_rate,disabled:f.currency==='AED',onChange:e=>setF('fx_rate',e.target.value),placeholder:'e.g. 0.0435',style:inp})),
+        fld('VAT Treatment',E('select',{value:f.vat_treatment,onChange:e=>setF('vat_treatment',e.target.value),style:inp},E('option',{value:'before_vat'},'Before VAT (reduces taxable amount)'),E('option',{value:'after_vat'},'After VAT (deduct from net payable)')),2),
+        fld('Reference No.',E('input',{value:f.reference_no,onChange:e=>setF('reference_no',e.target.value),placeholder:'NCR / memo / receipt no.',style:inp})),
+        fld('Status',E('select',{value:f.status,onChange:e=>setF('status',e.target.value),style:inp},E('option',{value:'approved'},'Approved (apply to totals)'),E('option',{value:'draft'},'Draft (not applied)'))),
+        fld('Remarks',E('textarea',{value:f.remarks,onChange:e=>setF('remarks',e.target.value),rows:2,placeholder:'Internal notes / evidence / who approved',style:{...inp,resize:'vertical',fontFamily:'inherit'}}),4)
+      ),
+      E('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginTop:'12px',flexWrap:'wrap'}},
+        E('div',{style:{fontSize:'12px',color:'#9a3412',fontWeight:700}},'= AED ',fmt(aedPreview),f.vat_treatment==='before_vat'?` (+ VAT ${fmt(aedPreview*parseFloat(settings.vat||'5')/100)} also reduced)`:''),
+        E('div',{style:{flex:1}}),
+        E('button',{onClick:()=>setDedForm(null),disabled:dedSaving,style:{...S.btnSec,padding:'6px 14px',fontSize:'12px'}},'Cancel'),
+        E('button',{onClick:saveDeduction,disabled:dedSaving,style:{...S.btnPri,background:'#b91c1c',padding:'6px 16px',fontSize:'12px'}},dedSaving?'Saving…':'💾 Save Deduction')
+      )
+    ),
+    // ── List ──
+    dedLoading?E('div',{style:{padding:'12px',color:'#94a3b8',fontSize:'12px'}},'Loading deductions…'):
+    !noTable&&(list.length===0?E('div',{style:{padding:'12px',color:'#94a3b8',fontSize:'12px'}},'No deductions for this month. Click "+ Add Deduction", or click the DEDUCT. cell of a person in the table above.'):
+    E('div',{style:{overflowX:'auto'}},E('table',{style:{borderCollapse:'collapse',width:'100%',fontSize:'11px'}},
+      E('thead',null,E('tr',null,['#','Supplier','Emp No','Name','Date','Category','Reason / Description','Ref','Amount','Rate→AED','AED','VAT','Remarks','Status',''].map(t=>th(t)))),
+      E('tbody',null,list.map((d,i)=>{const dr=d.status!=='approved';const bg=dr?'#f8fafc':i%2?'#fff7f7':'#fff';return E('tr',{key:d.id,style:{background:bg,opacity:dr?0.6:1}},
+        E('td',{style:{...S.td,textAlign:'center',color:'#94a3b8'}},i+1),
+        E('td',{style:{...S.td,fontSize:'10px'}},d.supplier_name),
+        E('td',{style:{...S.td,fontFamily:'monospace',fontSize:'10px',color:'#0369a1'}},d.emp_no||'—'),
+        E('td',{style:{...S.td,fontWeight:600}},d.worker_name||E('i',{style:{color:'#64748b'}},'Supplier-level')),
+        E('td',{style:{...S.td,whiteSpace:'nowrap'}},d.deduction_date?fmtDate(d.deduction_date):'—'),
+        E('td',{style:S.td},d.category),
+        E('td',{style:{...S.td,minWidth:'180px'}},d.description,d.qty!=null&&d.unit_rate!=null?E('div',{style:{fontSize:'10px',color:'#64748b'}},`${d.qty} × ${d.unit_rate}`):null),
+        E('td',{style:{...S.td,fontSize:'10px'}},d.reference_no||'—'),
+        E('td',{style:{...S.td,textAlign:'right',whiteSpace:'nowrap'}},d.currency,' ',fmt(d.amount)),
+        E('td',{style:{...S.td,textAlign:'right',color:'#64748b'}},d.currency==='AED'?'—':Number(d.fx_rate)),
+        E('td',{style:{...S.td,textAlign:'right',fontWeight:800,color:'#dc2626',whiteSpace:'nowrap'}},'−',fmt(dedAED(d))),
+        E('td',{style:{...S.td,fontSize:'10px',whiteSpace:'nowrap'}},d.vat_treatment==='after_vat'?'After VAT':'Before VAT'),
+        E('td',{style:{...S.td,fontSize:'10px',color:'#475569',maxWidth:'220px'}},d.remarks||''),
+        E('td',{style:{...S.td,fontSize:'10px',fontWeight:700,color:dr?'#94a3b8':'#166534'}},dr?'Draft':'Approved'),
+        E('td',{style:{...S.td,whiteSpace:'nowrap'}},
+          E('button',{title:'Edit',onClick:()=>{setDedForm({...newDedForm(),...d,mob_register_id:d.mob_register_id||'',deduction_date:d.deduction_date||'',qty:d.qty??'',unit_rate:d.unit_rate??'',amount:String(d.amount),fx_rate:String(d.fx_rate),reference_no:d.reference_no||'',remarks:d.remarks||''});setTimeout(()=>document.getElementById('ded-panel')?.scrollIntoView({behavior:'smooth',block:'start'}),50);},style:{background:'none',border:'none',cursor:'pointer',fontSize:'13px'}},'✏'),
+          E('button',{title:'Delete',onClick:()=>deleteDeduction(d),style:{background:'none',border:'none',cursor:'pointer',fontSize:'13px',color:'#dc2626'}},'🗑'))
+      );})),
+      E('tfoot',null,
+        Object.entries(bySupp).length>1&&Object.entries(bySupp).sort().map(([s,v])=>E('tr',{key:s,style:{background:'#fef2f2'}},E('td',{colSpan:10,style:{...S.td,textAlign:'right',fontSize:'11px',color:'#7f1d1d'}},s),E('td',{style:{...S.td,textAlign:'right',fontWeight:700,color:'#dc2626'}},'−',fmt(v)),E('td',{colSpan:4,style:S.td},''))),
+        E('tr',{style:{background:'#7f1d1d'}},E('td',{colSpan:10,style:{...S.td,textAlign:'right',fontWeight:800,color:'#fff'}},'TOTAL APPROVED DEDUCTIONS (AED)'),E('td',{style:{...S.td,textAlign:'right',fontWeight:800,color:'#fde68a'}},'−',fmt(totAED)),E('td',{colSpan:4,style:{...S.td,background:'#7f1d1d'}},'')))
+    )))
+  );
+};
+
 // ── Main render ───────────────────────────────────────────────────────────
 const TABS=[{k:'entry',l:'📝 Daily Entry'},{k:'customer',l:'📋 Customer Timesheet'},{k:'supplier',l:'🏭 Supplier Timesheet'},{k:'import',l:'📥 Import Client TS'},{k:'rates',l:'💰 Rates & Settings'},{k:'holidays',l:'🗓 Holidays'}];
 const[selSupp,setSelSupp]=React.useState('');
@@ -1778,7 +1938,8 @@ return React.createElement('div',{style:{maxWidth:'1600px',margin:'0 auto',paddi
       React.createElement('div',{style:{flex:1}}),
       React.createElement('button',{onClick:()=>exportSupplierExcel(selSupp||null),disabled:!history.length||histLoading,style:{...S.btnPri,padding:'6px 16px',fontSize:'12px'}},selSupp?'⬇ Export '+selSupp.split(' ')[0]+' Excel':'⬇ Export All (multi-sheet)')
     ),
-    MonthPivotTable({showFinancials:true,supplierFilter:selSupp})
+    MonthPivotTable({showFinancials:true,supplierFilter:selSupp}),
+    DeductionsPanel()
   ),
   subTab==='import'&&React.createElement(ImportPanel,null),
   subTab==='rates'&&React.createElement(RatesPanel,{rates,ratesDraft,setRatesDraft,settings,settingsDraft,setSettingsDraft,saveRates,saveSettings,uniqueDesigs}),
