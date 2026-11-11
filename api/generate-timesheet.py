@@ -161,7 +161,7 @@ def build_customer(ws,data):
     third=TOT_COL//3
     for (sc,ec),txt,sub in zip([(1,third),(third+1,third*2),(third*2+1,TOT_COL)],
         ["PREPARED BY","CHECKED BY","APPROVED BY"],
-        ["SATCO ARABIA GENERAL CONTRACTING LLC SPC",settings.get("checkedBy","Quality International"),settings.get("approvedBy","Alghanim International")]):
+        ["SATCO ARABIA GENERAL CONTRACTING LLC SPC",settings.get("checkedBy",""),settings.get("approvedBy","")]):
         merge_cc(ws,dr,sc,dr,ec,txt,bold=True,sz=9,color=NAVY,ha="center")
         ws.cell(row=dr,column=sc).font=Font(name="Arial",bold=True,size=9,color=NAVY,underline="single")
         ws.row_dimensions[dr].height=13
@@ -339,7 +339,7 @@ def build_supplier(ws,data,supp_label):
     third=LAST//3
     for (sc,ec),txt,sub in zip([(1,third),(third+1,third*2),(third*2+1,LAST)],
         ["PREPARED BY","CHECKED BY","APPROVED BY"],
-        ["SATCO ARABIA GENERAL CONTRACTING LLC SPC",settings.get("checkedBy","Quality International"),settings.get("approvedBy","Alghanim International")]):
+        ["SATCO ARABIA GENERAL CONTRACTING LLC SPC",settings.get("checkedBy",""),settings.get("approvedBy","")]):
         merge_cc(ws,dr,sc,dr,ec,txt,bold=True,sz=9,color=NAVY,ha="center")
         ws.cell(row=dr,column=sc).font=Font(name="Arial",bold=True,size=9,color=NAVY,underline="single")
         ws.row_dimensions[dr].height=13

@@ -1115,10 +1115,10 @@ const[calMonth,setCalMonth]=React.useState(()=>{const d=new Date();return`${d.ge
 
 // ── Settings (per project, localStorage) ─────────────────────────────────
 const settingsKey=`satco_ts_cfg_${selCustomer}__${selLocation}`;
-const DEF={clientName:'ALGHANIM INTERNATIONAL GENERAL TRADING & CONTRACTING CO., ABU DHABI',project:'VOLTA Project - TAZIZ Derivatives Park (TDP), RUWAIS, Abu Dhabi, UAE',poNo:'072-46',costCode:'509062',subcontractor:'SATCO ARABIA GENERAL CONTRACTING LLC SPC',checkedBy:'Quality International',approvedBy:'Alghanim International',vat:'5',currency:'AED',weekendDay:'sun',otPolicy:'flat',otWeekendMultiplier:'1.5',otDailyMultiplier:'1.25',otDailyThreshold:'10',workingHrsPerDay:'10',workingDaysPerMonth:'26',defaultCustomerRate:'24',defaultSupplierRate:'16'};
+const TS_KNOWN_CLIENTS={'Alghanim International General Trading & Contracting Co., Abu Dhabi':{clientName:'ALGHANIM INTERNATIONAL GENERAL TRADING & CONTRACTING CO., ABU DHABI',project:'VOLTA Project - TAZIZ Derivatives Park (TDP), RUWAIS, Abu Dhabi, UAE',poNo:'072-46',costCode:'509062',checkedBy:'Quality International',approvedBy:'Alghanim International'}};const DEF={clientName:(selCustomer||'').toUpperCase(),project:selLocation||'',poNo:'',costCode:'',subcontractor:'SATCO ARABIA GENERAL CONTRACTING LLC SPC',checkedBy:'',approvedBy:selCustomer||'',vat:'5',currency:'AED',weekendDay:'sun',otPolicy:'flat',otWeekendMultiplier:'1.5',otDailyMultiplier:'1.25',otDailyThreshold:'10',workingHrsPerDay:'10',workingDaysPerMonth:'26',defaultCustomerRate:'24',defaultSupplierRate:'16'};Object.assign(DEF,TS_KNOWN_CLIENTS[selCustomer]||{});
 const[settings,setSettingsRaw]=React.useState(DEF);
 const[settingsDraft,setSettingsDraft]=React.useState(null);
-React.useEffect(()=>{try{const v=localStorage.getItem(settingsKey);if(v)setSettingsRaw({...DEF,...JSON.parse(v)});}catch{}},[settingsKey]);
+React.useEffect(()=>{let next=DEF;try{const v=localStorage.getItem(settingsKey);if(v){const saved=JSON.parse(v);const known=TS_KNOWN_CLIENTS[selCustomer];/* ignore Alghanim header values wrongly saved under another customer */if(!known&&/ALGHANIM/i.test(saved.clientName||'')){['clientName','project','poNo','costCode','checkedBy','approvedBy'].forEach(k=>delete saved[k]);}next={...DEF,...saved};}}catch{}setSettingsRaw(next);},[settingsKey]);
 const saveSettings=s=>{setSettingsRaw(s);try{localStorage.setItem(settingsKey,JSON.stringify(s));}catch{}};
 
 // ── Rates (per project, per designation) ─────────────────────────────────
