@@ -1916,7 +1916,7 @@ return React.createElement('div',{style:{maxWidth:'1600px',margin:'0 auto',paddi
   React.createElement('div',{style:{display:'flex',gap:'3px',marginBottom:'14px',borderBottom:'2px solid #e2e8f0',flexWrap:'wrap'}},
     TABS.map(t=>React.createElement('button',{key:t.k,onClick:()=>setSubTab(t.k),style:{padding:'8px 13px',fontSize:'12px',fontWeight:700,border:'none',borderRadius:'6px 6px 0 0',cursor:'pointer',background:subTab===t.k?'#0f172a':t.k==='import'?'#eff6ff':'transparent',color:subTab===t.k?'#fff':t.k==='import'?'#1d4ed8':'#64748b',borderBottom:subTab===t.k?'2px solid #0f172a':'none',marginBottom:subTab===t.k?'-2px':'0'}},t.l))
   ),
-  React.createElement(SelectorCard,null),
+  SelectorCard(),
   subTab==='entry'&&EntryPanel({selCustomer,selLocation,selDate,workers,entries,saved,loading,saving,saveMsg,holidays,settings,totalHours,isWeekend,isHolidayDate,setHours,setNotes,handleSave}),
   subTab==='customer'&&React.createElement('div',null,
     React.createElement('div',{style:{...S.card,padding:'12px 16px',marginBottom:'10px',display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap',background:'#eff6ff',border:'1px solid #bfdbfe'}},
@@ -1944,9 +1944,9 @@ return React.createElement('div',{style:{maxWidth:'1600px',margin:'0 auto',paddi
     MonthPivotTable({showFinancials:true,supplierFilter:selSupp}),
     DeductionsPanel()
   ),
-  subTab==='import'&&React.createElement(ImportPanel,null),
-  subTab==='rates'&&React.createElement(RatesPanel,{rates,ratesDraft,setRatesDraft,settings,settingsDraft,setSettingsDraft,saveRates,saveSettings,uniqueDesigs}),
-  subTab==='holidays'&&React.createElement(HolidaysPanel,{holidays,setHolidays,newHolDate,setNewHolDate,newHolName,setNewHolName,calMonth,settings})
+  subTab==='import'&&ImportPanel(),
+  subTab==='rates'&&RatesPanel({rates,ratesDraft,setRatesDraft,settings,settingsDraft,setSettingsDraft,saveRates,saveSettings,uniqueDesigs}),
+  subTab==='holidays'&&HolidaysPanel({holidays,setHolidays,newHolDate,setNewHolDate,newHolName,setNewHolName,calMonth,settings})
 );}
 
 
