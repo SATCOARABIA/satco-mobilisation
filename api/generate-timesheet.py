@@ -223,7 +223,7 @@ def build_supplier(ws,data,supp_label):
     for idx,w in enumerate(workers):
         total=sum(float(v) for v in w["hours"].values())
         craft=w.get("craft","Other")
-        rate=float((rates.get(craft) or {}).get("supplierRate") or def_rate)
+        rate=float(w["supplier_rate"]) if w.get("supplier_rate") is not None else float((rates.get(craft) or {}).get("supplierRate") or def_rate)
         db_,da_=wded(w.get("mob_id"))
         gross=round(total*rate,2); ded=round(db_+da_,2); vat=round((gross-db_)*vat_pct,2); amt=round(gross-db_+vat-da_,2)
         gh+=total; gg+=gross; gd+=ded; gv+=vat; ga+=amt
@@ -275,7 +275,7 @@ def build_supplier(ws,data,supp_label):
     cm={}
     for w in workers:
         cr=w.get("craft","Other"); h2=sum(float(v) for v in w["hours"].values())
-        r2=float((rates.get(cr) or {}).get("supplierRate") or def_rate)
+        r2=float(w["supplier_rate"]) if w.get("supplier_rate") is not None else float((rates.get(cr) or {}).get("supplierRate") or def_rate)
         b2,a2=wded(w.get("mob_id"))
         g2=round(h2*r2,2); v2=round((g2-b2)*vat_pct,2)
         if cr not in cm: cm[cr]={"h":0,"g":0,"d":0,"v":0,"a":0}
