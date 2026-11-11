@@ -1472,7 +1472,7 @@ const deleteDeduction=async d=>{
 const calDayMap=React.useMemo(()=>{const m={};history.forEach(r=>{const d=r.work_date;if(!m[d])m[d]={total:0,count:0};m[d].total+=parseFloat(r.hours||0);m[d].count+=1;});return m;},[history]);
 const prevMonth=()=>{const[y,mo]=calMonth.split('-').map(Number);const d=new Date(y,mo-2,1);setCalMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);};
 const nextMonth=()=>{const[y,mo]=calMonth.split('-').map(Number);const d=new Date(y,mo,1);setCalMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);};
-const uniqueDesigs=React.useMemo(()=>[...new Set(mobList.map(r=>r.designation).filter(Boolean))].sort(),[mobList]);
+const uniqueDesigs=React.useMemo(()=>[...new Set(mobList.filter(r=>(!selCustomer||r.customer_name===selCustomer)&&(!selLocation||r.location===selLocation)).map(r=>r.designation).filter(Boolean))].sort(),[mobList,selCustomer,selLocation]);
 
 // ── Selector card ─────────────────────────────────────────────────────────
 const SelectorCard=()=>React.createElement('div',{style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'12px 16px',marginBottom:'12px',display:'flex',gap:'12px',flexWrap:'wrap',alignItems:'flex-end'}},
@@ -1770,11 +1770,18 @@ const RatesPanel=({rates,ratesDraft,setRatesDraft,settings,settingsDraft,setSett
         React.createElement('div',{style:{fontWeight:700,fontSize:'13px',color:'#92400e',marginBottom:'10px'}},'Per-Designation Rate Overrides'),
         React.createElement('div',{style:{display:'grid',gridTemplateColumns:'2fr 1fr 1fr',gap:'8px',marginBottom:'6px',padding:'0 4px'}},
           React.createElement('div',{style:{...S.label}},'Designation'),React.createElement('div',{style:{...S.label}},'Customer Rate/hr'),React.createElement('div',{style:{...S.label}},'Supplier Rate/hr')),
-        uniqueDesigs.map(d=>React.createElement('div',{key:d,style:{display:'grid',gridTemplateColumns:'2fr 1fr 1fr',gap:'8px',marginBottom:'6px',alignItems:'center'}},
-          React.createElement('div',{style:{fontSize:'12px',fontWeight:600,color:'#374151'}},d),
+        (()=>{const all=[...new Set([...uniqueDesigs,...Object.keys(draft)])].filter(d=>!(draft[d]&&draft[d].__hidden)).sort((a,b)=>a.localeCompare(b));return all.length?null:React.createElement('div',{style:{fontSize:'12px',color:'#94a3b8',padding:'6px 4px'}},'No designations yet — add one below.');})(),
+        [...new Set([...uniqueDesigs,...Object.keys(draft)])].filter(d=>!(draft[d]&&draft[d].__hidden)).sort((a,b)=>a.localeCompare(b)).map(d=>React.createElement('div',{key:d,style:{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 32px',gap:'8px',marginBottom:'6px',alignItems:'center'}},
+          React.createElement('div',{style:{fontSize:'12px',fontWeight:600,color:'#374151'}},d,uniqueDesigs.includes(d)?null:React.createElement('span',{style:{fontSize:'10px',fontWeight:400,color:'#94a3b8',marginLeft:'6px'}},'(added)')),
           React.createElement('input',{type:'number',value:draft[d]?.customerRate||'',onChange:e=>setR(d,'customerRate',e.target.value),placeholder:sett.defaultCustomerRate||'24',style:{...S.input,padding:'5px 8px',fontSize:'12px'}}),
-          React.createElement('input',{type:'number',value:draft[d]?.supplierRate||'',onChange:e=>setR(d,'supplierRate',e.target.value),placeholder:sett.defaultSupplierRate||'20',style:{...S.input,padding:'5px 8px',fontSize:'12px'}})
+          React.createElement('input',{type:'number',value:draft[d]?.supplierRate||'',onChange:e=>setR(d,'supplierRate',e.target.value),placeholder:sett.defaultSupplierRate||'20',style:{...S.input,padding:'5px 8px',fontSize:'12px'}}),
+          React.createElement('button',{title:'Remove this designation from the list (click Save Rates to keep the change)',onClick:()=>{if(uniqueDesigs.includes(d)&&!window.confirm(d+' has staff at this site. Remove it from the rate list? They will be charged at the default rate.'))return;setRatesDraft(x=>{const n={...(x||rates)};if(uniqueDesigs.includes(d))n[d]={__hidden:true};else delete n[d];return n;});},style:{...S.btnSm,color:'#dc2626',borderColor:'#fecaca',padding:'4px 0',width:'32px'}},'✕')
         )),
+        React.createElement('div',{style:{display:'flex',gap:'8px',margin:'10px 0 12px',alignItems:'center'}},
+          React.createElement('input',{id:'ts-new-desig',placeholder:'New designation, e.g. Rigger',style:{...S.input,maxWidth:'320px'},onKeyDown:e=>{if(e.key==='Enter')document.getElementById('ts-add-desig').click();}}),
+          React.createElement('button',{id:'ts-add-desig',onClick:()=>{const el=document.getElementById('ts-new-desig');const v=(el.value||'').trim();if(!v)return;setRatesDraft(x=>{const n={...(x||rates)};if(!n[v]||n[v].__hidden)n[v]={};return n;});el.value='';},style:S.btnSec},'+ Add Designation'),
+          (()=>{const hid=Object.keys(draft).filter(k=>draft[k]&&draft[k].__hidden);return hid.length?React.createElement('span',{style:{fontSize:'11px',color:'#94a3b8'}},'Removed: ',hid.map((h,i)=>React.createElement('span',{key:h},i?', ':'',React.createElement('a',{style:{color:'#0369a1',cursor:'pointer',textDecoration:'underline'},onClick:()=>setRatesDraft(x=>{const n={...(x||rates)};delete n[h];return n;})},h)))," — click to restore"):null;})()
+        ),
         React.createElement('button',{onClick:()=>{saveRates(ratesDraft||rates);setRatesDraft(null);},style:S.btnPri},'💾 Save Rates')
       )
     )
