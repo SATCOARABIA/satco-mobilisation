@@ -1491,6 +1491,7 @@ const stKey=r=>({customer_name:r.customer_name,location:r.location,ts_month:stMo
 // In-row actions (no browser pop-ups — some browsers block them). stEdit = {key, kind:'inv'|'undoInv'|'undoSent'|'undoCust', value}
 const[stEdit,setStEdit]=React.useState(null);
 const[stBusy,setStBusy]=React.useState(false);
+const stShort=t=>String(t||'').replace(/[,\-–]/g,' ').split(/\s+/).filter(Boolean).slice(0,2).join(' ');
 const stRowKey=r=>[r.customer_name,r.location||'',r.supplier_name||''].join('|');
 const stRun=async fn=>{setStBusy(true);try{const e=await fn();if(e&&e.message)alert('Could not save: '+e.message);else{setStEdit(null);await loadStatus();}}finally{setStBusy(false);}};
 const stToggleSent=async r=>{
@@ -1532,14 +1533,14 @@ const SupplierStatusPanel=()=>{
     stErr&&React.createElement('div',{style:{padding:'8px 12px',marginBottom:'10px',borderRadius:'8px',background:'#fef2f2',color:'#b91c1c',fontSize:'12px'}},'⚠ Could not load status: '+stErr),
     React.createElement('div',{style:{...S.card,padding:0,overflowX:'auto'}},
       React.createElement('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:'12.5px'}},
-        React.createElement('thead',null,React.createElement('tr',null,['#','Supplier','Customer / Site','Workers','Hours','Deductions','Net Payable','Timesheet sent to supplier','Invoice received','Finance',''].map(h=>React.createElement('th',{key:h,style:{...S.th,textAlign:'left'}},h)))),
+        React.createElement('thead',null,React.createElement('tr',null,['#','Supplier','Customer · Site','Workers','Hours','Deductions','Net Payable','Timesheet sent to supplier','Invoice received','Finance',''].map(h=>React.createElement('th',{key:h,style:{...S.th,textAlign:'left'}},h)))),
         React.createElement('tbody',null,
           stLoading?React.createElement('tr',null,React.createElement('td',{colSpan:11,style:{padding:'20px',textAlign:'center',color:'#94a3b8'}},'Loading…')):
           !shown.length?React.createElement('tr',null,React.createElement('td',{colSpan:11,style:{padding:'20px',textAlign:'center',color:'#94a3b8'}},tot?'Nothing in this filter':'No supplier hours entered for '+ml)):
           shown.map((r,i)=>React.createElement('tr',{key:r.customer_name+r.location+r.supplier_name,style:{borderTop:'1px solid #e2e8f0'}},
             React.createElement('td',{style:S.td},i+1),
             React.createElement('td',{style:{...S.td,fontWeight:700}},r.supplier_name),
-            React.createElement('td',{style:{...S.td,fontSize:'11.5px',color:'#64748b',maxWidth:'320px'}},r.customer_name,React.createElement('div',null,r.location)),
+            React.createElement('td',{title:r.customer_name+' — '+r.location,style:{...S.td,fontSize:'12px',whiteSpace:'nowrap'}},React.createElement('b',null,stShort(r.customer_name)),' · ',stShort(r.location)),
             React.createElement('td',{style:S.td},r.workers),
             React.createElement('td',{style:{...S.td,fontWeight:700}},r.hours),
             React.createElement('td',{style:{...S.td,color:r.ded?'#dc2626':'#94a3b8',fontWeight:r.ded?700:400}},r.ded?'− AED '+r.ded.toLocaleString('en',{minimumFractionDigits:2}):'—'),
@@ -1586,8 +1587,8 @@ const CustomerStatusPanel=()=>{
           rows.map((c,i)=>{const invs=c.invoices||[];const bal=invs.reduce((a,x)=>a+(parseFloat(x.balance_due)||0),0);const allPaid=invs.length&&invs.every(x=>x.computed_status==='Paid');
             return React.createElement('tr',{key:c.customer_name+c.location,style:{borderTop:'1px solid #e2e8f0'}},
               React.createElement('td',{style:S.td},i+1),
-              React.createElement('td',{style:{...S.td,fontWeight:700}},c.customer_name),
-              React.createElement('td',{style:{...S.td,fontSize:'11.5px',color:'#64748b',maxWidth:'260px'}},c.location||(c.from_mob?'':'(not on Mob timesheets)')),
+              React.createElement('td',{title:c.customer_name,style:{...S.td,fontWeight:700,whiteSpace:'nowrap'}},stShort(c.customer_name)),
+              React.createElement('td',{title:c.location,style:{...S.td,fontSize:'12px',whiteSpace:'nowrap'}},c.location?stShort(c.location):(c.from_mob?'':'(not on Mob timesheets)')),
               React.createElement('td',{style:S.td},c.workers??'—'),
               React.createElement('td',{style:{...S.td,fontWeight:700}},c.hours??'—'),
               React.createElement('td',{style:S.td},stEdit&&stEdit.key===stRowKey(c)&&stEdit.kind==='undoCust'?stConfirmCell('Undo timesheet sent?',()=>ctUndoSent(c)):chip(!!c.ts_sent,c.ts_sent?'✓ Sent':'✗ Not sent',c.ts_sent?fmtD(c.ts_sent.at)+(c.ts_sent.method==='excel_export'?' · Excel':''):'',()=>ctToggleSent(c),c.ts_sent?'Click to undo':'Click to mark timesheet as sent to customer')),
