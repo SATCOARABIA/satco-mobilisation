@@ -180,6 +180,8 @@ def build_supplier(ws,data,supp_label):
     off_day=settings.get("weekendDay","sun")
     vat_pct=float(settings.get("vat","5"))/100
     def_rate=float(settings.get("defaultSupplierRate","16"))
+    def wvat(o): return (float(o["supplier_vat_pct"])/100) if o.get("supplier_vat_pct") is not None else vat_pct
+    no_vat_all=bool(workers) and all(wvat(w)==0 for w in workers)
     days_in_month=calendar.monthrange(year,month)[1]
     month_name=datetime.date(year,month,1).strftime("%B %Y").upper()
     def is_hol(d): return f"{year}-{month:02d}-{d:02d}" in holidays
@@ -190,7 +192,7 @@ def build_supplier(ws,data,supp_label):
     merge_cc(ws,1,5,1,LAST,"SATCO ARABIA GENERAL CONTRACTING L.L.C - S.P.C\n"+settings.get("project",""),bold=True,sz=9,color=NAVY,bg="F8FAFC",ha="center",wrap=True)
     ws.row_dimensions[2].height=14
     merge_cc(ws,2,1,2,FIX,f"TIMESHEET - {month_name}",bold=True,sz=10,color=GOLD,bg=NAVY,ha="center")
-    merge_cc(ws,2,FIX+1,2,LAST,f"Sub-Contractor: {supp_label}",bold=True,sz=9,color=NAVY,bg="FFFBEB",ha="center")
+    merge_cc(ws,2,FIX+1,2,LAST,f"Sub-Contractor: {supp_label}"+("   (Not VAT registered - no VAT applied)" if no_vat_all else ""),bold=True,sz=9,color=NAVY,bg="FFFBEB",ha="center")
     ws.row_dimensions[3].height=14; ws.row_dimensions[4].height=11
     for ci,h in enumerate(["SL","EMP No","NAME","CRAFT","SUPPLIER"]):
         merge_cc(ws,3,ci+1,4,ci+1,h,bold=True,sz=8,color=WHITE,bg=GREEN)
@@ -201,7 +203,7 @@ def build_supplier(ws,data,supp_label):
         c3.font=Font(name="Arial",bold=True,size=6,color=fc); c3.fill=fl(bg); c3.alignment=al(); c3.border=bord
         c4=ws.cell(row=4,column=col,value=day_name(year,month,d))
         c4.font=Font(name="Arial",bold=True,size=6,color=fc); c4.fill=fl(bg); c4.alignment=al(); c4.border=bord
-    for fi,h in enumerate(["Total\nHrs","Rate","Gross Amt","Deduct.","VAT","Amount"]):
+    for fi,h in enumerate(["Total\nHrs","Rate","Gross Amt","Deduct.","VAT\n(N/A)" if no_vat_all else "VAT","Amount"]):
         merge_cc(ws,3,FIN+fi,4,FIN+fi,h,bold=True,sz=8,color=GOLD,bg=NAVY,ha="center",wrap=True)
 
     deds=data.get("deductions",[]) or []
@@ -218,6 +220,7 @@ def build_supplier(ws,data,supp_label):
     lvl=[d for d in deds if not d.get("mob_id") or d.get("mob_id") not in shown_ids]
     lvl_b=round(sum(float(d.get("aed") or 0) for d in lvl if d.get("vat_treatment")!="after_vat"),2)
     lvl_a=round(sum(float(d.get("aed") or 0) for d in lvl if d.get("vat_treatment")=="after_vat"),2)
+    lvl_bv=round(sum(float(d.get("aed") or 0)*wvat(d) for d in lvl if d.get("vat_treatment")!="after_vat"),2)
 
     dr=5; gh=gg=gd=gv=ga=0
     for idx,w in enumerate(workers):
@@ -225,7 +228,7 @@ def build_supplier(ws,data,supp_label):
         craft=w.get("craft","Other")
         rate=float(w["supplier_rate"]) if w.get("supplier_rate") is not None else float((rates.get(craft) or {}).get("supplierRate") or def_rate)
         db_,da_=wded(w.get("mob_id"))
-        gross=round(total*rate,2); ded=round(db_+da_,2); vat=round((gross-db_)*vat_pct,2); amt=round(gross-db_+vat-da_,2)
+        gross=round(total*rate,2); ded=round(db_+da_,2); vat=round((gross-db_)*wvat(w),2); amt=round(gross-db_+vat-da_,2)
         gh+=total; gg+=gross; gd+=ded; gv+=vat; ga+=amt
         rb="FFFFFF" if idx%2==0 else "F0FDF4"
         sn=" ".join(p.capitalize() for p in (w.get("name","") or "").split()[:2])
@@ -244,7 +247,7 @@ def build_supplier(ws,data,supp_label):
             c=ws.cell(row=dr,column=col,value=int(h_val) if h_val and h_val==int(h_val) else (h_val if h_val else ""))
             c.font=Font(name="Arial",size=8,bold=bool(h_val),color="0F172A" if h_val else "CBD5E1")
             c.fill=fl("E5E7EB" if off(d) else rb); c.alignment=al(); c.border=bord
-        for fi,(v,fbg,fb,fmt) in enumerate(zip([total,rate,gross,(-ded if ded else ""),vat,amt],["DBEAFE","FFFFFF","F0FDF4","FEF2F2","FFFFFF","F0FDF4"],[True,False,True,bool(ded),False,True],[None,None,"#,##0.00","#,##0.00","#,##0.00","#,##0.00"])):
+        for fi,(v,fbg,fb,fmt) in enumerate(zip([total,rate,gross,(-ded if ded else ""),(vat if wvat(w) else "N/A"),amt],["DBEAFE","FFFFFF","F0FDF4","FEF2F2","FFFFFF","F0FDF4"],[True,False,True,bool(ded),False,True],[None,None,"#,##0.00","#,##0.00","#,##0.00","#,##0.00"])):
             c=ws.cell(row=dr,column=FIN+fi,value=v)
             c.font=Font(name="Arial",bold=fb,size=8,color=("DC2626" if fi==3 else "166634") if fb else "374151")
             c.fill=fl(fbg); c.alignment=al("right"); c.border=bord
@@ -252,7 +255,7 @@ def build_supplier(ws,data,supp_label):
         ws.row_dimensions[dr].height=14; dr+=1
 
     if lvl:
-        lv_vat=round(-lvl_b*vat_pct,2); lv_amt=round(-(lvl_b+lvl_b*vat_pct+lvl_a),2)
+        lv_vat=round(-lvl_bv,2); lv_amt=round(-(lvl_b+lvl_bv+lvl_a),2)
         merge_cc(ws,dr,1,dr,FIN+1,f"SUPPLIER-LEVEL DEDUCTIONS ({len(lvl)}) - see Deductions Detail below",bold=True,sz=8,color="991B1B",bg="FEF2F2",ha="right")
         for fi,(v,fmt) in enumerate([("",None),(-(lvl_b+lvl_a),"#,##0.00"),(lv_vat,"#,##0.00"),(lv_amt,"#,##0.00")]):
             c=ws.cell(row=dr,column=FIN+2+fi,value=v)
@@ -277,12 +280,12 @@ def build_supplier(ws,data,supp_label):
         cr=w.get("craft","Other"); h2=sum(float(v) for v in w["hours"].values())
         r2=float(w["supplier_rate"]) if w.get("supplier_rate") is not None else float((rates.get(cr) or {}).get("supplierRate") or def_rate)
         b2,a2=wded(w.get("mob_id"))
-        g2=round(h2*r2,2); v2=round((g2-b2)*vat_pct,2)
+        g2=round(h2*r2,2); v2=round((g2-b2)*wvat(w),2)
         if cr not in cm: cm[cr]={"h":0,"g":0,"d":0,"v":0,"a":0}
         cm[cr]["h"]+=h2; cm[cr]["g"]+=g2; cm[cr]["d"]+=b2+a2; cm[cr]["v"]+=v2; cm[cr]["a"]+=round(g2-b2+v2-a2,2)
     if lvl:
-        cm["Supplier-level"]={"h":0,"g":0,"d":lvl_b+lvl_a,"v":round(-lvl_b*vat_pct,2),"a":round(-(lvl_b+lvl_b*vat_pct+lvl_a),2)}
-    for fi,h in enumerate(["CRAFT","TOTAL HRS","GROSS AMT","DEDUCT.","VAT","AMOUNT"]):
+        cm["Supplier-level"]={"h":0,"g":0,"d":lvl_b+lvl_a,"v":round(-lvl_bv,2),"a":round(-(lvl_b+lvl_bv+lvl_a),2)}
+    for fi,h in enumerate(["CRAFT","TOTAL HRS","GROSS AMT","DEDUCT.","VAT (N/A)" if no_vat_all else "VAT","AMOUNT"]):
         c=ws.cell(row=dr,column=FIN+fi,value=h)
         c.font=Font(name="Arial",bold=True,size=8,color=WHITE); c.fill=fl(NAVY); c.alignment=al("center"); c.border=bord
     ws.row_dimensions[dr].height=13; dr+=1
@@ -323,7 +326,7 @@ def build_supplier(ws,data,supp_label):
             aed=float(d.get("aed") or 0); tot+=aed
             vals=[((1,1),i+1,"center"),((2,2),d.get("emp","") or "-","left"),((3,3),nm,"left"),((4,4),dt,"center"),((5,5),d.get("category",""),"left"),
                   (c_desc,d.get("description",""),"left"),(c_ref,d.get("ref","") or "-","left"),(c_amt,orig,"right"),(c_rem,d.get("remarks",""),"left"),
-                  (c_vat,"After VAT" if d.get("vat_treatment")=="after_vat" else "Before VAT","center")]
+                  (c_vat,"No VAT" if (d.get("supplier_vat_pct") is not None and float(d["supplier_vat_pct"])==0) else ("After VAT" if d.get("vat_treatment")=="after_vat" else "Before VAT"),"center")]
             for (sc,ec),v,ha in vals:
                 merge_cc(ws,dr,sc,dr,ec,v,sz=7,color="374151",bg=rb,ha=ha,wrap=True)
             merge_cc(ws,dr,c_aed[0],dr,c_aed[1],-round(aed,2),bold=True,sz=8,color="DC2626",bg=rb,ha="right")

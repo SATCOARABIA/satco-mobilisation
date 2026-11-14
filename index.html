@@ -1140,6 +1140,7 @@ const saveRates=async r=>{setRatesRaw(r);try{localStorage.setItem(ratesKey,JSON.
 const rateIn=(obj,d)=>{if(!obj)return null;const t=(d||'').toLowerCase().trim();const k=Object.keys(obj).find(x=>!x.startsWith('__')&&x.toLowerCase().trim()===t);return k?obj[k]:null;};
 const numOk=v=>v!==null&&v!==undefined&&v!==''&&!isNaN(parseFloat(v));
 const supplierRateFor=(sup,trade)=>{const sp=rates.__supplier?rates.__supplier[sup]:null;const v1=rateIn(sp,trade);if(numOk(v1))return parseFloat(v1);const g=rateIn(rates,trade);if(g&&!g.__hidden&&numOk(g.supplierRate))return parseFloat(g.supplierRate);return parseFloat(settings.defaultSupplierRate||16)||0;};
+const _vatNoOk=v=>String(v||'').replace(/[^0-9A-Za-z]/g,'').length>=5;const supplierRec=sup=>{const k=String(sup||'').trim().toUpperCase();return k?(suppliers||[]).find(x=>String(x.name||'').trim().toUpperCase()===k):null;};const supplierHasVat=sup=>{const s=supplierRec(sup);return s?_vatNoOk(s.vat_number):true;};const vatRateFor=sup=>supplierHasVat(sup)?(parseFloat(settings.vat||'5')||0)/100:0;
 
 // ── Holidays (per project+month) ──────────────────────────────────────────
 const holKey=`satco_ts_hol_${selCustomer}__${selLocation}_${calMonth}`;
@@ -1432,10 +1433,10 @@ const applyMerge=async()=>{
 // ── Excel exports ─────────────────────────────────────────────────────────
 const sortWorkers=ws=>[...ws].sort((a,b)=>{const pa=(a.supplier_emp_no||'').split('-');const pb=(b.supplier_emp_no||'').split('-');try{const d=parseInt(pa[1])-parseInt(pb[1]);return d!==0?d:parseInt(pa[2])-parseInt(pb[2]);}catch{return 0;}});
 const shortSupplier=(name,max=18)=>{const skip=new Set(['L.L.C','S.P.C','AND','GENERAL','CONTRACTING','LLC','SPC','-','&','MAINTENANCE','WORKS','CO.','COMPANY','SERVICES','TRADING','EST']);const words=(name||'').toUpperCase().split(' ').filter(w=>!skip.has(w));let r='';for(const w of words){if((r+(r?' ':'')+w).length<=max)r+=(r?' ':'')+w.charAt(0)+w.slice(1).toLowerCase();else break;}return r||name.slice(0,max);};
-const buildTsData=()=>({year:parseInt(calMonth.split('-')[0]),month:parseInt(calMonth.split('-')[1]),settings,rates,holidays,workers:sortWorkers([...new Set(history.map(r=>r.mob_register_id))].map(id=>{const r=history.find(h=>h.mob_register_id===id);if(!r)return null;const dayHours={};history.filter(h=>h.mob_register_id===id).forEach(h=>{const d=new Date(h.work_date+'T00:00:00').getDate();if(parseFloat(h.hours)>0)dayHours[String(d)]=parseFloat(h.hours);});const trade=tradeOf(id,r.designation);return{mob_id:id,emp:r.supplier_emp_no||'',name:r.full_name||'',craft:trade,supplier:r.supplier_name||'',supplier_rate:supplierRateFor(r.supplier_name,trade),hours:dayHours};}).filter(Boolean)),deductions:dedApproved.map(d=>({mob_id:d.mob_register_id||null,supplier:d.supplier_name,emp:d.emp_no||'',name:d.worker_name||'',date:d.deduction_date||'',category:d.category||'',description:d.description||'',ref:d.reference_no||'',amount:Number(d.amount)||0,currency:d.currency||'AED',fx:Number(d.fx_rate)||1,aed:dedAED(d),vat_treatment:d.vat_treatment||'before_vat',remarks:d.remarks||''}))});
+const buildTsData=()=>({year:parseInt(calMonth.split('-')[0]),month:parseInt(calMonth.split('-')[1]),settings,rates,holidays,workers:sortWorkers([...new Set(history.map(r=>r.mob_register_id))].map(id=>{const r=history.find(h=>h.mob_register_id===id);if(!r)return null;const dayHours={};history.filter(h=>h.mob_register_id===id).forEach(h=>{const d=new Date(h.work_date+'T00:00:00').getDate();if(parseFloat(h.hours)>0)dayHours[String(d)]=parseFloat(h.hours);});const trade=tradeOf(id,r.designation);return{mob_id:id,emp:r.supplier_emp_no||'',name:r.full_name||'',craft:trade,supplier:r.supplier_name||'',supplier_rate:supplierRateFor(r.supplier_name,trade),supplier_vat_pct:vatRateFor(r.supplier_name)*100,hours:dayHours};}).filter(Boolean)),deductions:dedApproved.map(d=>({mob_id:d.mob_register_id||null,supplier:d.supplier_name,emp:d.emp_no||'',name:d.worker_name||'',date:d.deduction_date||'',category:d.category||'',description:d.description||'',ref:d.reference_no||'',amount:Number(d.amount)||0,currency:d.currency||'AED',fx:Number(d.fx_rate)||1,aed:dedAED(d),vat_treatment:d.vat_treatment||'before_vat',supplier_vat_pct:vatRateFor(d.supplier_name)*100,remarks:d.remarks||''}))});
 const callTsApi=async(payload,filename)=>{try{const res=await fetch('/api/generate-timesheet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,filename})});if(!res.ok){const txt=await res.text();throw new Error(txt||'API error '+res.status);}const blob=await res.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);}catch(ex){alert('Export failed: '+ex.message);}};
 const exportCustomerExcel=async()=>{if(!history.length)return alert('No timesheet data for this month.');const[calY,calM]=calMonth.split('-').map(Number);const mn=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'short',year:'numeric'}).replace(' ','');await callTsApi({type:'customer',data:buildTsData()},`SATCO_Customer_${(selCustomer||'').split(' ')[0]}_${mn}.xlsx`);};
-const exportSupplierExcel=async(suppName)=>{if(!history.length)return alert('No timesheet data for this month.');const[calY,calM]=calMonth.split('-').map(Number);const mn=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'short',year:'numeric'}).replace(' ','');const s=n=>{const sk=new Set(['L.L.C','S.P.C','AND','GENERAL','CONTRACTING','LLC','SPC','-','&','MAINTENANCE']);return(n||'ALL').split(' ').filter(w=>!sk.has(w.toUpperCase())).slice(0,2).join('_');};await callTsApi({type:'supplier',supplier:suppName||null,data:buildTsData()},suppName?`SATCO_Supplier_${s(suppName)}_${mn}.xlsx`:`SATCO_AllSuppliers_${mn}.xlsx`);}
+const exportSupplierExcel=async(suppName)=>{if(!history.length)return alert('No timesheet data for this month.');const noVat=suppName?(supplierHasVat(suppName)?[]:[suppName]):[...new Set(history.map(h=>h.supplier_name).filter(Boolean))].filter(n=>!supplierHasVat(n));if(noVat.length&&!window.confirm((noVat.length===1?noVat[0]+' has no VAT number':'These suppliers have no VAT number')+' in the Suppliers register'+(noVat.length>1?':\n• '+noVat.join('\n• '):'')+'.\n\nThe timesheet will be exported WITHOUT VAT (VAT = 0) for '+(noVat.length===1?'this supplier':'them')+'.\n\nProceed with the download?'))return;const[calY,calM]=calMonth.split('-').map(Number);const mn=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'short',year:'numeric'}).replace(' ','');const s=n=>{const sk=new Set(['L.L.C','S.P.C','AND','GENERAL','CONTRACTING','LLC','SPC','-','&','MAINTENANCE']);return(n||'ALL').split(' ').filter(w=>!sk.has(w.toUpperCase())).slice(0,2).join('_');};await callTsApi({type:'supplier',supplier:suppName||null,data:buildTsData()},suppName?`SATCO_Supplier_${s(suppName)}_${mn}.xlsx`:`SATCO_AllSuppliers_${mn}.xlsx`);}
 
 const monthSuppliers=React.useMemo(()=>[...new Set(history.map(r=>r.supplier_name).filter(Boolean))].sort(),[history]);
 
@@ -1588,6 +1589,8 @@ const MonthPivotTable=({showFinancials=false,supplierFilter='',editable=false})=
   const lvl=dScope.filter(d=>!d.mob_register_id||!shownIds.has(d.mob_register_id));
   const lvlB=lvl.filter(d=>d.vat_treatment!=='after_vat').reduce((s,d)=>s+dedAED(d),0);
   const lvlA=lvl.filter(d=>d.vat_treatment==='after_vat').reduce((s,d)=>s+dedAED(d),0);
+  const lvlBV=lvl.filter(d=>d.vat_treatment!=='after_vat').reduce((s,d)=>s+dedAED(d)*vatRateFor(d.supplier_name),0);
+  const noVatView=showFinancials&&workers2.length>0&&workers2.every(w=>!supplierHasVat(w.supplier_name));
   const calcRow=w=>{
     const wm=workerMap[w.mob_register_id]||{dayHours:{}};
     const totalHrs=days.reduce((s,d)=>s+effH(w.mob_register_id,d.d,wm),0);
@@ -1596,7 +1599,7 @@ const MonthPivotTable=({showFinancials=false,supplierFilter='',editable=false})=
     const otPol=settings.otPolicy||'flat';const otThr=parseFloat(settings.otDailyThreshold||10);const otDM=parseFloat(settings.otDailyMultiplier||1.25);const otWM=parseFloat(settings.otWeekendMultiplier||1.5);
     let gross=0;if(otPol==='flat'){gross=totalHrs*rate;}else{days.forEach(day=>{const h=effH(w.mob_register_id,day.d,wm);if(h<=0)return;if(day.isOff){gross+=h*rate*otWM;}else if(h>otThr){gross+=otThr*rate+(h-otThr)*rate*otDM;}else{gross+=h*rate;}});}
     const{b,a}=wDed(w.mob_register_id);
-    const vat=(gross-b)*VAT;const amt=gross-b+vat-a;
+    const vat=(gross-b)*vatRateFor(w.supplier_name);const amt=gross-b+vat-a;
     return{wm,totalHrs,craft,rate,gross,ded:b+a,vat,amt};
   };
   const fmt2=v=>v.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1616,7 +1619,7 @@ const MonthPivotTable=({showFinancials=false,supplierFilter='',editable=false})=
         showFinancials&&React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'50px',textAlign:'center'}},'RATE'),
         showFinancials&&React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'80px',textAlign:'right'}},'GROSS'),
         showFinancials&&React.createElement('th',{style:{...S.th,color:'#fca5a5',background:hdrBg,width:'80px',textAlign:'right'}},'DEDUCT.'),
-        showFinancials&&React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'65px',textAlign:'right'}},'VAT'),
+        showFinancials&&React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'65px',textAlign:'right'},title:noVatView?'Supplier not VAT registered — no VAT applied':''},noVatView?'VAT (N/A)':'VAT'),
         showFinancials&&React.createElement('th',{style:{...S.th,color:'#fde68a',background:hdrBg,width:'80px',textAlign:'right'}},'TOTAL')
       )),
       React.createElement('tbody',null,workers2.map((w,i)=>{
@@ -1634,15 +1637,15 @@ const MonthPivotTable=({showFinancials=false,supplierFilter='',editable=false})=
           showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'center',fontSize:'11px',color:'#0369a1'}},rate),
           showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'right',fontWeight:700,fontSize:'11px'}},gross>0?gross.toLocaleString('en',{maximumFractionDigits:2}):'—'),
           showFinancials&&dedCell(ded,w),
-          showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'right',fontSize:'11px',color:'#64748b'}},vat!==0?vat.toFixed(2):'—'),
+          showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'right',fontSize:'11px',color:'#64748b'},title:supplierHasVat(w.supplier_name)?'':'No VAT number on file — VAT not applied'},!supplierHasVat(w.supplier_name)?'N/A':(vat!==0?vat.toFixed(2):'—')),
           showFinancials&&React.createElement('td',{style:{...S.td,textAlign:'right',fontWeight:800,fontSize:'11px',color:amt<0?'#dc2626':'#166534',background:'#f0fdf4'}},amt!==0?amt.toLocaleString('en',{maximumFractionDigits:2}):'—')
         );
       }),
       showFinancials&&lvl.length>0&&React.createElement('tr',{key:'lvl',style:{background:'#fef2f2'}},
         React.createElement('td',{colSpan:5+days.length+3,style:{...S.td,textAlign:'right',fontWeight:700,fontSize:'11px',color:'#991b1b',background:'#fef2f2'}},`Supplier-level deductions (${lvl.length}) — see Deductions below`),
         dedCell(lvlB+lvlA,null),
-        React.createElement('td',{style:{...S.td,textAlign:'right',fontSize:'11px',color:'#64748b'}},lvlB>0?(-lvlB*VAT).toFixed(2):'—'),
-        React.createElement('td',{style:{...S.td,textAlign:'right',fontWeight:800,fontSize:'11px',color:'#dc2626',background:'#fef2f2'}},'−'+fmt2(lvlB*(1+VAT)+lvlA))
+        React.createElement('td',{style:{...S.td,textAlign:'right',fontSize:'11px',color:'#64748b'}},lvlBV>0?(-lvlBV).toFixed(2):'—'),
+        React.createElement('td',{style:{...S.td,textAlign:'right',fontWeight:800,fontSize:'11px',color:'#dc2626',background:'#fef2f2'}},'−'+fmt2(lvlB+lvlBV+lvlA))
       )),
       React.createElement('tfoot',null,React.createElement('tr',{style:{background:hdrBg}},
         React.createElement('td',{colSpan:showFinancials?5:4,style:{...S.td,fontWeight:800,color:'#fff',textAlign:'right',background:hdrBg,fontSize:'11px'}},'TOTAL'),
@@ -1652,10 +1655,10 @@ const MonthPivotTable=({showFinancials=false,supplierFilter='',editable=false})=
           const rows=showFinancials?workers2.map(calcRow):[];
           const gGross=rows.reduce((s,r)=>s+r.gross,0);
           const gDed=rows.reduce((s,r)=>s+r.ded,0)+lvlB+lvlA;
-          const gVat=rows.reduce((s,r)=>s+r.vat,0)-lvlB*VAT;
-          const gAmt=rows.reduce((s,r)=>s+r.amt,0)-(lvlB*(1+VAT)+lvlA);
+          const gVat=rows.reduce((s,r)=>s+r.vat,0)-lvlBV;
+          const gAmt=rows.reduce((s,r)=>s+r.amt,0)-(lvlB+lvlBV+lvlA);
           const cells=[React.createElement('td',{key:'h',style:{...S.td,textAlign:'center',fontWeight:800,color:'#fde68a',background:hdrBg}},gHrs.toFixed(1))];
-          if(showFinancials){cells.push(React.createElement('td',{key:'r',style:{...S.td,background:hdrBg}},''));cells.push(React.createElement('td',{key:'g',style:{...S.td,textAlign:'right',fontWeight:800,color:'#fde68a',background:hdrBg,fontSize:'11px'}},gGross.toLocaleString('en',{maximumFractionDigits:2})));cells.push(React.createElement('td',{key:'d',style:{...S.td,textAlign:'right',fontWeight:800,color:'#fca5a5',background:hdrBg,fontSize:'11px'}},gDed>0?'−'+fmt2(gDed):'—'));cells.push(React.createElement('td',{key:'v',style:{...S.td,textAlign:'right',color:'#fde68a',background:hdrBg,fontSize:'11px'}},gVat.toFixed(2)));cells.push(React.createElement('td',{key:'a',style:{...S.td,textAlign:'right',fontWeight:800,color:'#fde68a',background:hdrBg,fontSize:'11px'}},gAmt.toLocaleString('en',{maximumFractionDigits:2})));}
+          if(showFinancials){cells.push(React.createElement('td',{key:'r',style:{...S.td,background:hdrBg}},''));cells.push(React.createElement('td',{key:'g',style:{...S.td,textAlign:'right',fontWeight:800,color:'#fde68a',background:hdrBg,fontSize:'11px'}},gGross.toLocaleString('en',{maximumFractionDigits:2})));cells.push(React.createElement('td',{key:'d',style:{...S.td,textAlign:'right',fontWeight:800,color:'#fca5a5',background:hdrBg,fontSize:'11px'}},gDed>0?'−'+fmt2(gDed):'—'));cells.push(React.createElement('td',{key:'v',style:{...S.td,textAlign:'right',color:'#fde68a',background:hdrBg,fontSize:'11px'}},noVatView?'—':gVat.toFixed(2)));cells.push(React.createElement('td',{key:'a',style:{...S.td,textAlign:'right',fontWeight:800,color:'#fde68a',background:hdrBg,fontSize:'11px'}},gAmt.toLocaleString('en',{maximumFractionDigits:2})));}
           return cells;
         })())
       ))
@@ -1924,7 +1927,7 @@ const DeductionsPanel=()=>{
         fld('Remarks',E('textarea',{value:f.remarks,onChange:e=>setF('remarks',e.target.value),rows:2,placeholder:'Internal notes / evidence / who approved',style:{...inp,resize:'vertical',fontFamily:'inherit'}}),4)
       ),
       E('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginTop:'12px',flexWrap:'wrap'}},
-        E('div',{style:{fontSize:'12px',color:'#9a3412',fontWeight:700}},'= AED ',fmt(aedPreview),f.vat_treatment==='before_vat'?` (+ VAT ${fmt(aedPreview*parseFloat(settings.vat||'5')/100)} also reduced)`:''),
+        E('div',{style:{fontSize:'12px',color:'#9a3412',fontWeight:700}},'= AED ',fmt(aedPreview),!supplierHasVat(f.supplier_name)?' (supplier not VAT registered — no VAT)':(f.vat_treatment==='before_vat'?` (+ VAT ${fmt(aedPreview*vatRateFor(f.supplier_name))} also reduced)`:'')),
         E('div',{style:{flex:1}}),
         E('button',{onClick:()=>setDedForm(null),disabled:dedSaving,style:{...S.btnSec,padding:'6px 14px',fontSize:'12px'}},'Cancel'),
         E('button',{onClick:saveDeduction,disabled:dedSaving,style:{...S.btnPri,background:'#b91c1c',padding:'6px 16px',fontSize:'12px'}},dedSaving?'Saving…':'💾 Save Deduction')
@@ -1947,7 +1950,7 @@ const DeductionsPanel=()=>{
         E('td',{style:{...S.td,textAlign:'right',whiteSpace:'nowrap'}},d.currency,' ',fmt(d.amount)),
         E('td',{style:{...S.td,textAlign:'right',color:'#64748b'}},d.currency==='AED'?'—':Number(d.fx_rate)),
         E('td',{style:{...S.td,textAlign:'right',fontWeight:800,color:'#dc2626',whiteSpace:'nowrap'}},'−',fmt(dedAED(d))),
-        E('td',{style:{...S.td,fontSize:'10px',whiteSpace:'nowrap'}},d.vat_treatment==='after_vat'?'After VAT':'Before VAT'),
+        E('td',{style:{...S.td,fontSize:'10px',whiteSpace:'nowrap'}},!supplierHasVat(d.supplier_name)?'No VAT':(d.vat_treatment==='after_vat'?'After VAT':'Before VAT')),
         E('td',{style:{...S.td,fontSize:'10px',color:'#475569',maxWidth:'220px'}},d.remarks||''),
         E('td',{style:{...S.td,fontSize:'10px',fontWeight:700,color:dr?'#94a3b8':'#166534'}},dr?'Draft':'Approved'),
         E('td',{style:{...S.td,whiteSpace:'nowrap'}},
