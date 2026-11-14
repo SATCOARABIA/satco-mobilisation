@@ -1119,6 +1119,7 @@ const today=new Date().toISOString().slice(0,10);
 const[selDate,setSelDate]=React.useState(today);
 const[selCustomer,setSelCustomer]=React.useState('');
 const[selLocation,setSelLocation]=React.useState('');
+const[suppMode,setSuppModeRaw]=React.useState(()=>{try{return localStorage.getItem('satco_ts_supp_mode')||'supplier';}catch{return'supplier';}});const setSuppMode=m=>{setSuppModeRaw(m);try{localStorage.setItem('satco_ts_supp_mode',m);}catch{}};
 const[calMonth,setCalMonth]=React.useState(()=>{const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;});
 
 // ── Settings (per project, localStorage) ─────────────────────────────────
@@ -1492,7 +1493,28 @@ const siteSuppliers=React.useMemo(()=>{const m={};mobList.filter(r=>(!selCustome
 const[rateSupp,setRateSupp]=React.useState('');
 
 // ── Selector card ─────────────────────────────────────────────────────────
-const SelectorCard=()=>React.createElement('div',{style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'12px 16px',marginBottom:'12px',display:'flex',gap:'12px',flexWrap:'wrap',alignItems:'flex-end'}},
+const allTsSuppliers=[...new Set(mobList.map(r=>(r.supplier_name||'').trim()).filter(Boolean))].sort();
+const sitesForSupp=sup=>{const m={};mobList.filter(r=>(r.supplier_name||'').trim()===sup&&r.customer_name&&r.location).forEach(r=>{const k=r.customer_name+'||'+r.location;if(!m[k])m[k]={customer:r.customer_name,location:r.location,on:0,total:0};m[k].total++;if(tsEligible(r))m[k].on++;});return Object.values(m).sort((a,b)=>b.on-a.on||a.customer.localeCompare(b.customer));};
+const pickSupplier=sup=>{setSelSupp(sup);if(!sup)return;const st=sitesForSupp(sup);const cur=st.find(x=>x.customer===selCustomer&&x.location===selLocation);if(cur)return;const pick=st.length===1?st[0]:(st.filter(x=>x.on>0).length===1?st.find(x=>x.on>0):null);if(pick){setSelCustomer(pick.customer);setSelLocation(pick.location);}else{setSelCustomer('');setSelLocation('');}};
+const ModeToggle=()=>React.createElement('div',null,React.createElement('div',{style:{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}},'Select by'),
+  React.createElement('div',{style:{display:'flex',border:'1px solid #cbd5e1',borderRadius:6,overflow:'hidden'}},
+    [['supplier','🏭 Supplier'],['customer','🏢 Customer']].map(([k,l])=>React.createElement('button',{key:k,onClick:()=>setSuppMode(k),style:{padding:'6px 12px',fontSize:'12px',fontWeight:700,border:'none',cursor:'pointer',background:suppMode===k?'#0f172a':'#fff',color:suppMode===k?'#fff':'#475569'}},l))));
+const SupplierSelectorCard=()=>{const sites=selSupp?sitesForSupp(selSupp):[];const lbl={fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'};const sel={padding:'6px 10px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:'13px',fontWeight:600};
+  return React.createElement('div',{style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'12px 16px',marginBottom:'12px',display:'flex',gap:'12px',flexWrap:'wrap',alignItems:'flex-end'}},
+  ModeToggle(),
+  React.createElement('div',null,React.createElement('div',{style:lbl},'Supplier'),
+    React.createElement('select',{value:selSupp,onChange:e=>pickSupplier(e.target.value),style:{...sel,minWidth:'280px'}},
+      React.createElement('option',{value:''},'— Select Supplier —'),allTsSuppliers.map(s=>React.createElement('option',{key:s,value:s},s)))),
+  selSupp&&React.createElement('div',null,React.createElement('div',{style:lbl},sites.length>1?'Site ('+sites.length+')':'Site'),
+    sites.length?React.createElement('select',{value:selCustomer&&selLocation?selCustomer+'||'+selLocation:'',onChange:e=>{const[c,l]=e.target.value.split('||');setSelCustomer(c||'');setSelLocation(l||'');},style:{...sel,minWidth:'320px'}},
+      React.createElement('option',{value:''},'— Select Site —'),sites.map(x=>React.createElement('option',{key:x.customer+'||'+x.location,value:x.customer+'||'+x.location},x.customer+' — '+x.location+(x.on?'  ('+x.on+' on site)':'  (demobilised)'))))
+    :React.createElement('div',{style:{fontSize:'12px',color:'#94a3b8',padding:'7px 0'}},'No workers of this supplier mobilised to any site')),
+  selCustomer&&selLocation&&React.createElement('div',{style:{display:'flex',gap:'6px',alignItems:'flex-end'}},
+    React.createElement('button',{onClick:prevMonth,style:{padding:'6px 12px',border:'1px solid #e2e8f0',borderRadius:6,background:'#fff',cursor:'pointer',fontSize:'16px'}},'‹'),
+    React.createElement('div',{style:{padding:'6px 14px',background:'#0f172a',color:'#fff',borderRadius:6,fontWeight:700,fontSize:'13px',minWidth:'120px',textAlign:'center'}},new Date(calMonth+'-01').toLocaleDateString('en-GB',{month:'long',year:'numeric'})),
+    React.createElement('button',{onClick:nextMonth,style:{padding:'6px 12px',border:'1px solid #e2e8f0',borderRadius:6,background:'#fff',cursor:'pointer',fontSize:'16px'}},'›')));};
+const SelectorCard=()=>subTab==='supplier'&&suppMode==='supplier'?SupplierSelectorCard():React.createElement('div',{style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'12px 16px',marginBottom:'12px',display:'flex',gap:'12px',flexWrap:'wrap',alignItems:'flex-end'}},
+  subTab==='supplier'&&ModeToggle(),
   React.createElement('div',null,React.createElement('div',{style:{fontSize:'10px',fontWeight:700,color:'#64748b',marginBottom:'4px',textTransform:'uppercase'}},'Customer'),
     React.createElement('select',{value:selCustomer,onChange:e=>{setSelCustomer(e.target.value);setSelLocation('');},style:{padding:'6px 10px',border:'1px solid #cbd5e1',borderRadius:6,fontSize:'13px',fontWeight:600,minWidth:'200px'}},
       React.createElement('option',{value:''},'— Select Customer —'),customers.map(c=>React.createElement('option',{key:c,value:c},c)))),
@@ -1989,7 +2011,7 @@ return React.createElement('div',{style:{maxWidth:'1600px',margin:'0 auto',paddi
   subTab==='supplier'&&React.createElement('div',null,
     React.createElement('div',{style:{...S.card,padding:'12px 16px',marginBottom:'10px',display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap',background:'#f0fdf4',border:'1px solid #bbf7d0'}},
       React.createElement('div',{style:{fontWeight:700,fontSize:'13px',color:'#166534'}},'🏭 Supplier Timesheets'),
-      React.createElement('select',{value:selSupp,onChange:e=>setSelSupp(e.target.value),style:{...S.input,width:'230px',fontSize:'12px',padding:'5px 8px'}},
+      suppMode==='supplier'?React.createElement('div',{style:{fontSize:'12px',fontWeight:700,color:'#0f172a'}},selSupp?selSupp+(selCustomer?'  ·  '+selCustomer+' — '+selLocation:''):'Select a supplier above'):React.createElement('select',{value:selSupp,onChange:e=>setSelSupp(e.target.value),style:{...S.input,width:'230px',fontSize:'12px',padding:'5px 8px'}},
         React.createElement('option',{value:''},'All Suppliers'),
         monthSuppliers.map(s=>React.createElement('option',{key:s,value:s},s))
       ),
