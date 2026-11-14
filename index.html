@@ -1488,17 +1488,25 @@ const loadStatus=React.useCallback(async()=>{
 React.useEffect(()=>{if(subTab==='status'||subTab==='cstatus')loadStatus();},[subTab,loadStatus]);
 const stUser=async()=>{try{const{data:u}=await db.auth.getUser();return u&&u.user?u.user.email:'';}catch{return'';}};
 const stKey=r=>({customer_name:r.customer_name,location:r.location,ts_month:stMonth,supplier_name:r.supplier_name});
+// In-row actions (no browser pop-ups — some browsers block them). stEdit = {key, kind:'inv'|'undoInv'|'undoSent'|'undoCust', value}
+const[stEdit,setStEdit]=React.useState(null);
+const[stBusy,setStBusy]=React.useState(false);
+const stRowKey=r=>[r.customer_name,r.location||'',r.supplier_name||''].join('|');
+const stRun=async fn=>{setStBusy(true);try{const e=await fn();if(e&&e.message)alert('Could not save: '+e.message);else{setStEdit(null);await loadStatus();}}finally{setStBusy(false);}};
 const stToggleSent=async r=>{
-  if(r.sent){if(!window.confirm('Undo "timesheet sent" for '+r.supplier_name+'?'))return;const k=stKey(r);const{error}=await db.from('mob_supplier_ts_sent').delete().match(k);if(error)return alert(error.message);}
-  else{const{error}=await db.from('mob_supplier_ts_sent').upsert({...stKey(r),sent_by:await stUser()||null,method:'manual',sent_at:new Date().toISOString()},{onConflict:'customer_name,location,ts_month,supplier_name'});if(error)return alert(error.message);}
-  loadStatus();
+  if(r.sent)return setStEdit({key:stRowKey(r),kind:'undoSent'});
+  stRun(async()=>(await db.from('mob_supplier_ts_sent').upsert({...stKey(r),sent_by:await stUser()||null,method:'manual',sent_at:new Date().toISOString()},{onConflict:'customer_name,location,ts_month,supplier_name'})).error);
 };
-const stToggleInvoice=async r=>{
-  if(r.rel){if(!window.confirm('Undo "invoice received" for '+r.supplier_name+'?\n\nThis also removes it from the Finance portal list (only do this if Finance has not recorded it yet).'))return;const{error}=await db.from('mob_invoice_releases').delete().match(stKey(r));if(error)return alert(error.message);}
-  else{const inv=window.prompt('Supplier invoice received — '+r.supplier_name+'\n\nSupplier invoice number (optional):','');if(inv===null)return;const{error}=await db.from('mob_invoice_releases').upsert({...stKey(r),supplier_invoice_no:(inv||'').trim()||null,released_by:await stUser()||null,released_at:new Date().toISOString()},{onConflict:'customer_name,location,ts_month,supplier_name'});if(error)return alert(error.message);
-    if(!r.sent)await db.from('mob_supplier_ts_sent').upsert({...stKey(r),sent_by:await stUser()||null,method:'manual',sent_at:new Date().toISOString()},{onConflict:'customer_name,location,ts_month,supplier_name'});}
-  loadStatus();
-};
+const stUndoSent=r=>stRun(async()=>(await db.from('mob_supplier_ts_sent').delete().match(stKey(r))).error);
+const stToggleInvoice=r=>setStEdit(r.rel?{key:stRowKey(r),kind:'undoInv'}:{key:stRowKey(r),kind:'inv',value:''});
+const stSaveInvoice=(r,invNo)=>stRun(async()=>{const by=await stUser()||null;
+  const{error}=await db.from('mob_invoice_releases').upsert({...stKey(r),supplier_invoice_no:(invNo||'').trim()||null,released_by:by,released_at:new Date().toISOString()},{onConflict:'customer_name,location,ts_month,supplier_name'});if(error)return error;
+  if(!r.sent)await db.from('mob_supplier_ts_sent').upsert({...stKey(r),sent_by:by,method:'manual',sent_at:new Date().toISOString()},{onConflict:'customer_name,location,ts_month,supplier_name'});return null;});
+const stUndoInvoice=r=>stRun(async()=>(await db.from('mob_invoice_releases').delete().match(stKey(r))).error);
+// Small in-cell editors
+const stMiniBtn=(label,onClick,primary)=>React.createElement('span',{role:'button',onClick:stBusy?undefined:onClick,style:{display:'inline-block',padding:'3px 9px',borderRadius:'6px',fontSize:'11px',fontWeight:800,cursor:'pointer',marginLeft:'4px',background:primary?'#c8a84b':'#e2e8f0',color:primary?'#072340':'#1e3352',opacity:stBusy?.5:1}},label);
+const stConfirmCell=(text,onYes)=>React.createElement('span',{style:{fontSize:'11.5px',whiteSpace:'nowrap'}},text,stMiniBtn('Yes, undo',onYes,true),stMiniBtn('Cancel',()=>setStEdit(null)));
+const stInvCell=r=>React.createElement('span',{style:{whiteSpace:'nowrap'}},React.createElement('input',{autoFocus:true,placeholder:'Supplier invoice no. (optional)',value:stEdit.value,onChange:e=>setStEdit({...stEdit,value:e.target.value}),onKeyDown:e=>{if(e.key==='Enter')stSaveInvoice(r,stEdit.value);if(e.key==='Escape')setStEdit(null);},style:{...S.input,width:'170px',padding:'4px 8px',fontSize:'12px'}}),stMiniBtn('✓ Received',()=>stSaveInvoice(r,stEdit.value),true),stMiniBtn('Cancel',()=>setStEdit(null)));
 const markTsSentFromExport=async(suppName)=>{try{if(!selCustomer||!selLocation)return;const names=suppName?[suppName.trim()]:[...new Set(history.map(h=>(h.supplier_name||'').trim()).filter(n=>n&&!/^satco arabia$/i.test(n)))];if(!names.length)return;const by=await stUser();const existing=(await db.from('mob_supplier_ts_sent').select('supplier_name').eq('customer_name',selCustomer).eq('location',selLocation).eq('ts_month',calMonth)).data||[];const todo=names.filter(n=>!existing.some(e=>(e.supplier_name||'').trim()===n));if(todo.length)await db.from('mob_supplier_ts_sent').upsert(todo.map(n=>({customer_name:selCustomer,location:selLocation,ts_month:calMonth,supplier_name:n,sent_by:by||null,method:'excel_export',sent_at:new Date().toISOString()})),{onConflict:'customer_name,location,ts_month,supplier_name'});}catch(e){console.warn('[ts sent]',e);}};
 const SupplierStatusPanel=()=>{
   const fmtD=d=>d?new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short'}):'';
@@ -1506,7 +1514,7 @@ const SupplierStatusPanel=()=>{
   const shift=n=>{const d=new Date(y,m-1+n,1);setStMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);};
   const tot=stRows.length,nSent=stRows.filter(r=>r.sent).length,nInv=stRows.filter(r=>r.rel).length;
   const shown=stRows.filter(r=>stFilter==='all'||(stFilter==='ts'&&!r.sent)||(stFilter==='inv'&&!r.rel)||(stFilter==='done'&&r.sent&&r.rel));
-  const chip=(ok,label,sub,onClick,title)=>React.createElement('button',{onClick,title,style:{padding:'4px 10px',borderRadius:'999px',fontSize:'11.5px',fontWeight:800,cursor:'pointer',border:'1px solid '+(ok?'#86efac':'#fecaca'),background:ok?'#dcfce7':'#fef2f2',color:ok?'#166534':'#b91c1c',whiteSpace:'nowrap'}},label,sub&&React.createElement('span',{style:{fontWeight:600,marginLeft:4,opacity:.8}},sub));
+  const chip=(ok,label,sub,onClick,title)=>React.createElement('span',{role:'button',onClick,title,style:{display:'inline-block',padding:'4px 10px',borderRadius:'999px',fontSize:'11.5px',fontWeight:800,cursor:'pointer',border:'1px solid '+(ok?'#86efac':'#fecaca'),background:ok?'#dcfce7':'#fef2f2',color:ok?'#166534':'#b91c1c',whiteSpace:'nowrap'}},label,sub&&React.createElement('span',{style:{fontWeight:600,marginLeft:4,opacity:.8}},sub));
   const kpi=(label,val,of,color,f)=>React.createElement('div',{onClick:()=>setStFilter(f),style:{...S.card,padding:'12px 16px',cursor:'pointer',borderLeft:'3px solid '+color,outline:stFilter===f?'2px solid '+color:'none'}},React.createElement('div',{style:{fontSize:'11px',color:'#64748b',fontWeight:700}},label),React.createElement('div',{style:{fontSize:'22px',fontWeight:900,color}},val,of!=null&&React.createElement('span',{style:{fontSize:'13px',color:'#94a3b8',fontWeight:700}},' / '+of)));
   return React.createElement('div',null,
     React.createElement('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'12px',flexWrap:'wrap'}},
@@ -1536,19 +1544,19 @@ const SupplierStatusPanel=()=>{
             React.createElement('td',{style:{...S.td,fontWeight:700}},r.hours),
             React.createElement('td',{style:{...S.td,color:r.ded?'#dc2626':'#94a3b8',fontWeight:r.ded?700:400}},r.ded?'− AED '+r.ded.toLocaleString('en',{minimumFractionDigits:2}):'—'),
             React.createElement('td',{style:{...S.td,fontWeight:700}},r.net_amount!=null?'AED '+Number(r.net_amount).toLocaleString('en',{minimumFractionDigits:2}):'—'),
-            React.createElement('td',{style:S.td},chip(!!r.sent,r.sent?'✓ Sent':'✗ Not sent',r.sent?fmtD(r.sent.sent_at)+(r.sent.method==='excel_export'?' · Excel':''):'',()=>stToggleSent(r),r.sent?'Click to undo':'Click to mark timesheet as sent to supplier')),
-            React.createElement('td',{style:S.td},chip(!!r.rel,r.rel?'✓ Received':'✗ Not received',r.rel?fmtD(r.rel.released_at)+(r.rel.supplier_invoice_no?' · '+r.rel.supplier_invoice_no:''):'',()=>stToggleInvoice(r),r.rel?'Sent to Finance — click to undo':'Click when the supplier invoice arrives — sends it to the Finance portal')),
+            React.createElement('td',{style:S.td},stEdit&&stEdit.key===stRowKey(r)&&stEdit.kind==='undoSent'?stConfirmCell('Undo timesheet sent?',()=>stUndoSent(r)):chip(!!r.sent,r.sent?'✓ Sent':'✗ Not sent',r.sent?fmtD(r.sent.sent_at)+(r.sent.method==='excel_export'?' · Excel':''):'',()=>stToggleSent(r),r.sent?'Click to undo':'Click to mark timesheet as sent to supplier')),
+            React.createElement('td',{style:S.td},stEdit&&stEdit.key===stRowKey(r)&&stEdit.kind==='inv'?stInvCell(r):stEdit&&stEdit.key===stRowKey(r)&&stEdit.kind==='undoInv'?stConfirmCell('Undo invoice received? (removes it from Finance list)',()=>stUndoInvoice(r)):chip(!!r.rel,r.rel?'✓ Received':'✗ Not received',r.rel?fmtD(r.rel.released_at)+(r.rel.supplier_invoice_no?' · '+r.rel.supplier_invoice_no:''):'',()=>stToggleInvoice(r),r.rel?'Sent to Finance — click to undo':'Click when the supplier invoice arrives — sends it to the Finance portal')),
             React.createElement('td',{style:{...S.td,fontSize:'11.5px',whiteSpace:'nowrap'}},!r.finance?React.createElement('span',{style:{color:'#94a3b8'}},'Not recorded'):r.finance.status==='Paid'?React.createElement('span',{style:{color:'#166534',fontWeight:800}},'✓ Paid'+(r.finance.paid_date?' '+fmtD(r.finance.paid_date):'')):React.createElement('span',{style:{color:'#d97706',fontWeight:700}},'Recorded · '+(r.finance.invoice_number||'')+' · unpaid')),
             React.createElement('td',{style:S.td},React.createElement('button',{onClick:()=>{setSelCustomer(r.customer_name);setSelLocation(r.location);setCalMonth(stMonth);setSelSupp(r.supplier_name);setSubTab('supplier');},style:{...S.btnSec,padding:'4px 10px',fontSize:'11px'}},'Open ›'))))))),
     React.createElement('div',{style:{fontSize:'11px',color:'#94a3b8',marginTop:'8px'}},'"Timesheet sent" is ticked automatically when you export the supplier Excel. "Invoice received" sends the supplier to Finance → Supplier Invoices to record.'));
 };
 
-const ctToggleSent=async c=>{
+const ctToggleSent=c=>{
   const k={customer_name:c.customer_name,location:c.location||'',ts_month:stMonth};
-  if(c.ts_sent){if(!window.confirm('Undo "timesheet sent" for '+c.customer_name+'?'))return;const{error}=await db.from('mob_customer_ts_sent').delete().match(k);if(error)return alert(error.message);}
-  else{const{error}=await db.from('mob_customer_ts_sent').upsert({...k,sent_by:await stUser()||null,method:'manual',sent_at:new Date().toISOString()},{onConflict:'customer_name,location,ts_month'});if(error)return alert(error.message);}
-  loadStatus();
+  if(c.ts_sent)return setStEdit({key:stRowKey(c),kind:'undoCust'});
+  stRun(async()=>(await db.from('mob_customer_ts_sent').upsert({...k,sent_by:await stUser()||null,method:'manual',sent_at:new Date().toISOString()},{onConflict:'customer_name,location,ts_month'})).error);
 };
+const ctUndoSent=c=>stRun(async()=>(await db.from('mob_customer_ts_sent').delete().match({customer_name:c.customer_name,location:c.location||'',ts_month:stMonth})).error);
 const markCustTsSentFromExport=async()=>{try{if(!selCustomer||!selLocation)return;await db.from('mob_customer_ts_sent').upsert({customer_name:selCustomer,location:selLocation,ts_month:calMonth,sent_by:await stUser()||null,method:'excel_export',sent_at:new Date().toISOString()},{onConflict:'customer_name,location,ts_month',ignoreDuplicates:true});}catch(e){console.warn('[cust ts sent]',e);}};
 const CustomerStatusPanel=()=>{
   const fmtD=d=>d?new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short'}):'';
@@ -1556,7 +1564,7 @@ const CustomerStatusPanel=()=>{
   const[y,m]=stMonth.split('-').map(Number);const ml=new Date(y,m-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'});
   const shift=n=>{const d=new Date(y,m-1+n,1);setStMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);};
   const rows=stCust,tot=rows.length,nSent=rows.filter(r=>r.ts_sent).length,nInv=rows.filter(r=>(r.invoices||[]).length).length,nPaid=rows.filter(r=>(r.invoices||[]).length&&r.invoices.every(i=>i.computed_status==='Paid')).length;
-  const chip=(ok,label,sub,onClick,title)=>React.createElement('button',{onClick,title,style:{padding:'4px 10px',borderRadius:'999px',fontSize:'11.5px',fontWeight:800,cursor:onClick?'pointer':'default',border:'1px solid '+(ok?'#86efac':'#fecaca'),background:ok?'#dcfce7':'#fef2f2',color:ok?'#166534':'#b91c1c',whiteSpace:'nowrap'}},label,sub&&React.createElement('span',{style:{fontWeight:600,marginLeft:4,opacity:.8}},sub));
+  const chip=(ok,label,sub,onClick,title)=>React.createElement('span',{role:'button',onClick,title,style:{display:'inline-block',padding:'4px 10px',borderRadius:'999px',fontSize:'11.5px',fontWeight:800,cursor:onClick?'pointer':'default',border:'1px solid '+(ok?'#86efac':'#fecaca'),background:ok?'#dcfce7':'#fef2f2',color:ok?'#166534':'#b91c1c',whiteSpace:'nowrap'}},label,sub&&React.createElement('span',{style:{fontWeight:600,marginLeft:4,opacity:.8}},sub));
   const kpi=(label,val,of,color)=>React.createElement('div',{style:{...S.card,padding:'12px 16px',borderLeft:'3px solid '+color}},React.createElement('div',{style:{fontSize:'11px',color:'#64748b',fontWeight:700}},label),React.createElement('div',{style:{fontSize:'22px',fontWeight:900,color}},val,of!=null&&React.createElement('span',{style:{fontSize:'13px',color:'#94a3b8',fontWeight:700}},' / '+of)));
   return React.createElement('div',null,
     React.createElement('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'12px',flexWrap:'wrap'}},
@@ -1582,7 +1590,7 @@ const CustomerStatusPanel=()=>{
               React.createElement('td',{style:{...S.td,fontSize:'11.5px',color:'#64748b',maxWidth:'260px'}},c.location||(c.from_mob?'':'(not on Mob timesheets)')),
               React.createElement('td',{style:S.td},c.workers??'—'),
               React.createElement('td',{style:{...S.td,fontWeight:700}},c.hours??'—'),
-              React.createElement('td',{style:S.td},chip(!!c.ts_sent,c.ts_sent?'✓ Sent':'✗ Not sent',c.ts_sent?fmtD(c.ts_sent.at)+(c.ts_sent.method==='excel_export'?' · Excel':''):'',()=>ctToggleSent(c),c.ts_sent?'Click to undo':'Click to mark timesheet as sent to customer')),
+              React.createElement('td',{style:S.td},stEdit&&stEdit.key===stRowKey(c)&&stEdit.kind==='undoCust'?stConfirmCell('Undo timesheet sent?',()=>ctUndoSent(c)):chip(!!c.ts_sent,c.ts_sent?'✓ Sent':'✗ Not sent',c.ts_sent?fmtD(c.ts_sent.at)+(c.ts_sent.method==='excel_export'?' · Excel':''):'',()=>ctToggleSent(c),c.ts_sent?'Click to undo':'Click to mark timesheet as sent to customer')),
               React.createElement('td',{style:{...S.td,fontSize:'11.5px'}},invs.length?invs.map(x=>React.createElement('div',{key:x.id,style:{whiteSpace:'nowrap'}},React.createElement('b',null,x.invoice_no),' · '+money(x.invoice_value,x.currency)+(x.invoice_date?' · '+fmtD(x.invoice_date):''))):chip(false,'✗ Not raised','',null,'No invoice in the Ops portal for this month')),
               React.createElement('td',{style:{...S.td,fontSize:'11.5px',whiteSpace:'nowrap'}},!invs.length?'—':allPaid?React.createElement('span',{style:{color:'#166534',fontWeight:800}},'✓ Paid'):React.createElement('span',{style:{color:invs.some(x=>x.computed_status==='Overdue')?'#dc2626':'#d97706',fontWeight:700}},'Balance '+money(bal,invs[0].currency)+' · '+[...new Set(invs.map(x=>x.computed_status))].join(', '))));})))),
     React.createElement('div',{style:{fontSize:'11px',color:'#94a3b8',marginTop:'8px'}},'"Timesheet sent" is ticked automatically when you export the customer Excel. Invoices and payments come from the Ops portal (billing period = this month).'));
@@ -1599,24 +1607,16 @@ const sendToFinance=async(suppName)=>{
   const all=[...new Set(history.map(h=>(h.supplier_name||'').trim()).filter(n=>n&&!/^satco arabia$/i.test(n)))].sort();
   if(!all.length)return alert('No supplier hours in this month.');
   let by='';try{const{data:u}=await db.auth.getUser();by=u&&u.user?u.user.email:'';}catch{}
-  const[calY,calM]=calMonth.split('-').map(Number);const ml=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][calM-1]+'-'+String(calY).slice(2);
-  if(suppName){
-    const sn=suppName.trim();
-    if(isReleased(sn)){if(!window.confirm(sn+' — '+ml+' was already sent to Finance.\n\nWithdraw it from Finance? (Only do this if Finance has not recorded the invoice yet.)'))return;const{error}=await db.from('mob_invoice_releases').delete().eq('customer_name',selCustomer).eq('location',selLocation).eq('ts_month',calMonth).eq('supplier_name',sn);if(error)return alert('Could not withdraw: '+error.message);loadReleases();return;}
-    const inv=window.prompt('Supplier invoice received — '+sn+' ('+ml+')\n\nSupplier invoice number (optional — you can also enter it in Finance):','');
-    if(inv===null)return;
-    const{error}=await db.from('mob_invoice_releases').upsert({customer_name:selCustomer,location:selLocation,ts_month:calMonth,supplier_name:sn,supplier_invoice_no:(inv||'').trim()||null,released_by:by||null,released_at:new Date().toISOString()},{onConflict:'customer_name,location,ts_month,supplier_name'});
-    if(error)return alert('Could not send: '+error.message);
-    await db.from('mob_supplier_ts_sent').upsert({customer_name:selCustomer,location:selLocation,ts_month:calMonth,supplier_name:sn,sent_by:by||null,method:'manual'},{onConflict:'customer_name,location,ts_month,supplier_name',ignoreDuplicates:true});
-    loadReleases();alert('✅ '+sn+' — '+ml+' sent to the Finance portal.\n\nIn Finance → Supplier Invoices click "✓ Record Invoice" to save it.');return;
-  }
-  const todo=all.filter(n=>!isReleased(n));
-  if(!todo.length)return alert('All suppliers for '+ml+' are already sent to Finance.');
-  if(!window.confirm('Send these suppliers ('+ml+') to the Finance portal as "invoice received"?\n\n• '+todo.join('\n• ')))return;
-  const{error}=await db.from('mob_invoice_releases').upsert(todo.map(sn=>({customer_name:selCustomer,location:selLocation,ts_month:calMonth,supplier_name:sn,released_by:by||null,released_at:new Date().toISOString()})),{onConflict:'customer_name,location,ts_month,supplier_name'});
+  const names=suppName?[suppName.trim()]:all.filter(n=>!isReleased(n));
+  if(suppName&&isReleased(suppName))return; // already sent — use "withdraw" next to the button
+  if(!names.length)return alert('All suppliers for this month are already sent to Finance.');
+  const now=new Date().toISOString();
+  const{error}=await db.from('mob_invoice_releases').upsert(names.map(sn=>({customer_name:selCustomer,location:selLocation,ts_month:calMonth,supplier_name:sn,released_by:by||null,released_at:now})),{onConflict:'customer_name,location,ts_month,supplier_name'});
   if(error)return alert('Could not send: '+error.message);
-  loadReleases();alert('✅ Sent '+todo.length+' supplier(s) to the Finance portal.');
+  await db.from('mob_supplier_ts_sent').upsert(names.map(sn=>({customer_name:selCustomer,location:selLocation,ts_month:calMonth,supplier_name:sn,sent_by:by||null,method:'manual'})),{onConflict:'customer_name,location,ts_month,supplier_name',ignoreDuplicates:true});
+  loadReleases();
 };
+const withdrawFromFinance=async sn=>{const{error}=await db.from('mob_invoice_releases').delete().eq('customer_name',selCustomer).eq('location',selLocation).eq('ts_month',calMonth).eq('supplier_name',sn.trim());if(error)return alert('Could not withdraw: '+error.message);loadReleases();};
 const exportSupplierExcel=async(suppName)=>{if(!history.length)return alert('No timesheet data for this month.');const noVat=suppName?(supplierHasVat(suppName)?[]:[suppName]):[...new Set(history.map(h=>h.supplier_name).filter(Boolean))].filter(n=>!supplierHasVat(n));if(noVat.length&&!window.confirm((noVat.length===1?noVat[0]+' has no VAT number':'These suppliers have no VAT number')+' in the Suppliers register'+(noVat.length>1?':\n• '+noVat.join('\n• '):'')+'.\n\nThe timesheet will be exported WITHOUT VAT (VAT = 0) for '+(noVat.length===1?'this supplier':'them')+'.\n\nProceed with the download?'))return;const[calY,calM]=calMonth.split('-').map(Number);const mn=new Date(calY,calM-1,1).toLocaleDateString('en-GB',{month:'short',year:'numeric'}).replace(' ','');const s=n=>{const sk=new Set(['L.L.C','S.P.C','AND','GENERAL','CONTRACTING','LLC','SPC','-','&','MAINTENANCE']);return(n||'ALL').split(' ').filter(w=>!sk.has(w.toUpperCase())).slice(0,2).join('_');};markTsSentFromExport(suppName||null);await callTsApi({type:'supplier',supplier:suppName||null,data:buildTsData()},suppName?`SATCO_Supplier_${s(suppName)}_${mn}.xlsx`:`SATCO_AllSuppliers_${mn}.xlsx`);}
 
 const monthSuppliers=React.useMemo(()=>[...new Set(history.map(r=>r.supplier_name).filter(Boolean))].sort(),[history]);
@@ -2197,6 +2197,7 @@ return React.createElement('div',{style:{maxWidth:'1600px',margin:'0 auto',paddi
       ),
       React.createElement('div',{style:{flex:1}}),
       React.createElement('button',{onClick:()=>sendToFinance(selSupp||null),disabled:!history.length||histLoading,title:selSupp&&isReleased(selSupp)?'Already sent to Finance — click to withdraw':'Supplier invoice received — send hours, deductions and amount to the Finance portal',style:{...S.btnSec,padding:'6px 14px',fontSize:'12px',marginRight:'6px',...(selSupp&&isReleased(selSupp)?{background:'#dcfce7',color:'#166534',borderColor:'#86efac'}:{})}},selSupp?(isReleased(selSupp)?'✓ Sent to Finance':'📤 Invoice received → Send to Finance'):'📤 Send all to Finance'),
+      selSupp&&isReleased(selSupp)&&React.createElement('span',{role:'button',onClick:()=>withdrawFromFinance(selSupp),title:'Remove from the Finance list (only if Finance has not recorded it yet)',style:{fontSize:'11px',color:'#94a3b8',textDecoration:'underline',cursor:'pointer',marginRight:'8px'}},'withdraw'),
       React.createElement('button',{onClick:()=>exportSupplierExcel(selSupp||null),disabled:!history.length||histLoading,style:{...S.btnPri,padding:'6px 16px',fontSize:'12px'}},selSupp?'⬇ Export '+selSupp.split(' ')[0]+' Excel':'⬇ Export All (multi-sheet)')
     ),
     MonthPivotTable({showFinancials:true,supplierFilter:selSupp}),
