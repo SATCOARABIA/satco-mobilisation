@@ -76,16 +76,17 @@
     document.getElementById('mfa-ms').onclick = function () { microsoft().then(function (r) { if (r.error) document.getElementById('mfa-err').textContent = r.error.message; }); };
     document.getElementById('mfa-local').onclick = function () { localLogin = true; hide(); };
   }
+  function within(p) { return Promise.race([p, new Promise(function (_, rej) { setTimeout(function () { rej(new Error('timeout')); }, 6000); })]); }
   function unwrap(r) { if (r.error) throw r.error; return r.data; }
 
   async function check() {
     if (busy || !client) return;
     busy = true;
     try {
-      var s = unwrap(await client.auth.getSession()).session;
+      var s = unwrap(await within(client.auth.getSession())).session;
       if (!s) { if (MS) signInScreen(); else hide(); return; }
       if (viaMicrosoft(s)) { sessionStorage.removeItem('satco-sso-tried'); hide(); return; }
-      var aal = unwrap(await client.auth.mfa.getAuthenticatorAssuranceLevel());
+      var aal = unwrap(await within(client.auth.mfa.getAuthenticatorAssuranceLevel()));
       if (aal.currentLevel === 'aal2') { hide(); return; }
       if (box) return; // form already showing
       var f = unwrap(await client.auth.mfa.listFactors());
@@ -136,7 +137,7 @@
     // after a Microsoft redirect, give the page's own login a moment to store the session
     setTimeout(check, /access_token|[?&]code=/.test(location.hash + location.search) ? 3000 : 800);
     setTimeout(check, 4000);
-    setInterval(check, 15000);
+    setInterval(check, 5000);
     window.addEventListener('storage', function (e) { if (e.key && e.key.indexOf('-auth-token') > 0) setTimeout(check, 300); });
     document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
   }
