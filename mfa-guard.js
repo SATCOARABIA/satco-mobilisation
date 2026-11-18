@@ -130,7 +130,9 @@
   function start() {
     if (!window.supabase || !window.supabase.createClient) return setTimeout(start, 200);
     client = window.supabase.createClient(URL_, KEY, { auth: { autoRefreshToken: false, persistSession: true, detectSessionInUrl: false, storageKey: STORAGE_KEY } });
-    setTimeout(check, 800);
+    // after a Microsoft redirect, give the page's own login a moment to store the session
+    setTimeout(check, /access_token|[?&]code=/.test(location.hash + location.search) ? 3000 : 800);
+    setTimeout(check, 4000);
     setInterval(check, 15000);
     window.addEventListener('storage', function (e) { if (e.key && e.key.indexOf('-auth-token') > 0) setTimeout(check, 300); });
     document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
