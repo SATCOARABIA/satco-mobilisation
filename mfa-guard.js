@@ -7,6 +7,8 @@
 (function () {
   var me = document.currentScript;
   var URL_ = me.getAttribute('data-url'), KEY = me.getAttribute('data-key');
+  var STORAGE_KEY = me.getAttribute('data-storage-key') || undefined;
+  var MS = me.getAttribute('data-microsoft') === 'on';
   var IDLE_MIN = 30;
   var client = null, busy = false, box = null, lastActive = Date.now();
 
@@ -52,6 +54,25 @@
     if (i >= 0) return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(q.slice(i));
     return q;
   }
+  function viaMicrosoft(s) {
+    try { var p = JSON.parse(atob(s.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      return (p.amr || []).some(function (a) { return a.method === 'oauth'; }); } catch (e) { return false; }
+  }
+  function microsoft() {
+    var back = location.origin + location.pathname;
+    return client.auth.signInWithOAuth({ provider: 'azure', options: { scopes: 'email openid profile', redirectTo: back } });
+  }
+  var localLogin = false;
+  function signInScreen() {
+    if (localLogin || box) return;
+    if (/[?&]sso=1/.test(location.search) && !sessionStorage.getItem('satco-sso-tried')) { sessionStorage.setItem('satco-sso-tried', '1'); microsoft(); return; }
+    show('<h2>SATCO sign in</h2><p>Use your SATCO Microsoft 365 account.</p>' +
+      '<button id="mfa-ms" style="width:100%;margin-top:8px">Sign in with Microsoft</button>' +
+      '<div class="e" id="mfa-err"></div><button class="l" id="mfa-local">Use email &amp; password instead</button>');
+    document.getElementById('mfa-out').style.display = 'none';
+    document.getElementById('mfa-ms').onclick = function () { microsoft().then(function (r) { if (r.error) document.getElementById('mfa-err').textContent = r.error.message; }); };
+    document.getElementById('mfa-local').onclick = function () { localLogin = true; hide(); };
+  }
   function unwrap(r) { if (r.error) throw r.error; return r.data; }
 
   async function check() {
@@ -59,7 +80,8 @@
     busy = true;
     try {
       var s = unwrap(await client.auth.getSession()).session;
-      if (!s) { hide(); return; }
+      if (!s) { if (MS) signInScreen(); else hide(); return; }
+      if (viaMicrosoft(s)) { sessionStorage.removeItem('satco-sso-tried'); hide(); return; }
       var aal = unwrap(await client.auth.mfa.getAuthenticatorAssuranceLevel());
       if (aal.currentLevel === 'aal2') { hide(); return; }
       if (box) return; // form already showing
@@ -70,13 +92,25 @@
         codeForm('Enter your security code', 'Open <b>Google Authenticator</b> (or Microsoft Authenticator) on your phone and type the 6-digit code for <b>SATCO</b>.', '',
           function (code) { return client.auth.mfa.challengeAndVerify({ factorId: id, code: code }).then(unwrap); });
       } else {
-        // first time: remove half-finished setups, then show QR
-        for (var i = 0; i < (f.all || []).length; i++) if (f.all[i].status !== 'verified') await client.auth.mfa.unenroll({ factorId: f.all[i].id });
-        var en = unwrap(await client.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'SATCO ' + location.hostname.split('.')[0] + ' ' + Date.now() }));
+        // first time: reuse a QR already shown in this browser (another tab / a reload) so the code the
+        // user scanned stays valid; only clean up half-finished setups older than 30 minutes.
+        var uid = s.user.id, pkey = 'satco-mfa-pending-' + uid, en = null;
+        try { var pend = JSON.parse(localStorage.getItem(pkey) || 'null'); } catch (e) { pend = null; }
+        var unverified = (f.all || []).filter(function (x) { return x.status !== 'verified'; });
+        if (pend && unverified.some(function (x) { return x.id === pend.id; })) en = pend;
+        for (var i = 0; i < unverified.length; i++) {
+          var old = Date.now() - new Date(unverified[i].created_at).getTime() > 30 * 60000;
+          if (old && (!en || unverified[i].id !== en.id)) await client.auth.mfa.unenroll({ factorId: unverified[i].id });
+        }
+        if (!en) {
+          var r = unwrap(await client.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'SATCO ' + location.hostname.split('.')[0] + ' ' + Date.now() }));
+          en = { id: r.id, totp: { qr_code: r.totp.qr_code, secret: r.totp.secret } };
+          try { localStorage.setItem(pkey, JSON.stringify(en)); } catch (e) {}
+        }
         codeForm('Set up two-step login',
           '1. Install <b>Google Authenticator</b> on your phone.<br>2. Tap <b>+</b> → <b>Scan a QR code</b> and scan the code above.<br>3. Type the 6-digit code it shows.',
           '<img alt="QR" id="mfa-qr"><code>Key: ' + en.totp.secret + '</code>',
-          function (code) { return client.auth.mfa.challengeAndVerify({ factorId: en.id, code: code }).then(unwrap); });
+          function (code) { return client.auth.mfa.challengeAndVerify({ factorId: en.id, code: code }).then(unwrap).then(function (d) { try { localStorage.removeItem(pkey); } catch (e) {} return d; }); });
         document.getElementById('mfa-qr').src = qrSrc(en.totp.qr_code);
       }
     } catch (e) { console.warn('mfa-guard', e); }
@@ -95,7 +129,7 @@
 
   function start() {
     if (!window.supabase || !window.supabase.createClient) return setTimeout(start, 200);
-    client = window.supabase.createClient(URL_, KEY, { auth: { autoRefreshToken: false, persistSession: true, detectSessionInUrl: false } });
+    client = window.supabase.createClient(URL_, KEY, { auth: { autoRefreshToken: false, persistSession: true, detectSessionInUrl: false, storageKey: STORAGE_KEY } });
     setTimeout(check, 800);
     setInterval(check, 15000);
     window.addEventListener('storage', function (e) { if (e.key && e.key.indexOf('-auth-token') > 0) setTimeout(check, 300); });
