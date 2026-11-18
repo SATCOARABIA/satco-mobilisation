@@ -5,6 +5,9 @@
 // until the code has been entered (database rule "aal2"), so a stolen password alone shows nothing.
 // Also signs the user out after 30 minutes without any activity.
 (function () {
+  // old free addresses -> SATCO's own domain
+  var MOVED = { 'satco-hub.vercel.app': 'hub', 'satco-hr.vercel.app': 'hr', 'satco-finance.vercel.app': 'finance', 'satco-ops.vercel.app': 'ops', 'satco-mobilisation.vercel.app': 'mobilisation' };
+  if (MOVED[location.hostname]) { location.replace('https://' + MOVED[location.hostname] + '.satcoarabiaengg.com' + location.pathname + location.search + location.hash); return; }
   var me = document.currentScript;
   var URL_ = me.getAttribute('data-url'), KEY = me.getAttribute('data-key');
   var STORAGE_KEY = me.getAttribute('data-storage-key') || undefined;
