@@ -46,6 +46,7 @@
     }
     btn.onclick = go; inp.onkeydown = function (e) { if (e.key === 'Enter') go(); };
   }
+  function qrSrc(q) { q = String(q || ''); return q.indexOf('data:') === 0 ? q : 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(q); }
   function unwrap(r) { if (r.error) throw r.error; return r.data; }
 
   async function check() {
@@ -69,7 +70,7 @@
         var en = unwrap(await client.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'SATCO ' + location.hostname.split('.')[0] + ' ' + Date.now() }));
         codeForm('Set up two-step login',
           '1. Install <b>Google Authenticator</b> on your phone.<br>2. Tap <b>+</b> → <b>Scan a QR code</b> and scan the code above.<br>3. Type the 6-digit code it shows.',
-          '<img alt="QR" src="' + en.totp.qr_code + '"><code>Key: ' + en.totp.secret + '</code>',
+          '<img alt="QR" src="' + qrSrc(en.totp.qr_code) + '"><code>Key: ' + en.totp.secret + '</code>',
           function (code) { return client.auth.mfa.challengeAndVerify({ factorId: en.id, code: code }).then(unwrap); });
       }
     } catch (e) { console.warn('mfa-guard', e); }
