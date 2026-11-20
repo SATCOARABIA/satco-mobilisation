@@ -264,6 +264,11 @@ html, body { background:#1e3352 !important; }
   #root#root .sh-navy table:has(td[style*="left: 136px"]) tr > :is(th,td):is(:nth-child(1),:nth-child(2),:nth-child(4)) { display:none !important; }
   #root#root .sh-navy table:has(td[style*="left: 136px"]) tr > :is(th,td):nth-child(3) { position:sticky !important; left:0 !important; max-width:100px; overflow:hidden; text-overflow:ellipsis; padding-left:6px !important; padding-right:4px !important; font-size:11px !important; }
   #root#root .sh-navy table:has(td[style*="left: 136px"]) td input[inputmode="decimal"] { width:34px !important; font-size:16px !important; padding:4px 1px !important; }
+  /* frozen Name column (Candidates, Mobilisation): narrow on a phone, long names wrap */
+  #root#root .sh-navy :is(td,th).frozen-col { width:140px !important; min-width:140px !important; max-width:140px !important; white-space:normal !important; word-break:break-word; line-height:1.25; font-size:11.5px !important; padding-left:4px !important; padding-right:4px !important; }
+  #root#root .sh-navy td.frozen-col > div { white-space:normal !important; align-items:flex-start !important; }
+  #root#root .sh-navy table:has(td.frozen-col) col:first-child { width:140px !important; }
+  #root#root .sh-navy table:has(td.frozen-col) thead th:first-child { width:140px !important; max-width:140px !important; white-space:normal !important; padding-left:4px !important; padding-right:4px !important; }
   /* toolbar button rows wrap onto a second line instead of running off the screen */
   #root#root .sh-navy [style*="flex-wrap: wrap"] > [style*="display: flex"],
   #root#root .sh-navy .sticky-toolbar [style*="display: flex"],
