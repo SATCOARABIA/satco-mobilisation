@@ -238,6 +238,31 @@ html, body { background:#1e3352 !important; }
 #root .sh-navy ::-webkit-scrollbar-track { background:#1e3352 !important; }
 #root .sh-navy ::-webkit-scrollbar-thumb { background:#45648f !important; border-color:#1e3352 !important; }
 #root#root .sh-navy .sh-topnav > div > button:last-child { background:#fee2e2 !important; color:#b91c1c !important; border:1px solid #fecaca !important; }
+/* ── Phone layout (added Nov 2026) ── */
+@media (max-width:768px){
+  /* top bar: logo + search + Hub/Sign out on row 1, menu tabs on their own full-width scrolling row 2 */
+  #root#root .sh-topnav > div { flex-wrap:wrap !important; height:auto !important; row-gap:6px !important; padding-top:6px !important; padding-bottom:6px !important; }
+  #root#root .sh-topnav > div > div[style*="overflow-x"] { order:10; flex:1 1 100% !important; width:100% !important; min-width:0; }
+  #root#root .sh-topnav > div > *:has(input) { flex:1 1 0 !important; min-width:0 !important; width:auto !important; max-width:none !important; }
+  #root#root .sh-topnav > div > *:has(input) input { width:100% !important; min-width:0 !important; }
+  /* fixed multi-column grids stack on a phone */
+  #root#root .sh-navy [style*="grid-template-columns: 1fr 1fr;"],
+  #root#root .sh-navy [style*="grid-template-columns: 2fr 1fr 1fr;"] { grid-template-columns:minmax(0,1fr) !important; }
+  #root#root .sh-navy [style*="grid-template-columns: repeat(4"],
+  #root#root .sh-navy [style*="grid-template-columns: repeat(3"],
+  #root#root .sh-navy [style*="grid-template-columns: 1fr 1fr 1fr"] { grid-template-columns:repeat(2,minmax(0,1fr)) !important; }
+  #root#root .sh-navy [style*="display: grid"] > * { min-width:0; }
+  #root#root .sh-navy [style*="minmax(260px"] { grid-template-columns:minmax(0,1fr) !important; }
+  /* wide tables scroll sideways inside their card instead of stretching the page */
+  #root#root .sh-navy div:has(> table) { overflow-x:auto; -webkit-overflow-scrolling:touch; max-width:100%; }
+  /* toolbar button rows wrap onto a second line instead of running off the screen */
+  #root#root .sh-navy [style*="flex-wrap: wrap"] > [style*="display: flex"],
+  #root#root .sh-navy .sticky-toolbar [style*="display: flex"],
+  #root#root .sh-navy .sticky-filterbar [style*="display: flex"] { flex-wrap:wrap !important; }
+  #root#root .sh-navy .sticky-toolbar, #root#root .sh-navy .sticky-filterbar { position:static !important; }
+  /* pop-up windows never wider than the screen */
+  #root#root .sh-navy [style*="position: fixed"] > div { max-width:calc(100vw - 16px) !important; }
+}
 @media (max-width:520px){
   #root#root .sh-navy .sh-topnav > div { gap:4px !important; padding:0 4px !important; }
   #root#root .sh-navy .sh-topnav > div > div:first-child > div:last-child { display:none !important; }
